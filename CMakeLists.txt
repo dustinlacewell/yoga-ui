@@ -103,8 +103,8 @@ if(BUILD_TESTING)
 
     add_test(NAME yui_tests COMMAND test_runner)
 
-    # Headless performance benchmark
-    add_executable(bench_reconciler test/bench_reconciler.cpp)
+    # Headless performance benchmark (excluded from default build, run: cmake --build build --target bench_reconciler)
+    add_executable(bench_reconciler EXCLUDE_FROM_ALL test/bench_reconciler.cpp)
     target_link_libraries(bench_reconciler PRIVATE yui)
 endif()
 
