@@ -10,7 +10,7 @@
 <img src="res/nvg_showcase.png" alt="yui" width="600"/>
 
 </div>
-0
+
 ## Install
 
 ```bash
