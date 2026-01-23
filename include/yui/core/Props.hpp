@@ -1,0 +1,172 @@
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <variant>
+
+namespace yui {
+
+// Yoga layout enums (mirrors YGEnums.h)
+enum class FlexDirection { Row, Column, RowReverse, ColumnReverse };
+enum class FlexWrap { NoWrap, Wrap, WrapReverse };
+enum class JustifyContent { FlexStart, Center, FlexEnd, SpaceBetween, SpaceAround, SpaceEvenly };
+enum class AlignItems { FlexStart, Center, FlexEnd, Stretch, Baseline };
+enum class AlignContent { FlexStart, Center, FlexEnd, Stretch, SpaceBetween, SpaceAround, SpaceEvenly };
+enum class AlignSelf { Auto, FlexStart, Center, FlexEnd, Stretch, Baseline };
+enum class PositionType { Relative, Absolute };
+enum class Display { Flex, None };
+
+// Layout properties (shared by all primitives)
+struct LayoutProps {
+    std::optional<float> width;
+    std::optional<float> height;
+    std::optional<float> minWidth;
+    std::optional<float> minHeight;
+    std::optional<float> maxWidth;
+    std::optional<float> maxHeight;
+
+    std::optional<float> flexGrow;
+    std::optional<float> flexShrink;
+    std::optional<float> flexBasis;
+    std::optional<FlexDirection> flexDirection;
+    std::optional<FlexWrap> flexWrap;
+    std::optional<JustifyContent> justifyContent;
+    std::optional<AlignItems> alignItems;
+    std::optional<AlignContent> alignContent;
+    std::optional<AlignSelf> alignSelf;
+    std::optional<PositionType> positionType;
+    std::optional<Display> display;
+
+    std::optional<float> padding;
+    std::optional<float> paddingTop;
+    std::optional<float> paddingRight;
+    std::optional<float> paddingBottom;
+    std::optional<float> paddingLeft;
+
+    std::optional<float> margin;
+    std::optional<float> marginTop;
+    std::optional<float> marginRight;
+    std::optional<float> marginBottom;
+    std::optional<float> marginLeft;
+
+    std::optional<float> gap;
+    std::optional<float> rowGap;
+    std::optional<float> columnGap;
+
+    // Absolute positioning (requires positionType = Absolute)
+    std::optional<float> positionLeft;
+    std::optional<float> positionTop;
+    std::optional<float> positionRight;
+    std::optional<float> positionBottom;
+
+    std::optional<float> aspectRatio;
+};
+
+// Event handlers (shared by all primitives)
+struct EventProps {
+    std::function<void()> onClick;
+    std::function<void()> onRightClick;
+    std::function<void(bool)> onHover;
+    std::function<void(bool)> onFocus;
+    std::function<void(float, float)> onScroll;              // (deltaX, deltaY)
+    std::function<void(int, uint16_t)> onKeyDown;            // (keyCode, modifiers)
+    std::function<void(int, uint16_t)> onKeyUp;              // (keyCode, modifiers)
+};
+
+// --- State-based style overrides ---
+
+// Visual styles for Box (can override on hover/focus)
+struct BoxStyle {
+    std::optional<uint32_t> backgroundColor;
+    std::optional<uint32_t> borderColor;
+    std::optional<float> borderWidth;
+    std::optional<float> borderRadius;
+};
+
+// Visual styles for Text (can override on hover/focus)
+struct TextStyle {
+    std::optional<uint32_t> color;
+    std::optional<float> fontSize;
+};
+
+// Visual styles for Input (can override on hover/focus)
+struct InputStyle {
+    std::optional<uint32_t> backgroundColor;
+    std::optional<uint32_t> borderColor;
+    std::optional<float> borderWidth;
+    std::optional<float> borderRadius;
+    std::optional<uint32_t> color;
+    std::optional<float> fontSize;
+};
+
+// --- Primitive props ---
+
+// Box: layout container
+struct BoxProps : LayoutProps, EventProps {
+    std::optional<uint32_t> backgroundColor;
+    std::optional<float> borderRadius;
+    std::optional<uint32_t> borderColor;
+    std::optional<float> borderWidth;
+
+    // State-based style overrides (focus takes precedence over hover)
+    std::optional<BoxStyle> hoverStyle;
+    std::optional<BoxStyle> focusStyle;
+};
+
+// Text: text display
+struct TextProps : LayoutProps, EventProps {
+    std::string text;
+    std::optional<float> fontSize;
+    std::optional<uint32_t> color;
+
+    // State-based style overrides
+    std::optional<TextStyle> hoverStyle;
+    std::optional<TextStyle> focusStyle;
+};
+
+// Input: text input field
+struct InputProps : LayoutProps, EventProps {
+    std::string* value = nullptr;
+    std::optional<std::string> placeholder;
+    std::optional<bool> password;
+    std::optional<float> fontSize;
+    std::optional<uint32_t> color;
+    std::optional<uint32_t> backgroundColor;
+    std::optional<uint32_t> borderColor;
+    std::optional<float> borderWidth;
+    std::optional<float> borderRadius;
+    std::function<void(const std::string&)> onChange;
+    std::function<void()> onSubmit;
+
+    // State-based style overrides
+    std::optional<InputStyle> hoverStyle;
+    std::optional<InputStyle> focusStyle;
+};
+
+// Scroll: scrollable container
+struct ScrollProps : LayoutProps, EventProps {
+    std::optional<uint32_t> backgroundColor;
+    std::optional<float> borderRadius;
+    std::optional<uint32_t> borderColor;
+    std::optional<float> borderWidth;
+
+    // State-based style overrides
+    std::optional<BoxStyle> hoverStyle;
+    std::optional<BoxStyle> focusStyle;
+};
+
+// Canvas: custom drawing primitive
+// The draw callback is renderer-agnostic - it receives an opaque context
+// that the renderer knows how to interpret (e.g., NVGcontext* for NvgRenderer)
+using CanvasDrawFn = std::function<void(void* ctx, float width, float height)>;
+
+struct CanvasProps : LayoutProps, EventProps {
+    CanvasDrawFn draw;
+};
+
+// Variant holding any primitive's props
+using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps>;
+
+}  // namespace yui

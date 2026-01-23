@@ -1,0 +1,13 @@
+# Build directories
+build/
+build-release/
+cmake-build-*/
+out/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+*.user
+CMakeSettings.json
+CMakePresets.json

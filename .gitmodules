@@ -1,0 +1,6 @@
+[submodule "deps/yoga"]
+	path = deps/yoga
+	url = https://github.com/facebook/yoga.git
+[submodule "deps/nanovg"]
+	path = deps/nanovg
+	url = https://github.com/memononen/nanovg.git
