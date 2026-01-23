@@ -7,7 +7,7 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
-<img src="res/nvg_showcase.png" alt="yui" width="600"/>
+<img src="res/nvg_showcase.png" alt="yui" width="800"/>
 
 </div>
 
