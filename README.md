@@ -11,6 +11,26 @@
 
 </div>
 
+## Quick Example
+
+```cpp
+#include <yui/yui.hpp>
+
+yui::Store<int> count(0);
+
+yui::VNode Counter() {
+    int n = count.use();
+
+    return yui::Column({
+        yui::Text("Count: " + std::to_string(n)),
+        yui::Box(yui::Text("+"))
+            .padding(12)
+            .backgroundColor(0xFF3366FF)
+            .onClick([] { count.set([](int& n) { n++; }); })
+    }).gap(16).alignItems(yui::AlignItems::Center);
+}
+```
+
 ## Install
 
 ```bash
@@ -157,3 +177,9 @@ int main() {
 ## Docs
 
 See the [docs](docs) for detailed examples (todo list, forms, custom renderers).
+
+<div align="center">
+
+<img src="res/pong.png" alt="yui" width="600"/>
+
+</div>
