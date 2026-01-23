@@ -26,8 +26,12 @@ yui::VNode Counter() {
         yui::Box(yui::Text("+"))
             .padding(12)
             .backgroundColor(0xFF3366FF)
-            .onClick([] { count.set([](int& n) { n++; }); })
-    }).gap(16).alignItems(yui::AlignItems::Center);
+            .onClick([] { count.set(
+                [](int& n) { n++; }
+            );})
+    })
+     .gap(16)
+     .alignItems(yui::AlignItems::Center);
 }
 ```
 

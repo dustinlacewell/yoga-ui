@@ -90,6 +90,8 @@ if(BUILD_TESTING)
     file(GLOB TEST_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp
     )
+    # Exclude standalone benchmark from test sources
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "bench_reconciler\\.cpp$")
 
     add_executable(test_runner  ${TEST_SOURCES})
 
