@@ -18,7 +18,7 @@ void NvgRenderer::registerMeasureFunc() {
 
     Measure::setTextMeasure([](const std::string& text, float fontSize, float maxWidth) -> Size {
         if (!g_measureContext) {
-            // Fallback if not initialized
+            // Fallback when no context available
             float charWidth = fontSize * 0.6f;
             float width = text.length() * charWidth;
             return {width, fontSize};
@@ -33,14 +33,11 @@ void NvgRenderer::registerMeasureFunc() {
 
         float bounds[4];
         float width = nvgTextBounds(g_measureContext, 0, 0, text.c_str(), nullptr, bounds);
+        float height = bounds[3] - bounds[1];
 
         if (maxWidth > 0 && width > maxWidth) {
             width = maxWidth;
         }
-
-        float height = bounds[3] - bounds[1];
-        if (height < fontSize)
-            height = fontSize;
 
         return {width, height};
     });

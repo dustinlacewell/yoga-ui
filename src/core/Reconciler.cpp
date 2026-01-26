@@ -127,6 +127,7 @@ void Reconciler::reconcileChildren(Node* parent, const std::vector<VNode>& vnode
             reused[existingIndex] = true;
             existingChild->sourcePosition = i;
             existingChild->intKey = childVNode.intKey;
+
             reconcile(existingChild, childVNode);
             newChildren.push_back(std::move(parent->children[existingIndex]));
 
@@ -136,6 +137,7 @@ void Reconciler::reconcileChildren(Node* parent, const std::vector<VNode>& vnode
         } else {
             // Create new node
             childrenUnchanged = false;
+
             auto newNode = mount(childVNode, i);
             if (newNode) {
                 newNode->parent = parent;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <spdlog/spdlog.h>
 
 namespace yui {
 
@@ -18,6 +19,46 @@ Node::~Node() {
 }
 
 void Node::applyLayoutProps(const LayoutProps& p) {
+    // Reset all dimension/layout styles to defaults first.
+    // This is critical for node reuse: when a node is reused for a different VNode,
+    // old styles (like width=4 from a Gap) must not persist.
+    YGNodeStyleSetWidth(yogaNode, YGUndefined);
+    YGNodeStyleSetHeight(yogaNode, YGUndefined);
+    YGNodeStyleSetMinWidth(yogaNode, YGUndefined);
+    YGNodeStyleSetMinHeight(yogaNode, YGUndefined);
+    YGNodeStyleSetMaxWidth(yogaNode, YGUndefined);
+    YGNodeStyleSetMaxHeight(yogaNode, YGUndefined);
+    YGNodeStyleSetFlexGrow(yogaNode, 0);
+    YGNodeStyleSetFlexShrink(yogaNode, 0);
+    YGNodeStyleSetFlexBasis(yogaNode, YGUndefined);
+    YGNodeStyleSetFlexDirection(yogaNode, YGFlexDirectionColumn);
+    YGNodeStyleSetFlexWrap(yogaNode, YGWrapNoWrap);
+    YGNodeStyleSetJustifyContent(yogaNode, YGJustifyFlexStart);
+    YGNodeStyleSetAlignItems(yogaNode, YGAlignStretch);
+    YGNodeStyleSetAlignContent(yogaNode, YGAlignFlexStart);
+    YGNodeStyleSetAlignSelf(yogaNode, YGAlignAuto);
+    YGNodeStyleSetPositionType(yogaNode, YGPositionTypeRelative);
+    YGNodeStyleSetDisplay(yogaNode, YGDisplayFlex);
+    YGNodeStyleSetPadding(yogaNode, YGEdgeAll, YGUndefined);
+    YGNodeStyleSetPadding(yogaNode, YGEdgeTop, YGUndefined);
+    YGNodeStyleSetPadding(yogaNode, YGEdgeRight, YGUndefined);
+    YGNodeStyleSetPadding(yogaNode, YGEdgeBottom, YGUndefined);
+    YGNodeStyleSetPadding(yogaNode, YGEdgeLeft, YGUndefined);
+    YGNodeStyleSetMargin(yogaNode, YGEdgeAll, YGUndefined);
+    YGNodeStyleSetMargin(yogaNode, YGEdgeTop, YGUndefined);
+    YGNodeStyleSetMargin(yogaNode, YGEdgeRight, YGUndefined);
+    YGNodeStyleSetMargin(yogaNode, YGEdgeBottom, YGUndefined);
+    YGNodeStyleSetMargin(yogaNode, YGEdgeLeft, YGUndefined);
+    YGNodeStyleSetGap(yogaNode, YGGutterAll, YGUndefined);
+    YGNodeStyleSetGap(yogaNode, YGGutterRow, YGUndefined);
+    YGNodeStyleSetGap(yogaNode, YGGutterColumn, YGUndefined);
+    YGNodeStyleSetPosition(yogaNode, YGEdgeLeft, YGUndefined);
+    YGNodeStyleSetPosition(yogaNode, YGEdgeTop, YGUndefined);
+    YGNodeStyleSetPosition(yogaNode, YGEdgeRight, YGUndefined);
+    YGNodeStyleSetPosition(yogaNode, YGEdgeBottom, YGUndefined);
+    YGNodeStyleSetAspectRatio(yogaNode, YGUndefined);
+
+    // Now apply the new props
     // Dimensions
     if (p.width)
         YGNodeStyleSetWidth(yogaNode, *p.width);
@@ -334,8 +375,8 @@ void TextNode::setupMeasureFunc() {
     YGNodeSetMeasureFunc(yogaNode, &TextNode::measureFunc);
 }
 
-YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float /*height*/,
-                             YGMeasureMode /*heightMode*/) {
+YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float height,
+                             YGMeasureMode heightMode) {
     auto* textNode = static_cast<TextNode*>(YGNodeGetContext(node));
     if (!textNode) {
         return {0, 0};
@@ -345,7 +386,6 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
     float maxWidth = (widthMode == YGMeasureModeUndefined) ? 0 : width;
 
     Size size = Measure::measureText(textNode->props.text, fontSize, maxWidth);
-
     return {size.width, size.height};
 }
 
