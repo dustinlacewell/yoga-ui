@@ -1,13 +1,17 @@
 # Getting Started with yui
 
-yui is a declarative, flexbox-based UI library for modern C++. If you've used React, Flutter, or SwiftUI, you'll feel right at home—yui brings the same component-driven, reactive paradigm to C++20.
+yui is a declarative, flexbox-based UI library for modern C++. If you've used React, Flutter, or SwiftUI, you'll feel right at home — yui brings the same component-driven, reactive paradigm to C++20.
 
 ```cpp
-VNode App() {
-    return Column({
-        Text("Hello, yui!").fontSize(24).color(0xFFFFFFFF),
-        Text("Build beautiful UIs with C++").color(0xAAAAAAFF),
-    }).gap(8).padding(20).alignItems(AlignItems::Center);
+Component App() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [name, setName] = ctx.useState<std::string>("World");
+
+        return Column({
+            Text("Hello, " + name + "!").fontSize(24).color(0xFFFFFFFF),
+            Text("Build beautiful UIs with C++").color(0xAAAAAAFF),
+        }).gap(8).padding(20).alignItems(AlignItems::Center);
+    };
 }
 ```
 
@@ -28,7 +32,7 @@ git clone --recursive https://github.com/user/yui.git
 cd yui
 ```
 
-The `--recursive` flag is important—it pulls in the Yoga layout engine and NanoVG submodules.
+The `--recursive` flag is important — it pulls in the Yoga layout engine and NanoVG submodules.
 
 ### 2. Install Backend Dependencies
 
@@ -77,19 +81,21 @@ You should see a window with "Hello, World!" centered on screen.
 
 ### Primitives
 
-yui provides five primitive node types—the building blocks of every UI:
+yui provides five primitive node types — the building blocks of every UI:
 
 | Primitive | Purpose | Example |
 |-----------|---------|---------|
 | `Box` | Layout container (like HTML `<div>`) | `Box({ child1, child2 })` |
 | `Text` | Display text | `Text("Hello")` |
-| `Input` | Text input field | `Input(&stringVar)` |
+| `Input` | Text input field | `Input().value(text)` |
 | `Scroll` | Scrollable container | `Scroll(content)` |
 | `Canvas` | Custom drawing | `Canvas(drawFn)` |
 
 ### Components
 
-Components are just functions that return `VNode`. No base class, no registration—just functions:
+There are two kinds of components:
+
+**Helper functions** return VNodes directly. Simple, no state:
 
 ```cpp
 VNode Button(std::string label, std::function<void()> onClick) {
@@ -102,14 +108,30 @@ VNode Button(std::string label, std::function<void()> onClick) {
     .hoverStyle(BoxStyle{.backgroundColor = 0x4477FFFF})
     .onClick(onClick);
 }
+```
 
-// Use it like any other node
-VNode App() {
-    return Column({
-        Text("Welcome!"),
-        Button("Click me", [] { std::cout << "Clicked!\n"; }),
-    });
+**Stateful components** use `Component()` with hooks for local state, effects, and selective re-rendering:
+
+```cpp
+Component ClickCounter() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [count, setCount] = ctx.useState(0);
+
+        return Box(Text("Clicks: " + std::to_string(count)))
+            .padding(12)
+            .onClick([=] { setCount(count + 1); });
+    };
 }
+```
+
+Both are first-class children — mix freely:
+
+```cpp
+Column({
+    Text("Welcome!"),              // VNode (primitive)
+    Button("Press me", handler),   // VNode (helper function)
+    ClickCounter(),                // Component (stateful)
+})
 ```
 
 ### The Fluent API
@@ -177,7 +199,7 @@ Box(overlay)
 
 ## Your First App
 
-Let's build a simple counter app. Create a new file `counter.cpp`:
+Let's build a counter app using stateful components. Create a new file `counter.cpp`:
 
 ```cpp
 #include "yui/yui.hpp"
@@ -185,44 +207,42 @@ Let's build a simple counter app. Create a new file `counter.cpp`:
 
 #include <SDL.h>
 #include <SDL_ttf.h>
-#include <iostream>
 
 using namespace yui;
 
-// Reactive state - changes trigger re-renders
-Store<int> count(0);
+// Stateful counter component
+Component Counter() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [count, setCount] = ctx.useState(0);
 
-// UI component
-VNode Counter() {
-    int n = count.use();  // Subscribe to state changes
+        return Column({
+            Text("Count: " + std::to_string(count))
+                .fontSize(32)
+                .color(0xFFFFFFFF),
 
-    return Column({
-        Text("Count: " + std::to_string(n))
-            .fontSize(32)
-            .color(0xFFFFFFFF),
+            Row({
+                Box(Text("-").fontSize(24).color(0xFFFFFFFF))
+                    .padding(16)
+                    .backgroundColor(0xDD4444FF)
+                    .borderRadius(8)
+                    .onClick([=] { setCount(count - 1); }),
 
-        Row({
-            Box(Text("-").fontSize(24).color(0xFFFFFFFF))
-                .padding(16)
-                .backgroundColor(0xDD4444FF)
-                .borderRadius(8)
-                .onClick([] { count.set([](int& n) { n--; }); }),
+                Gap(16),
 
-            Gap(16),
-
-            Box(Text("+").fontSize(24).color(0xFFFFFFFF))
-                .padding(16)
-                .backgroundColor(0x44AA44FF)
-                .borderRadius(8)
-                .onClick([] { count.set([](int& n) { n++; }); }),
-        }),
-    })
-    .gap(24)
-    .padding(32)
-    .alignItems(AlignItems::Center)
-    .justifyContent(JustifyContent::Center)
-    .flexGrow(1)
-    .backgroundColor(0x1a1a2eFF);
+                Box(Text("+").fontSize(24).color(0xFFFFFFFF))
+                    .padding(16)
+                    .backgroundColor(0x44AA44FF)
+                    .borderRadius(8)
+                    .onClick([=] { setCount(count + 1); }),
+            }),
+        })
+        .gap(24)
+        .padding(32)
+        .alignItems(AlignItems::Center)
+        .justifyContent(JustifyContent::Center)
+        .flexGrow(1)
+        .backgroundColor(0x1a1a2eFF);
+    };
 }
 
 class CounterHost : public Host {
@@ -230,7 +250,7 @@ public:
     CounterHost(SDL_Renderer* r, const std::string& fontPath)
         : renderer_(r, fontPath, 16) {
         renderer_.registerMeasureFunc();
-        setRender(Counter);
+        setRender(Counter());
     }
 
     void frame(int w, int h) {
@@ -299,37 +319,58 @@ int main() {
 }
 ```
 
+**Key points:**
+- `Counter()` returns a `Component` — a deferred render function with hook access
+- `useState(0)` creates local state; the setter `setCount` triggers a re-render of just this component
+- `Host::setRender()` accepts either a `Component` or a `std::function<VNode()>`
+
 ---
 
 ## Reactive State with Store
 
-`Store<T>` is yui's reactive state container. When state changes, the UI automatically re-renders:
+`Store<T>` is yui's reactive state container for shared/global state. When a Store changes, subscribed components automatically re-render:
 
 ```cpp
 // Define state outside your components
 Store<int> counter(0);
 Store<std::string> username("");
 Store<std::vector<Todo>> todos;
+```
 
-// In your component, use() subscribes to changes
-VNode MyComponent() {
-    int n = counter.use();           // Read + subscribe
-    const auto& items = todos.use(); // Works with any type
+**Inside a stateful component**, `use()` subscribes only that component — other components don't re-render:
 
+```cpp
+auto CounterDisplay = [&](ComponentContext& ctx) -> VNode {
+    int n = counter.use();  // Subscribe just this component
     return Text("Count: " + std::to_string(n));
-}
+};
 
-// Modify state from anywhere
+auto StaticLabel = [](ComponentContext& ctx) -> VNode {
+    return Text("I never re-render");  // No subscription, never re-renders
+};
+```
+
+**In the top-level render function**, `use()` subscribes the entire host:
+
+```cpp
+host.setRender(std::function<VNode()>([&]() {
+    int n = counter.use();  // Subscribes the whole host (full re-render on change)
+    return Column({ Text(std::to_string(n)) });
+}));
+```
+
+**Modify state from anywhere:**
+```cpp
 counter.set(42);                              // Replace value
 counter.set([](int& n) { n++; });            // Mutate in place
 todos.set([](auto& t) { t.push_back(...); }); // Works with vectors
 ```
 
 **Best practices:**
-- Define stores at file scope or as globals
-- Use `use()` only inside render functions
-- Use `set()` with a lambda for complex updates
+- Prefer component-level `use()` for selective re-rendering
 - Use `peek()` to read without subscribing (for event handlers)
+- Use `set()` with a lambda for complex updates
+- For component-local state, prefer `useState` over Store
 
 ---
 
@@ -363,21 +404,35 @@ Box(content)
 
 ### Input Fields
 
-```cpp
-std::string email;
+Input uses a controlled pattern — you set the value and handle changes:
 
-Input(&email)
+```cpp
+// In a stateful component:
+auto [email, setEmail] = ctx.useState<std::string>("");
+
+Input()
+    .value(email)
     .placeholder("you@example.com")
     .fontSize(14)
     .padding(12)
     .borderRadius(4)
     .backgroundColor(0x333333FF)
-    .onChange([](const std::string& value) {
-        validate(value);
+    .onChange([=](const std::string& value) {
+        setEmail(value);
     })
-    .onSubmit([] {
-        submit();
+    .onSubmit([=] {
+        submit(email);
     });
+```
+
+Or use `useField` for two-way Store binding:
+
+```cpp
+auto [email, setEmail] = ctx.useField(formStore, &FormState::email);
+
+Input()
+    .value(email)
+    .onChange([=](const std::string& v) { setEmail(v); });
 ```
 
 ---
@@ -426,7 +481,7 @@ VNode TodoList(const std::vector<Todo>& todos) {
                 Text(t.text)
                     .color(t.done ? 0x888888FF : 0xFFFFFFFF)
                     .flexGrow(1),
-                Text(t.done ? "✓" : "○")
+                Text(t.done ? "done" : "todo")
                     .onClick([id = t.id] { toggleTodo(id); }),
             }).padding(8);
         }
@@ -439,6 +494,8 @@ HList(tabs,
     [](const Tab& t) { return TabButton(t); }
 )
 ```
+
+Render functions can return either `VNode` or `Component` — use `Component` when list items need their own local state.
 
 **Why keys matter:** Keys help yui's reconciler identify which items changed, were added, or removed. Without keys, the entire list re-renders. With keys, only changed items update.
 
@@ -458,14 +515,15 @@ Box(Text("Submit"))
     })
 
 // Input with focus indicator
-Input(&value)
+Input()
+    .value(text)
     .borderColor(0x444444FF)
     .borderWidth(1)
     .hoverStyle(InputStyle{.borderColor = 0x666666FF})
     .focusStyle(InputStyle{.borderColor = 0x4a9fffFF})
 ```
 
-Style structs use `std::optional`—only set the properties you want to override.
+Style structs use `std::optional` — only set the properties you want to override.
 
 ---
 
@@ -632,27 +690,34 @@ cmake --build build --target all_examples
 Understanding yui's architecture helps you write efficient code:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Each Frame                            │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│   Store (state) ────► render() ────► VNode Tree             │
-│                                          │                   │
-│                                          ▼                   │
-│                               ┌─────────────────┐            │
-│   Node Tree (persistent) ◄────│   Reconciler    │            │
-│         │                     └─────────────────┘            │
-│         ▼                                                    │
-│   Layout (Yoga) ──► Render ──► Events                        │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           Each Frame                                 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   Store.set() ───► marks dirty (component or host)                   │
+│                                                                      │
+│   Host::update()                                                     │
+│     1. Re-render dirty components (selective)                        │
+│     2. Full reconcile (if host dirty):                               │
+│        render() ──► VNode tree ──► Reconciler                        │
+│                                     ├─► Fiber tree (state, hooks)    │
+│                                     └─► Render tree (layout, draw)   │
+│     3. Layout (Yoga) on render tree                                  │
+│     4. Renderer draws render tree                                    │
+│     5. EventHandler dispatches to render tree nodes                  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **VNode** — Lightweight description of desired UI. Created fresh each frame.
 
-**Node** — Actual widget instance. Persists across frames. Holds hover/focus state.
+**Component** — Deferred render function with access to hooks (useState, useEffect, etc.).
 
-**Reconciler** — Diffs VNode tree against Node tree. Reuses nodes where possible, preserving state.
+**Fiber** — Internal tree tracking component identity, state, and subscriptions.
+
+**Node** — Actual widget instance. Persists across frames. Holds layout and hover/focus state.
+
+**Reconciler** — Diffs VNode/Component tree against existing Fiber+Node trees. Reuses nodes where possible, preserving state.
 
 ---
 
@@ -661,8 +726,8 @@ Understanding yui's architecture helps you write efficient code:
 Now that you understand the basics, explore these resources:
 
 - **[Primitives Reference](primitives.md)** — Complete API for Box, Text, Input, Scroll, Canvas
-- **[Components Guide](components.md)** — Building reusable component libraries
-- **[Architecture Deep Dive](architecture.md)** — VNode vs Node, reconciliation algorithm
-- **[Extending yui](extending.md)** — Writing custom renderers
+- **[Components Guide](components.md)** — Hooks, Store subscriptions, and composition patterns
+- **[Architecture Deep Dive](architecture.md)** — Dual-tree architecture, reconciliation, selective re-rendering
+- **[Extending yui](extending.md)** — Adding custom primitives
 
 Happy building!

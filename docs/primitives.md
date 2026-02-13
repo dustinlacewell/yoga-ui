@@ -5,9 +5,10 @@
 Layout container. The fundamental building block.
 
 ```cpp
-VNode Box(std::vector<VNode> children);
-VNode Box(VNode child);  // Single child
-VNode Box();             // Empty (spacers, dividers)
+VNode Box(std::vector<Child> children);  // Mixed VNode/Component children
+VNode Box(VNode child);                  // Single VNode child
+VNode Box(Component child);             // Single Component child
+VNode Box();                            // Empty (spacers, dividers)
 
 Box({...})
     .width(100).height(50)
@@ -27,6 +28,8 @@ Box({...})
     .setKey("my-box");
 ```
 
+`Child` is `std::variant<VNode, Component>` — children can be primitives, helper function results, or stateful components.
+
 ## Text
 
 Displays text. Intrinsic size based on content (uses Yoga measure function).
@@ -41,12 +44,13 @@ Text("Hello")
 
 ## Input
 
-Text input field. Two-way binding via pointer.
+Text input field. Uses a controlled pattern — set the value and handle changes via callbacks:
 
 ```cpp
-VNode Input(std::string* value);
+VNode Input();
 
-Input(&state.email)
+Input()
+    .value(currentText)
     .placeholder("you@example.com")
     .password(true)
     .backgroundColor(0x333333FF)
@@ -54,8 +58,21 @@ Input(&state.email)
     .borderRadius(4)
     .color(0xFFFFFFFF)
     .fontSize(12)
-    .onChange([](const std::string& v) { validate(v); })
-    .onSubmit([&] { submit(); });
+    .onChange([=](const std::string& v) { setValue(v); })
+    .onSubmit([=] { submit(); });
+```
+
+Typically used with `useState` or `useField` inside a stateful component:
+
+```cpp
+auto FormComp = [&](ComponentContext& ctx) -> VNode {
+    auto [email, setEmail] = ctx.useState<std::string>("");
+
+    return Input()
+        .value(email)
+        .placeholder("you@example.com")
+        .onChange([=](const std::string& v) { setEmail(v); });
+};
 ```
 
 ## Scroll
@@ -64,7 +81,8 @@ Scrollable container with clipping. Content that exceeds bounds is clipped and c
 
 ```cpp
 VNode Scroll(VNode child);
-VNode Scroll(std::vector<VNode> children);
+VNode Scroll(Component child);
+VNode Scroll(std::vector<Child> children);
 
 Scroll(
     Column({
@@ -81,6 +99,25 @@ ScrollNode automatically handles scroll events when content exceeds container bo
 **Layout note**: ScrollNode children are laid out with unconstrained height, allowing content to exceed the container's bounds. This is different from normal Yoga layout where children are constrained to fit.
 
 Supports the same visual properties as Box: `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, and hover/focus styles.
+
+## Canvas
+
+Custom drawing surface. The draw function receives a renderer-specific context:
+
+```cpp
+VNode Canvas(CanvasDrawFn draw);
+
+Canvas([](void* ctx, float w, float h) {
+    auto* vg = static_cast<NVGcontext*>(ctx);
+    // Draw with NanoVG API...
+}).width(200).height(200);
+```
+
+The draw function receives:
+- `ctx` — Renderer-specific context (NVGcontext* for NanoVG, SDL_Renderer* for SDL)
+- `w`, `h` — Canvas dimensions after layout
+
+Draw relative to (0,0) — the renderer handles positioning.
 
 ## Events
 
@@ -99,7 +136,7 @@ Text("Delete")
     .onClick(onDelete);
 ```
 
-The `onScroll` handler receives scroll delta values. For ScrollNode, scroll is handled automatically—use `onScroll` on other elements for custom scroll behavior.
+The `onScroll` handler receives scroll delta values. For ScrollNode, scroll is handled automatically — use `onScroll` on other elements for custom scroll behavior.
 
 ## State-Based Styles
 
@@ -118,7 +155,8 @@ Text("Click me")
     .hoverStyle(TextStyle{.color = 0x88CCFFFF});
 
 // Input
-Input(&value)
+Input()
+    .value(text)
     .borderColor(0x666666FF)
     .hoverStyle(InputStyle{.borderColor = 0x888888FF})
     .focusStyle(InputStyle{.borderColor = 0x4a9fffFF});
@@ -149,7 +187,7 @@ struct InputStyle {
 };
 ```
 
-Focus takes precedence over hover. Layout props (width, padding, etc.) are not in style structs—they'd cause expensive relayout.
+Focus takes precedence over hover. Layout props (width, padding, etc.) are not in style structs — they'd cause expensive relayout.
 
 ## Layout Enums
 
@@ -165,8 +203,10 @@ enum class AlignSelf { Auto, FlexStart, Center, FlexEnd, Stretch, Baseline };
 Convenience functions composing primitives:
 
 ```cpp
-VNode Row(std::vector<VNode> children);    // Box with FlexDirection::Row
-VNode Column(std::vector<VNode> children); // Box with FlexDirection::Column
+VNode Row(std::vector<Child> children);    // Box with FlexDirection::Row
+VNode Column(std::vector<Child> children); // Box with FlexDirection::Column
 VNode Spacer();                            // Box with flexGrow(1)
 VNode Gap(float size);                     // Box with fixed width/height
 ```
+
+`Child` is `std::variant<VNode, Component>`, so Row/Column accept any mix of VNodes and Components.

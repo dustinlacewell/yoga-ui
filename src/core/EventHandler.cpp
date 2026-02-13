@@ -67,8 +67,14 @@ bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, floa
 }
 
 bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) {
-    // Keyboard events go to focused node, or root if nothing focused
-    Node* target = focusedInput_ ? static_cast<Node*>(focusedInput_) : root;
+    // Keyboard events go to focused node, or first node with a key handler
+    Node* target;
+    if (focusedInput_) {
+        target = static_cast<Node*>(focusedInput_);
+    } else {
+        target = findKeyTarget(root);
+        if (!target) target = root;
+    }
     if (!target)
         return false;
 
@@ -82,8 +88,14 @@ bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool 
 }
 
 bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) {
-    // Keyboard events go to focused node, or root if nothing focused
-    Node* target = focusedInput_ ? static_cast<Node*>(focusedInput_) : root;
+    // Keyboard events go to focused node, or first node with a key handler
+    Node* target;
+    if (focusedInput_) {
+        target = static_cast<Node*>(focusedInput_);
+    } else {
+        target = findKeyTarget(root);
+        if (!target) target = root;
+    }
     if (!target)
         return false;
 
@@ -96,9 +108,6 @@ bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) {
 }
 
 Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float offsetY) {
-    if (!node)
-        return nullptr;
-
     float nodeX = offsetX + node->layout.left;
     float nodeY = offsetY + node->layout.top;
 
@@ -427,26 +436,28 @@ void EventHandler::updateFocus(Node* clicked) {
 }
 
 void EventHandler::handleTextInput(const std::string& text) {
-    if (!focusedInput_ || !focusedInput_->props.value)
+    if (!focusedInput_)
         return;
 
-    *focusedInput_->props.value += text;
+    // Update display text for immediate feedback
+    focusedInput_->displayText += text;
 
+    // Notify via onChange - this triggers re-render with new controlled value
     if (focusedInput_->props.onChange) {
-        focusedInput_->props.onChange(*focusedInput_->props.value);
+        focusedInput_->props.onChange(focusedInput_->displayText);
     }
 }
 
 void EventHandler::handleBackspace() {
-    if (!focusedInput_ || !focusedInput_->props.value)
+    if (!focusedInput_)
         return;
 
-    std::string& val = *focusedInput_->props.value;
-    if (!val.empty()) {
-        val.pop_back();
+    if (!focusedInput_->displayText.empty()) {
+        focusedInput_->displayText.pop_back();
 
+        // Notify via onChange - this triggers re-render with new controlled value
         if (focusedInput_->props.onChange) {
-            focusedInput_->props.onChange(val);
+            focusedInput_->props.onChange(focusedInput_->displayText);
         }
     }
 }
@@ -458,6 +469,45 @@ void EventHandler::handleSubmit() {
     if (focusedInput_->props.onSubmit) {
         focusedInput_->props.onSubmit();
     }
+}
+
+Node* EventHandler::findKeyTarget(Node* node) {
+    if (!node)
+        return nullptr;
+
+    // Check if this node has a keyboard handler
+    bool hasHandler = false;
+    switch (node->type()) {
+    case PrimitiveType::Box:
+        hasHandler = !!static_cast<BoxNode*>(node)->props.onKeyDown;
+        break;
+    case PrimitiveType::Text:
+        hasHandler = !!static_cast<TextNode*>(node)->props.onKeyDown;
+        break;
+    case PrimitiveType::Input:
+        hasHandler = !!static_cast<InputNode*>(node)->props.onKeyDown;
+        break;
+    case PrimitiveType::Scroll:
+        hasHandler = !!static_cast<ScrollNode*>(node)->props.onKeyDown;
+        break;
+    case PrimitiveType::Canvas:
+        hasHandler = !!static_cast<CanvasNode*>(node)->props.onKeyDown;
+        break;
+    default:
+        break;
+    }
+
+    if (hasHandler)
+        return node;
+
+    // Search children
+    for (auto& child : node->children) {
+        Node* found = findKeyTarget(child.get());
+        if (found)
+            return found;
+    }
+
+    return nullptr;
 }
 
 }  // namespace yui

@@ -256,11 +256,11 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
     float padding = 8;
 
     std::string displayText;
-    if (p.value && !p.value->empty()) {
+    if (!p.value.empty()) {
         if (p.password.value_or(false)) {
-            displayText = std::string(p.value->size(), '*');
+            displayText = std::string(p.value.size(), '*');
         } else {
-            displayText = *p.value;
+            displayText = p.value;
         }
         drawText(displayText, x + padding, y + (h - fontSize) / 2, fontSize, color);
     } else if (p.placeholder) {

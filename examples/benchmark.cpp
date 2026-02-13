@@ -87,19 +87,23 @@ struct Quad {
     }
 };
 
-// Benchmark state
-struct BenchState {
+// Quad tree state (changes rarely - only on clicks)
+struct QuadState {
     Quad root{0x3366CCFF};
-    float fps = 0;
-    float frameTime = 0;
-    float updateTime = 0;  // reconcile + layout time
-    float renderTime = 0;
 };
 
-Store<BenchState>* store = nullptr;
+// Stats state (changes every frame)
+struct StatsState {
+    float fps = 0;
+    float frameTime = 0;
+    float updateTime = 0;
+    float renderTime = 0;
+    int nodeCount = 0;
+    int depth = 0;
+};
 
-// Forward declaration
-VNode QuadView(Quad& quad, const std::string& path);
+Store<QuadState>* quadStore = nullptr;
+Store<StatsState>* statsStore = nullptr;
 
 // Lighten a color by adding to RGB channels
 inline uint32_t lighten(uint32_t color, int amount) {
@@ -110,37 +114,31 @@ inline uint32_t lighten(uint32_t color, int amount) {
 }
 
 // Recursive component - renders a quad as either a leaf or 2x2 grid
-VNode QuadView(Quad& quad, const std::string& path = "0") {
-    if (!quad.subdivided) {
-        // Leaf node - clickable square
-        uint32_t hoverColor = lighten(quad.color, 30);
+// No keys needed - structure is deterministic, position-based diffing works fine
+Component QuadView(Quad& quad) {
+    return [&quad](ComponentContext&) -> VNode {
+        quadStore->use();  // Force re-render when store changes
+        if (!quad.subdivided) {
+            // Leaf node - clickable square
+            uint32_t hoverColor = lighten(quad.color, 30);
 
-        return Box()
-            .setKey(path)
+            return Box()
+                .flexGrow(1)
+                .backgroundColor(quad.color)
+                .hoverStyle(BoxStyle{.backgroundColor = hoverColor})
+                .onClick([&quad] {
+                    quadStore->set([&](QuadState&) { quad.subdivide(); });
+                });
+        }
+
+        // Subdivided - 2x2 grid of children
+        return Column({
+                          Row({QuadView(*quad.children[0]), QuadView(*quad.children[1])}).flexGrow(1).gap(1),
+                          Row({QuadView(*quad.children[2]), QuadView(*quad.children[3])}).flexGrow(1).gap(1),
+                      })
             .flexGrow(1)
-            .backgroundColor(quad.color)
-            .hoverStyle(BoxStyle{.backgroundColor = hoverColor})
-            .onClick([&quad] { store->set([&](BenchState&) { quad.subdivide(); }); });
-    }
-
-    // Subdivided - 2x2 grid of children
-    return Column({
-                      Row({
-                              QuadView(*quad.children[0], path + "0"),
-                              QuadView(*quad.children[1], path + "1"),
-                          })
-                          .flexGrow(1)
-                          .gap(1),
-                      Row({
-                              QuadView(*quad.children[2], path + "2"),
-                              QuadView(*quad.children[3], path + "3"),
-                          })
-                          .flexGrow(1)
-                          .gap(1),
-                  })
-        .setKey(path)
-        .flexGrow(1)
-        .gap(1);
+            .gap(1);
+    };
 }
 
 // Colors for stats overlay
@@ -149,59 +147,69 @@ constexpr uint32_t STAT_MUTED_COLOR = 0xAAAAAAFF;
 constexpr uint32_t STAT_ACCENT_COLOR = 0x00FF88FF;
 
 // Helper to create a stat line
-VNode statLine(const std::string& label, const std::string& value, uint32_t valueColor = STAT_TEXT_COLOR) {
-    return Row({
-                   Text(label).fontSize(12).color(STAT_MUTED_COLOR),
-                   Text(value).fontSize(12).color(valueColor),
-               })
-        .gap(4);
+Component StatLine(const std::string& label, const std::string& value, uint32_t valueColor = STAT_TEXT_COLOR) {
+    return [=](ComponentContext&) -> VNode {
+        return Row({
+                       Text(label).fontSize(12).color(STAT_MUTED_COLOR),
+                       Text(value).fontSize(12).color(valueColor),
+                   })
+            .gap(4);
+    };
 }
 
-// Stats overlay - displays node count, depth, and performance metrics
-VNode StatsOverlay(int nodeCount, int depth, float fps, float frameTime, float updateTime, float renderTime) {
-    // Color FPS based on performance
-    uint32_t fpsColor = STAT_ACCENT_COLOR;
-    if (fps < 30)
-        fpsColor = 0xFF4444FF;  // Red
-    else if (fps < 55)
-        fpsColor = 0xFFAA44FF;  // Orange
+// Stats overlay - subscribes only to stats store
+Component StatsOverlay() {
+    return [](ComponentContext&) -> VNode {
+        const auto& s = statsStore->use();
 
-    // Format timing values
-    char frameBuf[32], updateBuf[32], renderBuf[32];
-    snprintf(frameBuf, sizeof(frameBuf), "%.2f ms", frameTime);
-    snprintf(updateBuf, sizeof(updateBuf), "%.2f ms", updateTime);
-    snprintf(renderBuf, sizeof(renderBuf), "%.2f ms", renderTime);
+        // Color FPS based on performance
+        uint32_t fpsColor = STAT_ACCENT_COLOR;
+        if (s.fps < 30)
+            fpsColor = 0xFF4444FF;  // Red
+        else if (s.fps < 55)
+            fpsColor = 0xFFAA44FF;  // Orange
 
-    return Column({
-                      Text("YUI Benchmark").fontSize(16).color(STAT_TEXT_COLOR),
-                      Box().height(8),
-                      statLine("Nodes: ", std::to_string(nodeCount)),
-                      statLine("Depth: ", std::to_string(depth)),
-                      Box().height(4),
-                      statLine("FPS: ", std::to_string(static_cast<int>(fps)), fpsColor),
-                      statLine("Frame: ", frameBuf),
-                      statLine("Update: ", updateBuf),
-                      statLine("Render: ", renderBuf),
-                      Box().height(8),
-                      Text("Click squares to subdivide").fontSize(11).color(STAT_MUTED_COLOR),
-                      Text("Press R to reset").fontSize(11).color(STAT_MUTED_COLOR),
-                  })
-        .positionType(PositionType::Absolute)
-        .positionTop(12)
-        .positionLeft(12)
-        .padding(12)
-        .backgroundColor(0x000000DD)
-        .borderRadius(6);
+        // Format timing values
+        char frameBuf[32], updateBuf[32], renderBuf[32];
+        snprintf(frameBuf, sizeof(frameBuf), "%.2f ms", s.frameTime);
+        snprintf(updateBuf, sizeof(updateBuf), "%.2f ms", s.updateTime);
+        snprintf(renderBuf, sizeof(renderBuf), "%.2f ms", s.renderTime);
+
+        return Column({
+                          Text("YUI Benchmark").fontSize(16).color(STAT_TEXT_COLOR),
+                          Box().height(8),
+                          StatLine("Nodes: ", std::to_string(s.nodeCount)),
+                          StatLine("Depth: ", std::to_string(s.depth)),
+                          Box().height(4),
+                          StatLine("FPS: ", std::to_string(static_cast<int>(s.fps)), fpsColor),
+                          StatLine("Frame: ", frameBuf),
+                          StatLine("Update: ", updateBuf),
+                          StatLine("Render: ", renderBuf),
+                          Box().height(8),
+                          Text("Click squares to subdivide").fontSize(11).color(STAT_MUTED_COLOR),
+                          Text("Press R to reset").fontSize(11).color(STAT_MUTED_COLOR),
+                      })
+            .positionType(PositionType::Absolute)
+            .positionTop(12)
+            .positionLeft(12)
+            .padding(12)
+            .backgroundColor(0x000000DD)
+            .borderRadius(6);
+    };
+}
+
+// QuadTree view - subscribes only to quad store
+Component QuadTreeView() {
+    return [](ComponentContext&) -> VNode {
+        auto& q = const_cast<QuadState&>(quadStore->use());
+        return Box({QuadView(q.root)}).flexGrow(1);
+    };
 }
 
 VNode buildUI() {
-    const auto& s = store->use();
-    int nodeCount = s.root.countNodes();
-    int depth = s.root.maxDepth();
-
     return Box({
-                   QuadView(const_cast<Quad&>(s.root)),
-                   StatsOverlay(nodeCount, depth, s.fps, s.frameTime, s.updateTime, s.renderTime),
+                   QuadTreeView(),
+                   StatsOverlay(),
                })
         .flexGrow(1)
         .padding(2)
@@ -230,12 +238,18 @@ public:
         float frameMs = updateMs + renderMs;
         float fps = dt > 0 ? 1.0f / dt : 0;
 
-        // Smooth the values with exponential moving average
-        store->set([=](BenchState& s) {
+        // Update stats (only rebuilds stats overlay, not quad tree)
+        const auto& q = quadStore->peek();
+        int nodeCount = q.root.countNodes();
+        int depth = q.root.maxDepth();
+
+        statsStore->set([=](StatsState& s) {
             s.fps = s.fps * 0.9f + fps * 0.1f;
             s.frameTime = s.frameTime * 0.9f + frameMs * 0.1f;
             s.updateTime = s.updateTime * 0.9f + updateMs * 0.1f;
             s.renderTime = s.renderTime * 0.9f + renderMs * 0.1f;
+            s.nodeCount = nodeCount;
+            s.depth = depth;
         });
     }
 
@@ -275,7 +289,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int) {
 
     // Reset on R key
     if (key == GLFW_KEY_R && action == GLFW_PRESS) {
-        store->set([](BenchState& s) { s.root = Quad(0x3366CCFF); });
+        quadStore->set([](QuadState& s) { s.root = Quad(0x3366CCFF); });
     }
 }
 
@@ -339,8 +353,10 @@ int main() {
     }
 
     {
-        Store<BenchState> benchStore;
-        store = &benchStore;
+        Store<QuadState> quadStateStore;
+        Store<StatsState> statsStateStore;
+        quadStore = &quadStateStore;
+        statsStore = &statsStateStore;
 
         BenchHost host(vg, fontId);
         g_host = &host;
@@ -375,7 +391,8 @@ int main() {
         }
 
         g_host = nullptr;
-        store = nullptr;
+        quadStore = nullptr;
+        statsStore = nullptr;
     }
 
     nvgDeleteGL3(vg);

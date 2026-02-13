@@ -2,12 +2,70 @@
 
 #include "Props.hpp"
 
+#include <functional>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace yui {
 
 enum class PrimitiveType { Box, Text, Input, Scroll, Canvas };
+
+// Forward declarations
+struct VNode;
+class ComponentContext;
+
+// ComponentFn type - component render function signature
+using ComponentFn = std::function<VNode(ComponentContext&)>;
+
+// Component - holds a deferred render function
+// Must be fully defined BEFORE Child variant (std::variant requires complete types)
+struct Component {
+    static constexpr int64_t NO_INT_KEY = INT64_MIN;
+
+    ComponentFn fn;
+    std::string key;
+    int64_t intKey = NO_INT_KEY;
+
+#ifndef NDEBUG
+    const char* debugName = nullptr;
+#endif
+
+    // Accept any const-callable that returns VNode from ComponentContext&
+    // Rejects mutable lambdas — component functions must be repeatable (called every re-render)
+    template<typename F,
+             typename = std::enable_if_t<std::is_invocable_r_v<VNode, const F&, ComponentContext&>>>
+    Component(F f) : fn(std::move(f)) {}
+
+    // Key for reconciliation (string)
+    Component& setKey(std::string k) {
+        key = std::move(k);
+        return *this;
+    }
+
+    // Key for reconciliation (integer - more efficient)
+    Component& setKey(int64_t k) {
+        intKey = k;
+        return *this;
+    }
+
+#ifndef NDEBUG
+    // Set debug name (for better error messages in debug mode)
+    Component& setName(const char* name) {
+        debugName = name;
+        return *this;
+    }
+#endif
+
+    // Key helpers
+    bool hasKey() const { return intKey != NO_INT_KEY || !key.empty(); }
+    bool hasIntKey() const { return intKey != NO_INT_KEY; }
+    bool hasStringKey() const { return !key.empty(); }
+};
+
+// Child can be either a VNode (immediate) or a Component (deferred)
+using Child = std::variant<VNode, Component>;
 
 struct VNode {
     static constexpr int64_t NO_INT_KEY = INT64_MIN;
@@ -16,7 +74,7 @@ struct VNode {
     std::string key;
     int64_t intKey = NO_INT_KEY;
     PropsVariant props;
-    std::vector<VNode> children;
+    std::vector<Child> children;
     bool isEmpty = false;
 
     // Empty node (skipped by reconciler)
@@ -51,6 +109,14 @@ struct VNode {
     }
     VNode& height(float v) {
         layoutProps().height = v;
+        return *this;
+    }
+    VNode& widthPercent(float v) {
+        layoutProps().widthPercent = v;
+        return *this;
+    }
+    VNode& heightPercent(float v) {
+        layoutProps().heightPercent = v;
         return *this;
     }
     VNode& minWidth(float v) {
@@ -238,8 +304,8 @@ struct VNode {
     VNode& color(uint32_t v);  // Works on Text and Input
 
     // --- Input-specific ---
-    VNode& value(std::string* v) {
-        inputProps().value = v;
+    VNode& value(std::string v) {
+        inputProps().value = std::move(v);
         return *this;
     }
     VNode& placeholder(std::string v) {
@@ -268,7 +334,7 @@ struct VNode {
     VNode& focusStyle(InputStyle style);
 
     // --- Children (for chaining after Box()) ---
-    VNode& setChildren(std::vector<VNode> c) {
+    VNode& setChildren(std::vector<Child> c) {
         children = std::move(c);
         return *this;
     }
@@ -292,8 +358,8 @@ private:
 
 // --- Factory functions ---
 
-// Box with children
-inline VNode Box(std::vector<VNode> children) {
+// Box with children (accepts both VNode and Component via Child variant)
+inline VNode Box(std::vector<Child> children) {
     VNode n;
     n.type = PrimitiveType::Box;
     n.props = BoxProps{};
@@ -301,14 +367,20 @@ inline VNode Box(std::vector<VNode> children) {
     return n;
 }
 
-// Box with single child
+
+// Box with single child (VNode)
 inline VNode Box(VNode child) {
-    return Box(std::vector<VNode>{std::move(child)});
+    return Box(std::vector<Child>{std::move(child)});
+}
+
+// Box with single child (Component)
+inline VNode Box(Component child) {
+    return Box(std::vector<Child>{std::move(child)});
 }
 
 // Empty box
 inline VNode Box() {
-    return Box(std::vector<VNode>{});
+    return Box(std::vector<Child>{});
 }
 
 // Text
@@ -321,13 +393,11 @@ inline VNode Text(std::string content) {
     return n;
 }
 
-// Input
-inline VNode Input(std::string* value) {
+// Input (controlled component)
+inline VNode Input() {
     VNode n;
     n.type = PrimitiveType::Input;
-    InputProps p;
-    p.value = value;
-    n.props = std::move(p);
+    n.props = InputProps{};
     return n;
 }
 
@@ -337,11 +407,19 @@ inline VNode Scroll(VNode child) {
     VNode n;
     n.type = PrimitiveType::Scroll;
     n.props = ScrollProps{};
-    n.children.push_back(std::move(child));
+    n.children.push_back(Child{std::move(child)});
     return n;
 }
 
-inline VNode Scroll(std::vector<VNode> children) {
+inline VNode Scroll(Component child) {
+    VNode n;
+    n.type = PrimitiveType::Scroll;
+    n.props = ScrollProps{};
+    n.children.push_back(Child{std::move(child)});
+    return n;
+}
+
+inline VNode Scroll(std::vector<Child> children) {
     VNode n;
     n.type = PrimitiveType::Scroll;
     n.props = ScrollProps{};
@@ -364,11 +442,11 @@ inline VNode Canvas(CanvasDrawFn draw) {
 
 // --- Helpers ---
 
-inline VNode Row(std::vector<VNode> children) {
+inline VNode Row(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Row);
 }
 
-inline VNode Column(std::vector<VNode> children) {
+inline VNode Column(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Column);
 }
 
@@ -391,20 +469,32 @@ inline VNode If(bool condition, VNode ifTrue, VNode ifFalse) {
     return condition ? std::move(ifTrue) : std::move(ifFalse);
 }
 
-// Keyed list helper
+// Keyed list helper - works with both VNode and Component render functions
 template <typename T, typename KeyFn, typename RenderFn>
 VNode List(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
-    std::vector<VNode> children;
+    std::vector<Child> children;
     children.reserve(items.size());
     for (const auto& item : items) {
-        auto node = renderFn(item);
-        // Convert key to string
-        if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-            node.key = keyFn(item);
-        } else {
-            node.key = std::to_string(keyFn(item));
+        auto result = renderFn(item);
+        using ResultType = decltype(result);
+
+        if constexpr (std::is_same_v<ResultType, VNode>) {
+            // VNode: set key directly
+            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
+                result.key = keyFn(item);
+            } else {
+                result.intKey = static_cast<int64_t>(keyFn(item));
+            }
+            children.push_back(std::move(result));
+        } else if constexpr (std::is_same_v<ResultType, Component>) {
+            // Component: set key on component
+            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
+                result.key = keyFn(item);
+            } else {
+                result.intKey = static_cast<int64_t>(keyFn(item));
+            }
+            children.push_back(std::move(result));
         }
-        children.push_back(std::move(node));
     }
     return Box(std::move(children)).flexDirection(FlexDirection::Column);
 }
@@ -412,16 +502,27 @@ VNode List(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
 // Horizontal list variant
 template <typename T, typename KeyFn, typename RenderFn>
 VNode HList(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
-    std::vector<VNode> children;
+    std::vector<Child> children;
     children.reserve(items.size());
     for (const auto& item : items) {
-        auto node = renderFn(item);
-        if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-            node.key = keyFn(item);
-        } else {
-            node.key = std::to_string(keyFn(item));
+        auto result = renderFn(item);
+        using ResultType = decltype(result);
+
+        if constexpr (std::is_same_v<ResultType, VNode>) {
+            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
+                result.key = keyFn(item);
+            } else {
+                result.intKey = static_cast<int64_t>(keyFn(item));
+            }
+            children.push_back(std::move(result));
+        } else if constexpr (std::is_same_v<ResultType, Component>) {
+            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
+                result.key = keyFn(item);
+            } else {
+                result.intKey = static_cast<int64_t>(keyFn(item));
+            }
+            children.push_back(std::move(result));
         }
-        children.push_back(std::move(node));
     }
     return Box(std::move(children)).flexDirection(FlexDirection::Row);
 }

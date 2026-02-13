@@ -22,6 +22,8 @@ enum class Display { Flex, None };
 struct LayoutProps {
     std::optional<float> width;
     std::optional<float> height;
+    std::optional<float> widthPercent;   // Yoga percent width (0-100)
+    std::optional<float> heightPercent;  // Yoga percent height (0-100)
     std::optional<float> minWidth;
     std::optional<float> minHeight;
     std::optional<float> maxWidth;
@@ -62,6 +64,8 @@ struct LayoutProps {
     std::optional<float> positionBottom;
 
     std::optional<float> aspectRatio;
+
+    bool operator==(const LayoutProps&) const = default;
 };
 
 // Event handlers (shared by all primitives)
@@ -126,9 +130,9 @@ struct TextProps : LayoutProps, EventProps {
     std::optional<TextStyle> focusStyle;
 };
 
-// Input: text input field
+// Input: text input field (controlled component)
 struct InputProps : LayoutProps, EventProps {
-    std::string* value = nullptr;
+    std::string value;  // Controlled value - set via onChange callback
     std::optional<std::string> placeholder;
     std::optional<bool> password;
     std::optional<float> fontSize;

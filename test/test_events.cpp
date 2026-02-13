@@ -16,19 +16,20 @@ TEST_CASE("Hit test finds deepest node") {
                     .width(100)
                     .height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Click inside inner box
-    events.handleMouseMove(root.get(), 25, 25);
+    events.handleMouseMove(root, 25, 25);
     CHECK(events.getHoveredNode() == root->children[0].get());
 
     // Click outside inner but inside outer
-    events.handleMouseMove(root.get(), 75, 75);
-    CHECK(events.getHoveredNode() == root.get());
+    events.handleMouseMove(root, 75, 75);
+    CHECK(events.getHoveredNode() == root);
 
     // Click outside all
-    events.handleMouseMove(root.get(), 150, 150);
+    events.handleMouseMove(root, 150, 150);
     CHECK(events.getHoveredNode() == nullptr);
 }
 
@@ -39,14 +40,15 @@ TEST_CASE("Click handler fires") {
     bool clicked = false;
     auto tree = Box().width(100).height(100).onClick([&]() { clicked = true; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Mouse down + up = click
-    events.handleMouseDown(root.get(), 50, 50, MouseButton::Left);
+    events.handleMouseDown(root, 50, 50, MouseButton::Left);
     CHECK(!clicked);  // Click fires on mouse up
 
-    events.handleMouseUp(root.get(), 50, 50, MouseButton::Left);
+    events.handleMouseUp(root, 50, 50, MouseButton::Left);
     CHECK(clicked);
 }
 
@@ -57,10 +59,11 @@ TEST_CASE("Right click handler fires") {
     bool rightClicked = false;
     auto tree = Box().width(100).height(100).onRightClick([&]() { rightClicked = true; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    events.handleMouseUp(root.get(), 50, 50, MouseButton::Right);
+    events.handleMouseUp(root, 50, 50, MouseButton::Right);
     CHECK(rightClicked);
 }
 
@@ -76,11 +79,12 @@ TEST_CASE("Click bubbles to parent") {
                     .height(100)
                     .onClick([&]() { parentClicked = true; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Click on inner (which has no handler)
-    events.handleMouseUp(root.get(), 25, 25, MouseButton::Left);
+    events.handleMouseUp(root, 25, 25, MouseButton::Left);
 
     // Should bubble to parent
     CHECK(parentClicked);
@@ -100,11 +104,12 @@ TEST_CASE("Click consumption stops bubbling") {
                     .height(100)
                     .onClick([&]() { outerClicked = true; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Click on inner
-    events.handleMouseUp(root.get(), 25, 25, MouseButton::Left);
+    events.handleMouseUp(root, 25, 25, MouseButton::Left);
 
     CHECK(innerClicked);
     CHECK(!outerClicked);  // Stopped by inner handler
@@ -117,15 +122,16 @@ TEST_CASE("Hover callbacks fire") {
     bool hovered = false;
     auto tree = Box().width(100).height(100).onHover([&](bool h) { hovered = h; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Move into box
-    events.handleMouseMove(root.get(), 50, 50);
+    events.handleMouseMove(root, 50, 50);
     CHECK(hovered);
 
     // Move out of box
-    events.handleMouseMove(root.get(), 150, 150);
+    events.handleMouseMove(root, 150, 150);
     CHECK(!hovered);
 }
 
@@ -143,21 +149,22 @@ TEST_CASE("Hover tracks deepest node") {
                     .height(100)
                     .onHover([&](bool h) { outerHovered = h; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Move into inner box - both should hover
-    events.handleMouseMove(root.get(), 25, 25);
+    events.handleMouseMove(root, 25, 25);
     CHECK(innerHovered);
     CHECK(outerHovered);
 
     // Move to outer only
-    events.handleMouseMove(root.get(), 75, 75);
+    events.handleMouseMove(root, 75, 75);
     CHECK(!innerHovered);
     CHECK(outerHovered);
 
     // Move out completely
-    events.handleMouseMove(root.get(), 150, 150);
+    events.handleMouseMove(root, 150, 150);
     CHECK(!innerHovered);
     CHECK(!outerHovered);
 }
@@ -169,10 +176,11 @@ TEST_CASE("Text node receives events") {
     bool clicked = false;
     auto tree = Text("Click me").width(100).height(20).onClick([&]() { clicked = true; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 20);
 
-    events.handleMouseUp(root.get(), 50, 10, MouseButton::Left);
+    events.handleMouseUp(root, 50, 10, MouseButton::Left);
     CHECK(clicked);
 }
 
@@ -187,10 +195,11 @@ TEST_CASE("Scroll event fires on Box with onScroll handler") {
         scrollY = dy;
     });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    events.handleScroll(root.get(), 50, 50, 5, 10);
+    events.handleScroll(root, 50, 50, 5, 10);
     CHECK(scrollX == 5);
     CHECK(scrollY == 10);
 }
@@ -207,11 +216,12 @@ TEST_CASE("Scroll bubbles to parent") {
                     .height(100)
                     .onScroll([&](float dx, float dy) { parentScrollY = dy; });
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
     // Scroll inside inner (which has no handler)
-    events.handleScroll(root.get(), 25, 25, 0, 15);
+    events.handleScroll(root, 25, 25, 0, 15);
 
     // Should bubble to parent
     CHECK(parentScrollY == 15);
@@ -222,7 +232,8 @@ TEST_CASE("ScrollNode mounts correctly") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     CHECK(root->type() == PrimitiveType::Scroll);
 }
@@ -232,12 +243,13 @@ TEST_CASE("ScrollNode layout works") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
 
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     CHECK(scrollNode->layout.width == 100);
     CHECK(scrollNode->layout.height == 100);
 }
@@ -247,10 +259,11 @@ TEST_CASE("ScrollNode has children") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     CHECK(scrollNode->children.size() == 1);
 }
 
@@ -264,10 +277,11 @@ TEST_CASE("ScrollNode auto-scrolls content") {
                     .width(100)
                     .height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     REQUIRE(scrollNode->children.size() == 1);
 
     CHECK(scrollNode->targetScrollX == 0);
@@ -275,7 +289,7 @@ TEST_CASE("ScrollNode auto-scrolls content") {
 
     // contentHeight > layout.height, scrolling should work
     REQUIRE(scrollNode->contentHeight > scrollNode->layout.height);
-    events.handleScroll(root.get(), 50, 50, 0, -20);
+    events.handleScroll(root, 50, 50, 0, -20);
     CHECK(scrollNode->targetScrollY == 20);
 }
 
@@ -285,17 +299,18 @@ TEST_CASE("ScrollNode clamps scroll offset") {
 
     auto tree = Scroll(Box().width(150).height(200)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
 
     // Try to scroll past the end
-    events.handleScroll(root.get(), 50, 50, 0, -500);
+    events.handleScroll(root, 50, 50, 0, -500);
     CHECK(scrollNode->targetScrollY == 100);  // Max scroll = 200 - 100
 
     // Try to scroll past the beginning
-    events.handleScroll(root.get(), 50, 50, 0, 500);
+    events.handleScroll(root, 50, 50, 0, 500);
     CHECK(scrollNode->targetScrollY == 0);  // Min scroll = 0
 }
 
@@ -306,13 +321,14 @@ TEST_CASE("ScrollNode doesn't scroll when content fits") {
     // Content smaller than container
     auto tree = Scroll(Box().width(50).height(50)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
 
     // Try to scroll - should remain at 0
-    events.handleScroll(root.get(), 50, 50, 0, -20);
+    events.handleScroll(root, 50, 50, 0, -20);
     CHECK(scrollNode->scrollOffsetY == 0);
 }
 
@@ -327,13 +343,14 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
                     .width(100)
                     .height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
 
     // Click at y=50 should hit child initially
-    events.handleMouseUp(root.get(), 50, 50, MouseButton::Left);
+    events.handleMouseUp(root, 50, 50, MouseButton::Left);
     CHECK(childClicked);
 
     childClicked = false;
@@ -342,7 +359,7 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
     scrollNode->scrollOffsetY = 50;
 
     // Click at y=50 now hits y=100 in content (still in child's 0-200 range)
-    events.handleMouseUp(root.get(), 50, 50, MouseButton::Left);
+    events.handleMouseUp(root, 50, 50, MouseButton::Left);
     CHECK(childClicked);
 }
 
@@ -352,10 +369,11 @@ TEST_CASE("ScrollNode child layout dimensions - fixed size child") {
     // Child with explicit dimensions larger than parent
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     REQUIRE(scrollNode->children.size() == 1);
 
     auto* child = scrollNode->children[0].get();
@@ -391,10 +409,11 @@ TEST_CASE("ScrollNode with flexGrow child") {
                     .width(100)
                     .height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     REQUIRE(scrollNode->children.size() == 1);
 
     auto* child = scrollNode->children[0].get();
@@ -427,10 +446,11 @@ TEST_CASE("ScrollNode scrolling works when content exceeds container") {
                     .width(100)
                     .height(100);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     auto* child = scrollNode->children[0].get();
 
     MESSAGE("Child height: " << child->layout.height);
@@ -445,7 +465,7 @@ TEST_CASE("ScrollNode scrolling works when content exceeds container") {
     CHECK(scrollNode->scrollOffsetY == 0);
 
     // Scroll down (negative delta = scroll down in Rack)
-    bool consumed = events.handleScroll(root.get(), 50, 50, 0, -50);
+    bool consumed = events.handleScroll(root, 50, 50, 0, -50);
 
     MESSAGE("Scroll consumed: " << consumed);
     MESSAGE("Target scroll after: " << scrollNode->targetScrollY);
@@ -496,10 +516,11 @@ TEST_CASE("ScrollNode with Column child (no explicit height) - mimics real UI pa
                     .height(100)
                     .flexGrow(1);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 200);  // Available space larger than scroll
 
-    auto* scrollNode = static_cast<ScrollNode*>(root.get());
+    auto* scrollNode = static_cast<ScrollNode*>(root);
     REQUIRE(scrollNode->children.size() == 1);
 
     auto* column = scrollNode->children[0].get();
@@ -538,7 +559,7 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
     //     Footer stuff...
     // }).flexGrow(1).padding(4).gap(4)
     // Build a list with enough items to exceed the scroll container
-    std::vector<VNode> items;
+    std::vector<Child> items;
     for (int i = 0; i < 20; i++) {
         items.push_back(Box().height(30).setKey("section" + std::to_string(i)));
     }
@@ -559,11 +580,12 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
                     .padding(4)
                     .gap(4);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     // Simulate module panel size (180x480)
     root->calculateLayout(180, 480);
 
-    auto* outerColumn = static_cast<BoxNode*>(root.get());
+    auto* outerColumn = static_cast<BoxNode*>(root);
     MESSAGE("Outer Column layout: " << outerColumn->layout.width << "x" << outerColumn->layout.height);
 
     // Find the scroll node (child index 1)

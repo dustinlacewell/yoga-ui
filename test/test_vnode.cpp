@@ -17,8 +17,8 @@ TEST_CASE("Box with children") {
         Text("B"),
     });
     CHECK(node.children.size() == 2);
-    CHECK(node.children[0].type == PrimitiveType::Text);
-    CHECK(node.children[1].type == PrimitiveType::Text);
+    CHECK(std::get<VNode>(node.children[0]).type == PrimitiveType::Text);
+    CHECK(std::get<VNode>(node.children[1]).type == PrimitiveType::Text);
 }
 
 TEST_CASE("Text factory sets text content") {
@@ -27,11 +27,10 @@ TEST_CASE("Text factory sets text content") {
     CHECK(std::get<TextProps>(node.props).text == "Hello");
 }
 
-TEST_CASE("Input factory sets value pointer") {
-    std::string val = "test";
-    auto node = Input(&val);
+TEST_CASE("Input factory creates input node") {
+    auto node = Input().value("test");
     CHECK(node.type == PrimitiveType::Input);
-    CHECK(std::get<InputProps>(node.props).value == &val);
+    CHECK(std::get<InputProps>(node.props).value == "test");
 }
 
 TEST_CASE("Fluent layout props") {
@@ -65,17 +64,18 @@ TEST_CASE("Fluent text-specific props") {
 }
 
 TEST_CASE("Fluent input-specific props") {
-    std::string val;
     bool changed = false;
     bool submitted = false;
 
-    auto node = Input(&val)
+    auto node = Input()
+                    .value("initial")
                     .placeholder("Enter text")
                     .password(true)
                     .onChange([&](const std::string&) { changed = true; })
                     .onSubmit([&]() { submitted = true; });
 
     auto& p = std::get<InputProps>(node.props);
+    CHECK(p.value == "initial");
     CHECK(p.placeholder == "Enter text");
     CHECK(p.password == true);
     CHECK(p.onChange);
@@ -105,8 +105,7 @@ TEST_CASE("Event props on all primitives") {
     }
 
     SUBCASE("Input") {
-        std::string val;
-        auto node = Input(&val).onClick(onClick);
+        auto node = Input().onClick(onClick);
         std::get<InputProps>(node.props).onClick();
         CHECK(clicked);
     }

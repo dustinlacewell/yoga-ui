@@ -60,6 +60,9 @@ private:
     // Update focus when clicking
     void updateFocus(Node* clicked);
 
+    // Find first node with a keyboard handler (DFS)
+    Node* findKeyTarget(Node* node);
+
     Node* hoveredNode_ = nullptr;
     InputNode* focusedInput_ = nullptr;
 };

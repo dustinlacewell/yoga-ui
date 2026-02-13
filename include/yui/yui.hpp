@@ -1,8 +1,10 @@
 #pragma once
 
 // Core
+#include <yui/core/ComponentContext.hpp>
 #include <yui/core/Event.hpp>
 #include <yui/core/EventHandler.hpp>
+#include <yui/core/Fiber.hpp>
 #include <yui/core/Host.hpp>
 #include <yui/core/Measure.hpp>
 #include <yui/core/Node.hpp>

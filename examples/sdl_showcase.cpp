@@ -25,53 +25,55 @@ using namespace showcase;
 // Canvas Demo - SDL-specific custom drawing
 // ============================================================================
 
-VNode CanvasDemo() {
-    const auto& t = theme();
+Component CanvasDemo() {
+    return [](ComponentContext&) -> VNode {
+        const auto& t = theme();
 
-    return Section("Canvas", {
-                                 Box(Canvas([](void* ctx, float w, float h) {
-                                         auto* r = static_cast<SDL_Renderer*>(ctx);
-                                         float cx = w / 2;
-                                         float cy = h / 2;
-                                         float radius = std::min(w, h) / 2 - 4;
+        return Section("Canvas", {
+                                     Box(Canvas([](void* ctx, float w, float h) {
+                                             auto* r = static_cast<SDL_Renderer*>(ctx);
+                                             float cx = w / 2;
+                                             float cy = h / 2;
+                                             float radius = std::min(w, h) / 2 - 4;
 
-                                         // Circle
-                                         SDL_SetRenderDrawColor(r, 0xFF, 0xD7, 0x00, 0xFF);
-                                         for (int dy = -radius; dy <= radius; dy++) {
-                                             float dx = std::sqrt(radius * radius - dy * dy);
-                                             SDL_RenderDrawLineF(r, cx - dx, cy + dy, cx + dx, cy + dy);
-                                         }
-
-                                         // Eyes
-                                         SDL_SetRenderDrawColor(r, 0x00, 0x00, 0x00, 0xFF);
-                                         float eyeR = radius * 0.12f;
-                                         float eyeY = cy - radius * 0.25f;
-                                         for (float ex : {cx - radius * 0.3f, cx + radius * 0.3f}) {
-                                             for (int dy = -eyeR; dy <= eyeR; dy++) {
-                                                 float dx = std::sqrt(eyeR * eyeR - dy * dy);
-                                                 SDL_RenderDrawLineF(r, ex - dx, eyeY + dy, ex + dx, eyeY + dy);
+                                             // Circle
+                                             SDL_SetRenderDrawColor(r, 0xFF, 0xD7, 0x00, 0xFF);
+                                             for (int dy = -radius; dy <= radius; dy++) {
+                                                 float dx = std::sqrt(radius * radius - dy * dy);
+                                                 SDL_RenderDrawLineF(r, cx - dx, cy + dy, cx + dx, cy + dy);
                                              }
-                                         }
 
-                                         // Smile
-                                         float smileR = radius * 0.5f;
-                                         float smileY = cy + radius * 0.1f;
-                                         for (int i = 0; i < 60; i++) {
-                                             float angle = (30 + i) * M_PI / 180.0f;
-                                             float px = cx + smileR * std::cos(angle);
-                                             float py = smileY + smileR * std::sin(angle);
-                                             SDL_RenderDrawPointF(r, px, py);
-                                             SDL_RenderDrawPointF(r, px, py + 1);
-                                         }
-                                     })
-                                         .width(80)
-                                         .height(80))
-                                     .backgroundColor(t.bg)
-                                     .borderRadius(t.radiusSm)
-                                     .padding(t.gap),
+                                             // Eyes
+                                             SDL_SetRenderDrawColor(r, 0x00, 0x00, 0x00, 0xFF);
+                                             float eyeR = radius * 0.12f;
+                                             float eyeY = cy - radius * 0.25f;
+                                             for (float ex : {cx - radius * 0.3f, cx + radius * 0.3f}) {
+                                                 for (int dy = -eyeR; dy <= eyeR; dy++) {
+                                                     float dx = std::sqrt(eyeR * eyeR - dy * dy);
+                                                     SDL_RenderDrawLineF(r, ex - dx, eyeY + dy, ex + dx, eyeY + dy);
+                                                 }
+                                             }
 
-                                 Label("Custom SDL2 drawing"),
-                             });
+                                             // Smile
+                                             float smileR = radius * 0.5f;
+                                             float smileY = cy + radius * 0.1f;
+                                             for (int i = 0; i < 60; i++) {
+                                                 float angle = (30 + i) * M_PI / 180.0f;
+                                                 float px = cx + smileR * std::cos(angle);
+                                                 float py = smileY + smileR * std::sin(angle);
+                                                 SDL_RenderDrawPointF(r, px, py);
+                                                 SDL_RenderDrawPointF(r, px, py + 1);
+                                             }
+                                         })
+                                             .width(80)
+                                             .height(80))
+                                         .backgroundColor(t.bg)
+                                         .borderRadius(t.radiusSm)
+                                         .padding(t.gap),
+
+                                     Label("Custom SDL2 drawing"),
+                                 });
+    };
 }
 
 // ============================================================================
@@ -79,7 +81,7 @@ VNode CanvasDemo() {
 // ============================================================================
 
 VNode buildUI() {
-    return App("YUI Showcase", "SDL2", CanvasDemo());
+    return Box({App("YUI Showcase", "SDL2", CanvasDemo())}).flexGrow(1);
 }
 
 class SdlHost : public Host {

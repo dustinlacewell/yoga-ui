@@ -1,8 +1,8 @@
 # Components
 
-Components are functions returning VNodes. No registration, no base class.
+## Helper Functions (Stateless)
 
-## Basic Pattern
+The simplest way to compose UI. Just functions that return VNodes:
 
 ```cpp
 VNode Button(std::string label, std::function<void()> onClick) {
@@ -20,6 +20,161 @@ VNode LabeledField(std::string label, VNode field) {
         field,
     }).gap(2);
 }
+```
+
+Helper functions are evaluated immediately and produce VNode subtrees. They have no identity in the fiber tree — the reconciler sees their output directly.
+
+## Stateful Components
+
+For local state, lifecycle effects, or selective re-rendering, wrap a lambda in `Component()`:
+
+```cpp
+Component Counter() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [count, setCount] = ctx.useState(0);
+
+        return Row({
+            Text("Count: " + std::to_string(count)),
+            Box(Text("+"))
+                .padding(8)
+                .onClick([=] { setCount(count + 1); }),
+        }).gap(8);
+    };
+}
+```
+
+Components are first-class children — mix them with VNodes in any container:
+
+```cpp
+Column({
+    Text("Header"),        // VNode
+    Counter(),             // Component
+    Text("Footer"),        // VNode
+})
+```
+
+The component function is called by the reconciler during mount and whenever the component is marked dirty. It receives a `ComponentContext&` for accessing hooks.
+
+**Important:** Component functions must be const-callable. Mutable lambdas (e.g., those that `std::move` captured values) are rejected at compile time — component functions may be called multiple times across re-renders.
+
+## Hooks
+
+### useState
+
+Local state that persists across re-renders. The setter triggers a re-render of just this component:
+
+```cpp
+auto [count, setCount] = ctx.useState(0);
+auto [name, setName] = ctx.useState<std::string>("Alice");
+
+// Replace value
+setCount(42);
+
+// Multiple useState calls are fine
+auto [a, setA] = ctx.useState(0);
+auto [b, setB] = ctx.useState("");
+```
+
+### useRef
+
+Mutable storage that persists across renders without triggering re-renders:
+
+```cpp
+int& renderCount = ctx.useRef<int>(0);
+renderCount++;  // Survives across re-renders, does NOT trigger re-render
+```
+
+### useEffect
+
+Run side effects after mount. Return a cleanup function (or nullptr):
+
+```cpp
+ctx.useEffect([&]() {
+    // Runs after mount
+    startTimer();
+    return [&]() {
+        // Cleanup runs on unmount
+        stopTimer();
+    };
+});
+
+ctx.useEffect([&]() {
+    log("mounted");
+    return nullptr;  // No cleanup needed
+});
+```
+
+Effects run in order. Cleanup functions run when the component unmounts.
+
+### useField
+
+Two-way binding to a specific field of a Store. Subscribes only to changes affecting that Store:
+
+```cpp
+struct FormState {
+    std::string username;
+    int age;
+};
+
+Store<FormState> formStore(FormState{"", 0});
+
+auto FormComponent = [&](ComponentContext& ctx) -> VNode {
+    auto [username, setUsername] = ctx.useField(formStore, &FormState::username);
+    auto [age, setAge] = ctx.useField(formStore, &FormState::age);
+
+    return Column({
+        Input().value(username).onChange([=](const std::string& v) { setUsername(v); }),
+        Text(username + " is " + std::to_string(age)),
+    });
+};
+```
+
+### Hook Rules
+
+Hooks must be called in the same order every render — no conditional hooks:
+
+```cpp
+// WRONG - hooks in conditional
+auto comp = [](ComponentContext& ctx) -> VNode {
+    if (someCondition) {
+        auto [x, setX] = ctx.useState(0);  // Bad: not called every render
+    }
+    // ...
+};
+
+// RIGHT - always call hooks, use values conditionally
+auto comp = [](ComponentContext& ctx) -> VNode {
+    auto [x, setX] = ctx.useState(0);
+    if (someCondition) {
+        // Use x here
+    }
+    // ...
+};
+```
+
+## Store Subscriptions
+
+`Store<T>::use()` inside a component subscribes only that component. When the Store changes, only subscribed components re-render — siblings and parents are untouched:
+
+```cpp
+Store<int> counter(0);
+
+auto Display = [&](ComponentContext& ctx) -> VNode {
+    int n = counter.use();  // Subscribes this component
+    return Text(std::to_string(n));
+};
+
+auto Static = [](ComponentContext& ctx) -> VNode {
+    return Text("I never re-render");  // No subscription
+};
+
+// When counter.set(42) is called:
+//   Display re-renders (subscribed)
+//   Static does NOT re-render
+Column({
+    Component(Display),
+    Component(Static),
+})
 ```
 
 ## Conditional Rendering
@@ -45,7 +200,7 @@ Column({
 
 ## Keyed Lists
 
-Two built-in list helpers that automatically assign keys:
+Two built-in list helpers that automatically assign keys. Render functions can return either `VNode` or `Component`:
 
 ```cpp
 // Vertical list (Column direction)
@@ -56,7 +211,7 @@ VNode List(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn);
 template<typename T, typename KeyFn, typename RenderFn>
 VNode HList(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn);
 
-// Usage
+// Usage with VNode render function
 VNode UserList(const std::vector<User>& users) {
     return List(users,
         [](const User& u) { return u.id; },  // Key (string or number)
@@ -68,6 +223,22 @@ VNode UserList(const std::vector<User>& users) {
         }
     );
 }
+
+// Usage with Component render function (each item gets its own state)
+VNode TodoList(const std::vector<Todo>& todos) {
+    return List(todos,
+        [](const Todo& t) { return t.id; },
+        [](const Todo& t) -> Component {
+            return [t](ComponentContext& ctx) -> VNode {
+                auto [editing, setEditing] = ctx.useState(false);
+                return Row({
+                    Text(t.text).flexGrow(1),
+                    Box(Text("Edit")).onClick([=] { setEditing(!editing); }),
+                });
+            };
+        }
+    );
+}
 ```
 
 Keys can be strings or any type convertible via `std::to_string()`.
@@ -76,10 +247,10 @@ Keys can be strings or any type convertible via `std::to_string()`.
 
 ```cpp
 // Row - horizontal flex container
-VNode Row(std::vector<VNode> children);
+VNode Row(std::vector<Child> children);
 
 // Column - vertical flex container
-VNode Column(std::vector<VNode> children);
+VNode Column(std::vector<Child> children);
 
 // Spacer - flexible space that grows to fill
 VNode Spacer();
@@ -88,18 +259,38 @@ VNode Spacer();
 VNode Gap(float size);
 ```
 
+`Child` is `std::variant<VNode, Component>`, so Row/Column accept any mix.
+
+## Component Keys
+
+Components support keys for stable reconciliation in lists:
+
+```cpp
+Component(MyComp).setKey("unique-id")
+Component(MyComp).setKey(42)  // Integer keys (more efficient)
+```
+
 ## Composition Example
 
 ```cpp
-VNode LoginForm(LoginState& state) {
-    return Column({
-        Text("Login").fontSize(16),
-        LabeledField("Username", Input(&state.username)),
-        LabeledField("Password", Input(&state.password).password(true)),
-        Row({
-            Button("Cancel", state.onCancel),
-            Button("Submit", state.onSubmit),
-        }).gap(8),
-    }).gap(16).padding(20);
+Component LoginForm() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [username, setUsername] = ctx.useState<std::string>("");
+        auto [password, setPassword] = ctx.useState<std::string>("");
+
+        return Column({
+            Text("Login").fontSize(16),
+            LabeledField("Username",
+                Input().value(username)
+                    .onChange([=](const std::string& v) { setUsername(v); })),
+            LabeledField("Password",
+                Input().value(password).password(true)
+                    .onChange([=](const std::string& v) { setPassword(v); })),
+            Row({
+                Button("Cancel", [] { /* ... */ }),
+                Button("Submit", [=] { doLogin(username, password); }),
+            }).gap(8),
+        }).gap(16).padding(20);
+    };
 }
 ```

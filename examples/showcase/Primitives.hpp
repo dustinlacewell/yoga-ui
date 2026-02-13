@@ -88,9 +88,12 @@ inline VNode IconButton(const std::string& icon, std::function<void()> onClick) 
 // Inputs
 // ============================================================================
 
-inline VNode TextInput(std::string* value, const std::string& placeholder = "", bool password = false) {
+inline VNode TextInput(const std::string& value, std::function<void(const std::string&)> onChange,
+                       const std::string& placeholder = "", bool password = false) {
     const auto& t = theme();
-    return Input(value)
+    return Input()
+        .value(value)
+        .onChange(std::move(onChange))
         .placeholder(placeholder)
         .password(password)
         .height(32)
@@ -103,16 +106,17 @@ inline VNode TextInput(std::string* value, const std::string& placeholder = "", 
         .focusStyle(InputStyle{.borderColor = t.accent});
 }
 
-inline VNode LabeledInput(const std::string& label, std::string* value, const std::string& placeholder = "",
+inline VNode LabeledInput(const std::string& label, const std::string& value,
+                          std::function<void(const std::string&)> onChange, const std::string& placeholder = "",
                           bool password = false) {
-    return Column({Label(label), TextInput(value, placeholder, password)}).gap(4).flexGrow(1);
+    return Column({Label(label), TextInput(value, std::move(onChange), placeholder, password)}).gap(4).flexGrow(1);
 }
 
 // ============================================================================
 // Containers
 // ============================================================================
 
-inline VNode Card(std::vector<VNode> children) {
+inline VNode Card(std::vector<Child> children) {
     const auto& t = theme();
     return Box(std::move(children))
         .backgroundColor(t.surface)
@@ -124,8 +128,8 @@ inline VNode Card(std::vector<VNode> children) {
         .gap(t.gap);
 }
 
-inline VNode Section(const std::string& title, std::vector<VNode> children) {
-    std::vector<VNode> content;
+inline VNode Section(const std::string& title, std::vector<Child> children) {
+    std::vector<Child> content;
     content.push_back(Heading(title));
     for (auto& child : children) {
         content.push_back(std::move(child));

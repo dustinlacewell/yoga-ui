@@ -14,96 +14,104 @@ using namespace yui;
 // Theme Switcher
 // ============================================================================
 
-inline VNode ThemeSwitcher() {
-    auto& s = state().use();
-    const auto& t = s.theme;
+inline Component ThemeSwitcher() {
+    return [](ComponentContext&) -> VNode {
+        auto& s = state().use();
+        const auto& t = s.theme;
 
-    auto themeButton = [&](const std::string& name, int index) {
-        bool active = s.themeIndex == index;
-        return Box(Text_(name, active ? t.textOnAccent : t.textMuted, 12.0f))
-            .backgroundColor(active ? t.accent : t.surfaceAlt)
-            .borderRadius(t.radiusSm)
-            .paddingTop(6)
-            .paddingBottom(6)
-            .paddingLeft(10)
-            .paddingRight(10)
-            .onClick([index] { setTheme(index); })
-            .hoverStyle(BoxStyle{.backgroundColor = active ? t.accentHover : t.border});
+        auto themeButton = [&](const std::string& name, int index) {
+            bool active = s.themeIndex == index;
+            return Box(Text_(name, active ? t.textOnAccent : t.textMuted, 12.0f))
+                .backgroundColor(active ? t.accent : t.surfaceAlt)
+                .borderRadius(t.radiusSm)
+                .paddingTop(6)
+                .paddingBottom(6)
+                .paddingLeft(10)
+                .paddingRight(10)
+                .onClick([index] { setTheme(index); })
+                .hoverStyle(BoxStyle{.backgroundColor = active ? t.accentHover : t.border});
+        };
+
+        auto sizeButton = [&](const std::string& name, int index) {
+            bool active = s.sizeIndex == index;
+            return Box(Text_(name, active ? t.text : t.textMuted, 11.0f))
+                .backgroundColor(active ? t.border : t.surfaceAlt)
+                .borderRadius(t.radiusSm)
+                .paddingTop(4)
+                .paddingBottom(4)
+                .paddingLeft(8)
+                .paddingRight(8)
+                .onClick([index] { setSizeModifier(index); })
+                .hoverStyle(BoxStyle{.backgroundColor = t.border});
+        };
+
+        return Column({
+                          Row({
+                                  themeButton("Midnight", 0),
+                                  themeButton("Ember", 1),
+                                  themeButton("Violet", 2),
+                                  themeButton("Mono", 3),
+                                  themeButton("Cyber", 4),
+                                  themeButton("Forest", 5),
+                              })
+                              .gap(t.gap)
+                              .flexWrap(FlexWrap::Wrap),
+                          Row({
+                                  Label("Size:"),
+                                  sizeButton("Default", 0),
+                                  sizeButton("Compact", 1),
+                                  sizeButton("Spacious", 2),
+                              })
+                              .gap(t.gap)
+                              .alignItems(AlignItems::Center),
+                      })
+            .gap(t.gap);
     };
-
-    auto sizeButton = [&](const std::string& name, int index) {
-        bool active = s.sizeIndex == index;
-        return Box(Text_(name, active ? t.text : t.textMuted, 11.0f))
-            .backgroundColor(active ? t.border : t.surfaceAlt)
-            .borderRadius(t.radiusSm)
-            .paddingTop(4)
-            .paddingBottom(4)
-            .paddingLeft(8)
-            .paddingRight(8)
-            .onClick([index] { setSizeModifier(index); })
-            .hoverStyle(BoxStyle{.backgroundColor = t.border});
-    };
-
-    return Column({
-                      Row({
-                              themeButton("Midnight", 0),
-                              themeButton("Ember", 1),
-                              themeButton("Violet", 2),
-                              themeButton("Mono", 3),
-                              themeButton("Cyber", 4),
-                              themeButton("Forest", 5),
-                          })
-                          .gap(t.gap)
-                          .flexWrap(FlexWrap::Wrap),
-                      Row({
-                              Label("Size:"),
-                              sizeButton("Default", 0),
-                              sizeButton("Compact", 1),
-                              sizeButton("Spacious", 2),
-                          })
-                          .gap(t.gap)
-                          .alignItems(AlignItems::Center),
-                  })
-        .gap(t.gap);
 }
 
 // ============================================================================
-// Login Form - Forms, validation, inputs
+// Login Form - Forms, validation, inputs (using useField hook)
 // ============================================================================
 
-inline VNode LoginForm() {
-    auto& s = state().use();
-    const auto& t = s.theme;
+inline auto LoginForm() -> Component {
+    return [](ComponentContext& ctx) -> VNode {
+        // useField binds Store fields to inputs with minimal boilerplate
+        auto [username, setUsername] = ctx.useField(state(), &AppState::username);
+        auto [password, setPassword] = ctx.useField(state(), &AppState::password);
+        const auto& t = theme();
 
-    return Section("Login", {
-                                LabeledInput("Username", const_cast<std::string*>(&s.username), "Enter username"),
-                                LabeledInput("Password", const_cast<std::string*>(&s.password), "Password", true),
+        return Section(
+            "Login",
+            {
+                LabeledInput("Username", username, setUsername, "Enter username"),
+                LabeledInput("Password", password, setPassword, "Password", true),
 
-                                Row({
-                                        Button(
-                                            "Sign In",
-                                            [] {
-                                                auto& s = state().use();
-                                                if (!s.username.empty() && !s.password.empty()) {
-                                                    setStatus("Welcome, " + s.username, theme().success);
-                                                } else {
-                                                    setStatus("Fill all fields", theme().warning);
-                                                }
-                                            },
-                                            t.success),
-                                        Button(
-                                            "Clear",
-                                            [] {
-                                                state().set([](AppState& s) {
-                                                    s.username.clear();
-                                                    s.password.clear();
-                                                });
-                                                setStatus("Cleared", theme().textMuted);
-                                            },
-                                            t.surfaceAlt),
-                                    })
-                                    .gap(t.gap),
-                            });
+                Row({
+                        Button(
+                            "Sign In",
+                            [] {
+                                auto& s = state().use();
+                                if (!s.username.empty() && !s.password.empty()) {
+                                    setStatus("Welcome, " + s.username, theme().success);
+                                } else {
+                                    setStatus("Fill all fields", theme().warning);
+                                }
+                            },
+                            t.success),
+                        Button(
+                            "Clear",
+                            [] {
+                                state().set([](AppState& s) {
+                                    s.username.clear();
+                                    s.password.clear();
+                                });
+                                setStatus("Cleared", theme().textMuted);
+                            },
+                            t.surfaceAlt),
+                    })
+                    .gap(t.gap),
+            });
+    };
 }
 
 // ============================================================================
@@ -138,152 +146,163 @@ inline VNode ListItem(const std::string& text, size_t index) {
         .setKey("item-" + std::to_string(index));
 }
 
-inline VNode DynamicList() {
-    auto& s = state().use();
-    const auto& t = s.theme;
+inline auto DynamicList() -> Component {
+    return [](ComponentContext& ctx) -> VNode {
+        auto& s = state().use();
+        const auto& t = s.theme;
 
-    std::vector<VNode> items;
-    for (size_t i = 0; i < s.items.size(); i++) {
-        items.push_back(ListItem(s.items[i], i));
-    }
+        // useField for the input text
+        auto [newItemText, setNewItemText] = ctx.useField(state(), &AppState::newItemText);
 
-    return Section(
-        "List", {
-                    Row({
-                            TextInput(const_cast<std::string*>(&s.newItemText), "New item...").flexGrow(1),
-                            Button(
-                                "+",
-                                [] {
-                                    state().set([](AppState& s) {
-                                        if (!s.newItemText.empty()) {
-                                            s.items.push_back(s.newItemText);
-                                            s.statusText = "Added " + s.newItemText;
-                                            s.statusColor = s.theme.success;
-                                            s.newItemText.clear();
-                                        }
-                                    });
-                                },
-                                t.success),
-                        })
-                        .gap(t.gap)
-                        .alignItems(AlignItems::Center),
+        std::vector<Child> items;
+        for (size_t i = 0; i < s.items.size(); i++) {
+            items.push_back(ListItem(s.items[i], i));
+        }
 
-                    Scroll(Column(std::move(items)).gap(4)).height(140).backgroundColor(t.bg).borderRadius(t.radiusSm),
+        return Section(
+            "List", {
+                        Row({
+                                TextInput(newItemText, setNewItemText, "New item...").flexGrow(1),
+                                Button(
+                                    "+",
+                                    [] {
+                                        state().set([](AppState& s) {
+                                            if (!s.newItemText.empty()) {
+                                                s.items.push_back(s.newItemText);
+                                                s.statusText = "Added " + s.newItemText;
+                                                s.statusColor = s.theme.success;
+                                                s.newItemText.clear();
+                                            }
+                                        });
+                                    },
+                                    t.success),
+                            })
+                            .gap(t.gap)
+                            .alignItems(AlignItems::Center),
 
-                    Row({
-                            Label(std::to_string(s.items.size()) + " items"),
-                            Spacer(),
-                            SmallButton(
-                                "Clear All",
-                                [] {
-                                    state().set([](AppState& s) { s.items.clear(); });
-                                    setStatus("List cleared", theme().warning);
-                                },
-                                t.danger),
-                        })
-                        .alignItems(AlignItems::Center),
-                });
+                        Scroll(Column(std::move(items)).gap(4)).height(140).backgroundColor(t.bg).borderRadius(t.radiusSm),
+
+                        Row({
+                                Label(std::to_string(s.items.size()) + " items"),
+                                Spacer(),
+                                SmallButton(
+                                    "Clear All",
+                                    [] {
+                                        state().set([](AppState& s) { s.items.clear(); });
+                                        setStatus("List cleared", theme().warning);
+                                    },
+                                    t.danger),
+                            })
+                            .alignItems(AlignItems::Center),
+                    });
+    };
 }
 
 // ============================================================================
 // Counter - Simple interaction demo
 // ============================================================================
 
-inline VNode Counter() {
-    auto& s = state().use();
-    const auto& t = s.theme;
+inline Component Counter() {
+    return [](ComponentContext&) -> VNode {
+        auto& s = state().use();
+        const auto& t = s.theme;
 
-    return Section("Counter",
-                   {
-                       Row({
-                               Button(
-                                   "-", [] { state().set([](AppState& s) { s.clickCount--; }); }, t.surfaceAlt),
-                               Box(Text_(std::to_string(s.clickCount), t.text, 20.0f))
-                                   .minWidth(60)
-                                   .justifyContent(JustifyContent::Center)
-                                   .alignItems(AlignItems::Center),
-                               Button(
-                                   "+", [] { state().set([](AppState& s) { s.clickCount++; }); }, t.surfaceAlt),
-                           })
-                           .gap(t.gap)
-                           .alignItems(AlignItems::Center)
-                           .justifyContent(JustifyContent::Center),
+        return Section("Counter",
+                       {
+                           Row({
+                                   Button(
+                                       "-", [] { state().set([](AppState& s) { s.clickCount--; }); }, t.surfaceAlt),
+                                   Box(Text_(std::to_string(s.clickCount), t.text, 20.0f))
+                                       .minWidth(60)
+                                       .justifyContent(JustifyContent::Center)
+                                       .alignItems(AlignItems::Center),
+                                   Button(
+                                       "+", [] { state().set([](AppState& s) { s.clickCount++; }); }, t.surfaceAlt),
+                               })
+                               .gap(t.gap)
+                               .alignItems(AlignItems::Center)
+                               .justifyContent(JustifyContent::Center),
 
-                       When(s.clickCount > 10, Badge("High score!", t.success)),
-                       When(s.clickCount < 0, Badge("Negative!", t.danger)),
-                   });
+                           When(s.clickCount > 10, Badge("High score!", t.success)),
+                           When(s.clickCount < 0, Badge("Negative!", t.danger)),
+                       });
+    };
 }
 
 // ============================================================================
 // Layout Demo - Flexbox features
 // ============================================================================
 
-inline VNode LayoutDemo() {
-    const auto& t = theme();
+inline Component LayoutDemo() {
+    return [](ComponentContext&) -> VNode {
+        const auto& t = theme();
 
-    auto swatch = [&](uint32_t color) {
-        return Box().width(32).height(32).backgroundColor(color).borderRadius(t.radiusSm);
+        auto swatch = [&](uint32_t color) {
+            return Box().width(32).height(32).backgroundColor(color).borderRadius(t.radiusSm);
+        };
+
+        return Section("Layout", {
+                                     Label("Space between"),
+                                     Row({
+                                             swatch(t.accent),
+                                             swatch(t.success),
+                                             swatch(t.warning),
+                                         })
+                                         .justifyContent(JustifyContent::SpaceBetween)
+                                         .backgroundColor(t.bg)
+                                         .padding(t.gap)
+                                         .borderRadius(t.radiusSm),
+
+                                     Label("Flex grow 1:2:1"),
+                                     Row({
+                                             Box(Text_("1", t.textOnAccent, 12.0f))
+                                                 .flexGrow(1)
+                                                 .height(28)
+                                                 .backgroundColor(t.accent)
+                                                 .borderRadius(t.radiusSm)
+                                                 .justifyContent(JustifyContent::Center)
+                                                 .alignItems(AlignItems::Center),
+                                             Box(Text_("2", t.textOnAccent, 12.0f))
+                                                 .flexGrow(2)
+                                                 .height(28)
+                                                 .backgroundColor(t.success)
+                                                 .borderRadius(t.radiusSm)
+                                                 .justifyContent(JustifyContent::Center)
+                                                 .alignItems(AlignItems::Center),
+                                             Box(Text_("1", t.textOnAccent, 12.0f))
+                                                 .flexGrow(1)
+                                                 .height(28)
+                                                 .backgroundColor(t.warning)
+                                                 .borderRadius(t.radiusSm)
+                                                 .justifyContent(JustifyContent::Center)
+                                                 .alignItems(AlignItems::Center),
+                                         })
+                                         .gap(t.gap),
+                                 });
     };
-
-    return Section("Layout", {
-                                 Label("Space between"),
-                                 Row({
-                                         swatch(t.accent),
-                                         swatch(t.success),
-                                         swatch(t.warning),
-                                     })
-                                     .justifyContent(JustifyContent::SpaceBetween)
-                                     .backgroundColor(t.bg)
-                                     .padding(t.gap)
-                                     .borderRadius(t.radiusSm),
-
-                                 Label("Flex grow 1:2:1"),
-                                 Row({
-                                         Box(Text_("1", t.textOnAccent, 12.0f))
-                                             .flexGrow(1)
-                                             .height(28)
-                                             .backgroundColor(t.accent)
-                                             .borderRadius(t.radiusSm)
-                                             .justifyContent(JustifyContent::Center)
-                                             .alignItems(AlignItems::Center),
-                                         Box(Text_("2", t.textOnAccent, 12.0f))
-                                             .flexGrow(2)
-                                             .height(28)
-                                             .backgroundColor(t.success)
-                                             .borderRadius(t.radiusSm)
-                                             .justifyContent(JustifyContent::Center)
-                                             .alignItems(AlignItems::Center),
-                                         Box(Text_("1", t.textOnAccent, 12.0f))
-                                             .flexGrow(1)
-                                             .height(28)
-                                             .backgroundColor(t.warning)
-                                             .borderRadius(t.radiusSm)
-                                             .justifyContent(JustifyContent::Center)
-                                             .alignItems(AlignItems::Center),
-                                     })
-                                     .gap(t.gap),
-                             });
 }
 
 // ============================================================================
 // Scroll Demo
 // ============================================================================
 
-inline VNode ScrollDemo() {
-    const auto& t = theme();
+inline Component ScrollDemo() {
+    return [](ComponentContext&) -> VNode {
+        const auto& t = theme();
 
-    std::vector<VNode> rows;
-    for (int i = 1; i <= 15; i++) {
-        rows.push_back(Box(Label("Row " + std::to_string(i)))
-                           .backgroundColor(i % 2 ? t.surfaceAlt : t.surface)
-                           .padding(t.gap)
-                           .borderRadius(t.radiusSm));
-    }
+        std::vector<Child> rows;
+        for (int i = 1; i <= 15; i++) {
+            rows.push_back(Box(Label("Row " + std::to_string(i)))
+                               .backgroundColor(i % 2 ? t.surfaceAlt : t.surface)
+                               .padding(t.gap)
+                               .borderRadius(t.radiusSm));
+        }
 
-    return Section(
-        "Scroll", {
-                      Scroll(Column(std::move(rows)).gap(2)).height(120).backgroundColor(t.bg).borderRadius(t.radiusSm),
-                  });
+        return Section(
+            "Scroll", {
+                          Scroll(Column(std::move(rows)).gap(2)).height(120).backgroundColor(t.bg).borderRadius(t.radiusSm),
+                      });
+    };
 }
 
 // ============================================================================
@@ -354,33 +373,113 @@ inline void handleKeyboardEvent(int keyCode, uint16_t mods) {
     });
 }
 
-inline VNode KeyboardDemo() {
-    auto& s = state().use();
-    const auto& t = s.theme;
+inline Component KeyboardDemo() {
+    return [](ComponentContext&) -> VNode {
+        auto& s = state().use();
+        const auto& t = s.theme;
 
-    return Section(
-        "Keyboard",
-        {
-            Label("Press any key (click outside inputs first)"),
+        return Section(
+            "Keyboard",
+            {
+                Label("Press any key (click outside inputs first)"),
 
-            Box({
-                    Column({
-                               Row({Label("Key:"), Body(s.lastKeyName)}).gap(t.gap).alignItems(AlignItems::Center),
-                               Row({Label("Code:"), Body(std::to_string(s.lastKeyCode))})
-                                   .gap(t.gap)
-                                   .alignItems(AlignItems::Center),
-                               Row({Label("Mods:"), Body(s.keyModifiers.empty() ? "None" : s.keyModifiers)})
-                                   .gap(t.gap)
-                                   .alignItems(AlignItems::Center),
-                           })
-                        .gap(4),
-                })
-                .backgroundColor(t.bg)
-                .borderRadius(t.radiusSm)
-                .borderWidth(2)
-                .borderColor(t.border)
-                .padding(t.padding),
-        });
+                Box({
+                        Column({
+                                   Row({Label("Key:"), Body(s.lastKeyName)}).gap(t.gap).alignItems(AlignItems::Center),
+                                   Row({Label("Code:"), Body(std::to_string(s.lastKeyCode))})
+                                       .gap(t.gap)
+                                       .alignItems(AlignItems::Center),
+                                   Row({Label("Mods:"), Body(s.keyModifiers.empty() ? "None" : s.keyModifiers)})
+                                       .gap(t.gap)
+                                       .alignItems(AlignItems::Center),
+                               })
+                            .gap(4),
+                    })
+                    .backgroundColor(t.bg)
+                    .borderRadius(t.radiusSm)
+                    .borderWidth(2)
+                    .borderColor(t.border)
+                    .padding(t.padding),
+            });
+    };
+}
+
+// ============================================================================
+// Hooks Demo - Demonstrates useState hook with local component state
+// ============================================================================
+
+// A stateful counter component using hooks - state is local to each instance
+inline Component HookCounter() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [count, setCount] = ctx.useState<int>(0);
+        const auto& t = theme();
+
+        return Row({
+                       Box(Text_("-", t.textOnAccent, 16.0f))
+                           .backgroundColor(t.surfaceAlt)
+                           .borderRadius(t.radiusSm)
+                           .padding(8)
+                           .onClick([setCount, count] { setCount(count - 1); })
+                           .hoverStyle(BoxStyle{.backgroundColor = t.border}),
+                       Box(Text_(std::to_string(count), t.text, 18.0f))
+                           .minWidth(50)
+                           .justifyContent(JustifyContent::Center)
+                           .alignItems(AlignItems::Center),
+                       Box(Text_("+", t.textOnAccent, 16.0f))
+                           .backgroundColor(t.surfaceAlt)
+                           .borderRadius(t.radiusSm)
+                           .padding(8)
+                           .onClick([setCount, count] { setCount(count + 1); })
+                           .hoverStyle(BoxStyle{.backgroundColor = t.border}),
+                   })
+            .gap(8)
+            .alignItems(AlignItems::Center);
+    };
+}
+
+// A toggle component that demonstrates boolean state
+inline Component HookToggle(const std::string& label) {
+    return [label](ComponentContext& ctx) -> VNode {
+        auto [on, setOn] = ctx.useState<bool>(false);
+        const auto& t = theme();
+
+        return Row({
+                       Text_(label, t.text, 12.0f),
+                       Box(Box()
+                               .width(16)
+                               .height(16)
+                               .backgroundColor(on ? t.success : t.bg)
+                               .borderRadius(8)
+                               .positionType(PositionType::Absolute)
+                               .positionLeft(on ? 18.0f : 2.0f)
+                               .positionTop(2.0f))
+                           .width(36)
+                           .height(20)
+                           .backgroundColor(on ? t.success : t.border)
+                           .borderRadius(10)
+                           .onClick([setOn, on] { setOn(!on); }),
+                   })
+            .gap(8)
+            .alignItems(AlignItems::Center);
+    };
+}
+
+inline Component HooksDemo() {
+    return [](ComponentContext&) -> VNode {
+        const auto& t = theme();
+
+        return Section("Hooks",
+                       {
+                           Label("Local component state with useState:"),
+                           Column({
+                                      Row({Label("Counter 1:"), HookCounter()}).gap(t.gap).alignItems(AlignItems::Center),
+                                      Row({Label("Counter 2:"), HookCounter()}).gap(t.gap).alignItems(AlignItems::Center),
+                                      HookToggle("Feature A"),
+                                      HookToggle("Feature B"),
+                                  })
+                               .gap(t.gap),
+                       });
+    };
 }
 
 }  // namespace showcase

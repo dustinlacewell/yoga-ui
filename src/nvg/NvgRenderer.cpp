@@ -52,9 +52,6 @@ void NvgRenderer::render(Node* root) {
 }
 
 void NvgRenderer::drawNode(DrawContext& ctx, Node* node) {
-    if (!node)
-        return;
-
     float x = ctx.offsetX + node->layout.left;
     float y = ctx.offsetY + node->layout.top;
 
@@ -350,21 +347,21 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         nvgStroke(vg_);
     }
 
-    // Text content
-    std::string displayText;
+    // Text content - use node's displayText (synced from controlled value)
+    std::string textToDraw;
     uint32_t textColor = c;
-    if (p.value && !p.value->empty()) {
+    if (!node->displayText.empty()) {
         if (p.password && *p.password) {
-            displayText = std::string(p.value->length(), '*');
+            textToDraw = std::string(node->displayText.length(), '*');
         } else {
-            displayText = *p.value;
+            textToDraw = node->displayText;
         }
     } else if (p.placeholder) {
-        displayText = *p.placeholder;
+        textToDraw = *p.placeholder;
         textColor = 0x808080FF;
     }
 
-    if (!displayText.empty()) {
+    if (!textToDraw.empty()) {
         nvgFontSize(vg_, fontSize);
         if (fontId_ >= 0) {
             nvgFontFaceId(vg_, fontId_);
@@ -374,7 +371,7 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         nvgFillColor(vg_, nvgRGBA((textColor >> 24) & 0xFF, (textColor >> 16) & 0xFF, (textColor >> 8) & 0xFF,
                                   textColor & 0xFF));
         nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgText(vg_, x + 4, y + h / 2, displayText.c_str(), nullptr);
+        nvgText(vg_, x + 4, y + h / 2, textToDraw.c_str(), nullptr);
     }
 }
 

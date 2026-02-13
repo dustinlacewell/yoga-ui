@@ -11,3 +11,10 @@ out/
 *.user
 CMakeSettings.json
 CMakePresets.json
+*.exe
+*.txt
+*.ps1
+*.o
+
+.claude/
+llm/

@@ -1,95 +1,104 @@
 #include <yui/core/Reconciler.hpp>
 
+#include <yui/core/ComponentContext.hpp>
+#include <yui/core/Host.hpp>
+
 #include <algorithm>
 #include <unordered_map>
 
 namespace yui {
 
-std::unique_ptr<Node> Reconciler::mount(const VNode& vnode, size_t sourcePosition) {
-    if (vnode.isEmpty) {
-        return nullptr;
-    }
+// --- Helpers for Child variant ---
 
-    auto node = createNode(vnode.type);
-    node->key = vnode.key;
-    node->intKey = vnode.intKey;
-    node->sourcePosition = sourcePosition;
-    node->updateProps(vnode.props);
-
-    // Mount children, tracking their source positions
-    for (size_t i = 0; i < vnode.children.size(); ++i) {
-        const auto& childVNode = vnode.children[i];
-        if (childVNode.isEmpty)
-            continue;
-
-        auto childNode = mount(childVNode, i);  // Pass VNode index as source position
-        if (childNode) {
-            childNode->parent = node.get();
-            // ScrollNode children are NOT Yoga children - they're laid out separately
-            // with unconstrained height so content can exceed the scroll viewport
-            if (node->type() != PrimitiveType::Scroll) {
-                insertYogaChild(node.get(), childNode.get(), node->children.size());
+static bool isChildEmpty(const Child& child) {
+    return std::visit(
+        [](const auto& c) {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, VNode>) {
+                return c.isEmpty;
+            } else {
+                return false;
             }
-            node->children.push_back(std::move(childNode));
-        }
-    }
-
-    return node;
+        },
+        child);
 }
 
-void Reconciler::reconcile(Node* node, const VNode& vnode) {
-    if (!node || vnode.isEmpty)
-        return;
-
-    // Update props
-    node->updateProps(vnode.props);
-
-    // Reconcile children
-    reconcileChildren(node, vnode.children);
+static bool isComponent(const Child& child) {
+    return std::holds_alternative<Component>(child);
 }
 
-// Helper to find existing child node that matches a VNode
-struct ChildLookup {
+static bool hasIntKey(const Child& child) {
+    return std::visit(
+        [](const auto& c) { return c.hasIntKey(); }, child);
+}
+
+static int64_t getIntKey(const Child& child) {
+    return std::visit(
+        [](const auto& c) { return c.intKey; }, child);
+}
+
+static bool hasStringKey(const Child& child) {
+    return std::visit(
+        [](const auto& c) { return c.hasStringKey(); }, child);
+}
+
+static std::string getStringKey(const Child& child) {
+    return std::visit(
+        [](const auto& c) -> std::string { return c.key; }, child);
+}
+
+// --- Fiber child lookup (mirrors old ChildLookup but for fibers) ---
+
+struct FiberLookup {
     std::unordered_map<int64_t, size_t> byIntKey;
     std::unordered_map<std::string, size_t> byStringKey;
     std::unordered_map<size_t, size_t> byPosition;
 
-    void build(const std::vector<std::unique_ptr<Node>>& children) {
-        for (size_t i = 0; i < children.size(); ++i) {
-            const auto& child = children[i];
-            if (child->hasIntKey()) {
-                byIntKey[child->intKey] = i;
-            } else if (child->hasStringKey()) {
-                byStringKey[child->key] = i;
-            } else if (child->sourcePosition != Node::NO_SOURCE_POSITION) {
-                byPosition[child->sourcePosition] = i;
+    void build(const std::vector<std::unique_ptr<Fiber>>& fibers) {
+        for (size_t i = 0; i < fibers.size(); ++i) {
+            const auto& f = fibers[i];
+            if (f->hasIntKey()) {
+                byIntKey[f->intKey] = i;
+            } else if (f->hasStringKey()) {
+                byStringKey[f->key] = i;
+            } else if (f->sourcePosition != Fiber::NO_SOURCE_POSITION) {
+                byPosition[f->sourcePosition] = i;
             }
         }
     }
 
-    // Returns index of matching child, or SIZE_MAX if not found
-    size_t find(const VNode& vnode, size_t vnodeIndex,
-                const std::vector<std::unique_ptr<Node>>& children,
+    // Check if a Child matches a Fiber (type compatibility)
+    static bool typeMatches(const Child& child, const Fiber& fiber) {
+        if (isComponent(child)) {
+            return fiber.isComponent();
+        } else {
+            if (!fiber.isHost() || !fiber.renderNode) return false;
+            return fiber.renderNode->type() == std::get<VNode>(child).type;
+        }
+    }
+
+    size_t find(const Child& child, size_t childIndex,
+                const std::vector<std::unique_ptr<Fiber>>& fibers,
                 const std::vector<bool>& reused) const {
-        // Try int key first (most efficient)
-        if (vnode.hasIntKey()) {
-            auto it = byIntKey.find(vnode.intKey);
-            if (it != byIntKey.end() && children[it->second]->type() == vnode.type) {
+        // Try int key first
+        if (hasIntKey(child)) {
+            auto it = byIntKey.find(getIntKey(child));
+            if (it != byIntKey.end() && typeMatches(child, *fibers[it->second])) {
                 return it->second;
             }
         }
         // Fall back to string key
-        else if (vnode.hasStringKey()) {
-            auto it = byStringKey.find(vnode.key);
-            if (it != byStringKey.end() && children[it->second]->type() == vnode.type) {
+        else if (hasStringKey(child)) {
+            auto it = byStringKey.find(getStringKey(child));
+            if (it != byStringKey.end() && typeMatches(child, *fibers[it->second])) {
                 return it->second;
             }
         }
-        // Fall back to position match (only for keyless nodes)
+        // Fall back to position match
         else {
-            auto it = byPosition.find(vnodeIndex);
+            auto it = byPosition.find(childIndex);
             if (it != byPosition.end() && !reused[it->second] &&
-                children[it->second]->type() == vnode.type) {
+                typeMatches(child, *fibers[it->second])) {
                 return it->second;
             }
         }
@@ -97,102 +106,484 @@ struct ChildLookup {
     }
 };
 
-void Reconciler::reconcileChildren(Node* parent, const std::vector<VNode>& vnodeChildren) {
-    // Build lookup tables for existing children
-    ChildLookup lookup;
-    lookup.build(parent->children);
+// ============================================================================
+// Mounting
+// ============================================================================
 
-    // Track which old children are reused
-    std::vector<bool> reused(parent->children.size(), false);
+std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
+    if (vnode.isEmpty) {
+        return nullptr;
+    }
 
-    // Track if children are unchanged (same nodes in same order)
+    // The root is always a host node. Mount it without a render parent
+    // (the render root is stored in renderRoot_).
+    auto rootNode = createNode(vnode.type);
+    rootNode->updateProps(vnode.props);
+    rootNode->key = vnode.key;
+    rootNode->intKey = vnode.intKey;
+
+    auto fiber = std::make_unique<Fiber>();
+    fiber->tag = Fiber::Tag::Host;
+    fiber->key = vnode.key;
+    fiber->intKey = vnode.intKey;
+    fiber->sourcePosition = 0;
+    fiber->renderNode = rootNode.get();
+
+    renderRoot_ = std::move(rootNode);
+
+    // Mount children into the root render node
+    size_t renderIndex = 0;
+    for (size_t i = 0; i < vnode.children.size(); ++i) {
+        const auto& child = vnode.children[i];
+        if (isChildEmpty(child)) continue;
+
+        auto childFiber = mountChild(child, i, fiber->renderNode, renderIndex);
+        if (childFiber) {
+            childFiber->parent = fiber.get();
+            fiber->children.push_back(std::move(childFiber));
+        }
+    }
+
+    return fiber;
+}
+
+std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePos,
+                                              Node* renderParent, size_t& renderIndex) {
+    if (vnode.isEmpty) return nullptr;
+
+    auto fiber = std::make_unique<Fiber>();
+    fiber->tag = Fiber::Tag::Host;
+    fiber->key = vnode.key;
+    fiber->intKey = vnode.intKey;
+    fiber->sourcePosition = sourcePos;
+
+    // Create render node
+    auto node = createNode(vnode.type);
+    node->updateProps(vnode.props);
+    node->key = vnode.key;
+    node->intKey = vnode.intKey;
+    fiber->renderNode = node.get();
+
+    // Insert into render tree
+    insertRenderNode(renderParent, std::move(node), renderIndex);
+    renderIndex++;
+
+    // Mount children — this fiber's renderNode is the render parent for children
+    size_t childRenderIndex = 0;
+    for (size_t i = 0; i < vnode.children.size(); ++i) {
+        const auto& child = vnode.children[i];
+        if (isChildEmpty(child)) continue;
+
+        auto childFiber = mountChild(child, i, fiber->renderNode, childRenderIndex);
+        if (childFiber) {
+            childFiber->parent = fiber.get();
+            fiber->children.push_back(std::move(childFiber));
+        }
+    }
+
+    return fiber;
+}
+
+std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t sourcePos,
+                                                    Node* renderParent, size_t& renderIndex) {
+    auto fiber = std::make_unique<Fiber>();
+    fiber->tag = Fiber::Tag::Component;
+    fiber->key = comp.key;
+    fiber->intKey = comp.intKey;
+    fiber->sourcePosition = sourcePos;
+    fiber->componentFn = comp.fn;
+    fiber->host = host_;
+
+#ifndef NDEBUG
+    fiber->debugName = comp.debugName;
+#endif
+
+    // Set render context for Store subscriptions
+    FiberRenderContext fiberCtx(fiber.get());
+
+    // Call the component function
+    ComponentContext ctx(fiber.get(), host_);
+    VNode result = comp.fn(ctx);
+
+    // Run pending effects
+    fiber->runPendingEffects();
+
+    // Mount the result — render parent is the SAME as ours (component is invisible)
+    if (!result.isEmpty) {
+        auto childFiber = mountHost(result, 0, renderParent, renderIndex);
+        if (childFiber) {
+            childFiber->parent = fiber.get();
+            fiber->children.push_back(std::move(childFiber));
+        }
+    }
+
+    return fiber;
+}
+
+std::unique_ptr<Fiber> Reconciler::mountChild(const Child& child, size_t sourcePos,
+                                                Node* renderParent, size_t& renderIndex) {
+    if (isChildEmpty(child)) return nullptr;
+
+    if (std::holds_alternative<VNode>(child)) {
+        return mountHost(std::get<VNode>(child), sourcePos, renderParent, renderIndex);
+    } else {
+        return mountComponent(std::get<Component>(child), sourcePos, renderParent, renderIndex);
+    }
+}
+
+// ============================================================================
+// Reconciliation
+// ============================================================================
+
+void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
+    if (!fiber || vnode.isEmpty) return;
+
+    // Must be a host fiber
+    if (!fiber->isHost() || !fiber->renderNode) return;
+
+    // Update props on the render node
+    fiber->renderNode->updateProps(vnode.props);
+
+    // Reconcile children
+    reconcileChildren(fiber, vnode.children, fiber->renderNode);
+}
+
+void Reconciler::reconcileHost(Fiber* fiber, const VNode& vnode) {
+    if (!fiber || !fiber->isHost() || !fiber->renderNode) return;
+
+    // Update props
+    fiber->renderNode->updateProps(vnode.props);
+
+    // Update identity
+    fiber->key = vnode.key;
+    fiber->intKey = vnode.intKey;
+
+    // Reconcile children
+    reconcileChildren(fiber, vnode.children, fiber->renderNode);
+}
+
+void Reconciler::reconcileComponent(Fiber* fiber, const Component& comp) {
+    if (!fiber || !fiber->isComponent()) return;
+    fiber->componentFn = comp.fn;
+    rerenderComponent(fiber);
+}
+
+void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>& children,
+                                    Node* renderParent) {
+    // Build lookup from existing fiber children
+    FiberLookup lookup;
+    lookup.build(parentFiber->children);
+
+    std::vector<bool> reused(parentFiber->children.size(), false);
     bool childrenUnchanged = true;
     size_t newChildIndex = 0;
 
-    // New children list
-    std::vector<std::unique_ptr<Node>> newChildren;
+    std::vector<std::unique_ptr<Fiber>> newFibers;
 
-    for (size_t i = 0; i < vnodeChildren.size(); ++i) {
-        const auto& childVNode = vnodeChildren[i];
+    for (size_t i = 0; i < children.size(); ++i) {
+        const auto& child = children[i];
+        if (isChildEmpty(child)) continue;
 
-        if (childVNode.isEmpty) {
-            continue;
-        }
-
-        size_t existingIndex = lookup.find(childVNode, i, parent->children, reused);
+        size_t existingIndex = lookup.find(child, i, parentFiber->children, reused);
 
         if (existingIndex != SIZE_MAX) {
-            // Reuse existing node
-            Node* existingChild = parent->children[existingIndex].get();
+            // Reuse existing fiber
             reused[existingIndex] = true;
-            existingChild->sourcePosition = i;
-            existingChild->intKey = childVNode.intKey;
+            auto& existingFiber = parentFiber->children[existingIndex];
+            existingFiber->sourcePosition = i;
 
-            reconcile(existingChild, childVNode);
-            newChildren.push_back(std::move(parent->children[existingIndex]));
+            // Update keys
+            if (hasIntKey(child)) existingFiber->intKey = getIntKey(child);
+            if (hasStringKey(child)) existingFiber->key = getStringKey(child);
+
+            // Reconcile based on type
+            if (std::holds_alternative<VNode>(child)) {
+                reconcileHost(existingFiber.get(), std::get<VNode>(child));
+            } else {
+                reconcileComponent(existingFiber.get(), std::get<Component>(child));
+            }
+
+            newFibers.push_back(std::move(parentFiber->children[existingIndex]));
 
             if (existingIndex != newChildIndex) {
                 childrenUnchanged = false;
             }
         } else {
-            // Create new node
+            // Create new fiber
             childrenUnchanged = false;
 
-            auto newNode = mount(childVNode, i);
-            if (newNode) {
-                newNode->parent = parent;
-                newChildren.push_back(std::move(newNode));
+            // Use end-of-list renderIndex — we'll rebuild render children after
+            size_t dummyRenderIndex = renderParent->children.size();
+            auto newFiber = mountChild(child, i, renderParent, dummyRenderIndex);
+            if (newFiber) {
+                newFiber->parent = parentFiber;
+                newFibers.push_back(std::move(newFiber));
             }
         }
         newChildIndex++;
     }
 
-    // Check if any children were removed
-    if (newChildren.size() != parent->children.size()) {
+    if (newFibers.size() != parentFiber->children.size()) {
         childrenUnchanged = false;
     }
 
-    // Notify and unmount nodes that weren't reused
-    for (size_t i = 0; i < parent->children.size(); ++i) {
-        if (!reused[i] && parent->children[i]) {
-            notifyRemoved(parent->children[i].get());
-            parent->children[i]->willUnmount();
+    // Unmount fibers that weren't reused
+    for (size_t i = 0; i < parentFiber->children.size(); ++i) {
+        if (!reused[i] && parentFiber->children[i]) {
+            unmountFiber(parentFiber->children[i].get(), renderParent);
         }
     }
 
-    // Only rebuild yoga child relationships if children actually changed
+    parentFiber->children = std::move(newFibers);
+
+    // Rebuild render parent's children in correct order if anything changed
     if (!childrenUnchanged) {
-        YGNodeRemoveAllChildren(parent->yogaNode);
-        if (parent->type() != PrimitiveType::Scroll) {
-            for (size_t i = 0; i < newChildren.size(); ++i) {
-                YGNodeInsertChild(parent->yogaNode, newChildren[i]->yogaNode, i);
+        rebuildRenderChildren(parentFiber, renderParent);
+    }
+}
+
+// ============================================================================
+// Dirty component re-render
+// ============================================================================
+
+bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
+    if (!fiber) return false;
+
+    bool anyReconciled = false;
+
+    if (fiber->isComponent() && fiber->dirty) {
+        // Re-render this component (which reconciles its entire subtree),
+        // so we don't walk its children — they're handled by rerenderComponent.
+        rerenderComponent(fiber);
+        anyReconciled = true;
+    } else {
+        for (auto& child : fiber->children) {
+            if (reconcileDirtyComponents(child.get())) {
+                anyReconciled = true;
             }
         }
     }
 
-    parent->children = std::move(newChildren);
+    return anyReconciled;
 }
 
-void Reconciler::insertYogaChild(Node* parent, Node* child, size_t index) {
-    YGNodeInsertChild(parent->yogaNode, child->yogaNode, index);
+void Reconciler::rerenderComponent(Fiber* fiber) {
+    if (!fiber || !fiber->isComponent()) return;
+
+    fiber->dirty = false;
+
+    // Clear old subscription cleanups
+    for (auto& cleanup : fiber->subscriptionCleanups) {
+        cleanup();
+    }
+    fiber->subscriptionCleanups.clear();
+
+    // Set render context
+    FiberRenderContext fiberCtx(fiber);
+
+    // Call component function
+    ComponentContext ctx(fiber, host_);
+    VNode result = fiber->componentFn(ctx);
+
+    // Run pending effects
+    fiber->runPendingEffects();
+
+    Node* renderParent = findRenderParent(fiber);
+
+    if (result.isEmpty) {
+        for (auto& child : fiber->children) {
+            unmountFiber(child.get(), renderParent);
+        }
+        fiber->children.clear();
+    } else if (!fiber->children.empty()) {
+        auto& existingChild = fiber->children[0];
+        if (existingChild->isHost() && existingChild->renderNode &&
+            existingChild->renderNode->type() == result.type) {
+            reconcileHost(existingChild.get(), result);
+        } else {
+            unmountFiber(existingChild.get(), renderParent);
+            fiber->children.clear();
+
+            size_t renderIndex = findRenderIndex(fiber);
+            auto newChild = mountHost(result, 0, renderParent, renderIndex);
+            if (newChild) {
+                newChild->parent = fiber;
+                fiber->children.push_back(std::move(newChild));
+            }
+        }
+    } else {
+        size_t renderIndex = findRenderIndex(fiber);
+        auto newChild = mountHost(result, 0, renderParent, renderIndex);
+        if (newChild) {
+            newChild->parent = fiber;
+            fiber->children.push_back(std::move(newChild));
+        }
+    }
 }
 
-void Reconciler::removeYogaChild(Node* parent, Node* child) {
-    YGNodeRemoveChild(parent->yogaNode, child->yogaNode);
+// ============================================================================
+// Render tree manipulation
+// ============================================================================
+
+Node* Reconciler::findRenderParent(Fiber* fiber) {
+    Fiber* current = fiber->parent;
+    while (current) {
+        if (current->isHost() && current->renderNode) {
+            return current->renderNode;
+        }
+        current = current->parent;
+    }
+    return renderRoot_.get();
 }
 
-void Reconciler::notifyRemoved(Node* node) {
-    if (!node)
-        return;
+size_t Reconciler::countRenderNodes(Fiber* fiber) {
+    if (fiber->isHost()) return 1;
+    size_t count = 0;
+    for (auto& child : fiber->children) {
+        count += countRenderNodes(child.get());
+    }
+    return count;
+}
 
-    // Notify for this node
+size_t Reconciler::findRenderIndex(Fiber* fiber) {
+    size_t index = 0;
+    Fiber* current = fiber;
+
+    while (current->parent && current->parent->isComponent()) {
+        Fiber* compParent = current->parent;
+        for (auto& sibling : compParent->children) {
+            if (sibling.get() == current) break;
+            index += countRenderNodes(sibling.get());
+        }
+        current = compParent;
+    }
+
+    if (current->parent) {
+        for (auto& sibling : current->parent->children) {
+            if (sibling.get() == current) break;
+            index += countRenderNodes(sibling.get());
+        }
+    }
+
+    return index;
+}
+
+void Reconciler::insertRenderNode(Node* renderParent, std::unique_ptr<Node> node, size_t index) {
+    if (!renderParent) return;
+
+    node->parent = renderParent;
+
+    // Insert into yoga tree (unless parent is ScrollNode)
+    if (renderParent->type() != PrimitiveType::Scroll && renderParent->yogaNode && node->yogaNode) {
+        YGNodeInsertChild(renderParent->yogaNode, node->yogaNode, index);
+    }
+
+    if (index >= renderParent->children.size()) {
+        renderParent->children.push_back(std::move(node));
+    } else {
+        renderParent->children.insert(renderParent->children.begin() + index, std::move(node));
+    }
+}
+
+void Reconciler::removeRenderNode(Node* renderParent, Node* node) {
+    if (!renderParent || !node) return;
+
+    if (renderParent->yogaNode && node->yogaNode) {
+        YGNodeRemoveChild(renderParent->yogaNode, node->yogaNode);
+    }
+
+    for (auto it = renderParent->children.begin(); it != renderParent->children.end(); ++it) {
+        if (it->get() == node) {
+            renderParent->children.erase(it);
+            return;
+        }
+    }
+}
+
+void Reconciler::collectRenderNodes(Fiber* fiber, std::vector<Node*>& out) {
+    for (auto& child : fiber->children) {
+        if (child->isHost() && child->renderNode) {
+            out.push_back(child->renderNode);
+        } else if (child->isComponent()) {
+            collectRenderNodes(child.get(), out);
+        }
+    }
+}
+
+void Reconciler::rebuildRenderChildren(Fiber* parentFiber, Node* renderParent) {
+    if (!renderParent) return;
+
+    // Collect desired render node order from fiber children
+    std::vector<Node*> desiredOrder;
+    collectRenderNodes(parentFiber, desiredOrder);
+
+    // Remove all yoga children
+    if (renderParent->yogaNode) {
+        YGNodeRemoveAllChildren(renderParent->yogaNode);
+    }
+
+    // Build a map from raw pointer to owned unique_ptr
+    std::unordered_map<Node*, std::unique_ptr<Node>> nodeMap;
+    for (auto& child : renderParent->children) {
+        Node* raw = child.get();
+        nodeMap[raw] = std::move(child);
+    }
+    renderParent->children.clear();
+
+    // Re-insert in the correct order
+    bool isScroll = (renderParent->type() == PrimitiveType::Scroll);
+    size_t yogaIndex = 0;
+
+    for (Node* desired : desiredOrder) {
+        auto it = nodeMap.find(desired);
+        if (it != nodeMap.end()) {
+            auto& node = it->second;
+            node->parent = renderParent;
+            if (!isScroll && renderParent->yogaNode && node->yogaNode) {
+                YGNodeInsertChild(renderParent->yogaNode, node->yogaNode, yogaIndex++);
+            }
+            renderParent->children.push_back(std::move(node));
+            nodeMap.erase(it);
+        }
+    }
+}
+
+// ============================================================================
+// Cleanup
+// ============================================================================
+
+void Reconciler::unmountFiber(Fiber* fiber, Node* renderParent) {
+    if (!fiber) return;
+
+    if (fiber->isHost() && fiber->renderNode) {
+        notifyRenderRemoved(fiber->renderNode);
+        removeRenderNode(renderParent, fiber->renderNode);
+        fiber->renderNode = nullptr;
+    }
+
+    if (fiber->isComponent()) {
+        // Component: per-fiber cleanup, then recurse via unmountFiber
+        // (children share renderParent, need individual render node removal)
+        fiber->runCleanups();
+        for (auto& child : fiber->children) {
+            unmountFiber(child.get(), renderParent);
+        }
+    } else {
+        // Host: render nodes already cascade-destroyed by removeRenderNode
+        // willUnmount handles recursive lifecycle cleanup for all descendants
+        fiber->willUnmount();
+    }
+}
+
+void Reconciler::notifyRenderRemoved(Node* node) {
+    if (!node) return;
+
     if (onNodeRemoved_) {
         onNodeRemoved_(node);
     }
 
-    // Notify for all descendants
     for (auto& child : node->children) {
-        notifyRemoved(child.get());
+        notifyRenderRemoved(child.get());
     }
 }
 

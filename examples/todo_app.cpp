@@ -13,6 +13,7 @@
 #define NANOVG_GL3_IMPLEMENTATION
 #include <nanovg_gl.h>
 
+#include <algorithm>
 #include <iostream>
 #include <vector>
 
@@ -27,7 +28,6 @@ struct TodoItem {
 
 struct AppState {
     std::vector<TodoItem> todos;
-    std::string inputText;
     int nextId = 1;
 };
 
@@ -83,6 +83,42 @@ VNode Checkbox(bool checked, std::function<void()> onToggle) {
 }
 
 // Components
+// Input component using useState for component-local draft text
+auto TodoInput() -> Component {
+    return [](ComponentContext& ctx) -> VNode {
+        // useState for component-local state (not shared with other components)
+        auto [draft, setDraft] = ctx.useState<std::string>("");
+
+        auto addTodo = [draft, setDraft]() {
+            if (!draft.empty()) {
+                store->set([text = draft](AppState& s) { s.todos.push_back({s.nextId++, text, false}); });
+                setDraft("");
+            }
+        };
+
+        return Row({
+            Input()
+                .value(draft)
+                .onChange(setDraft)
+                .placeholder("Add a new todo...")
+                .fontSize(16)
+                .color(TEXT_COLOR)
+                .backgroundColor(CARD_COLOR)
+                .borderRadius(4)
+                .padding(12)
+                .flexGrow(1)
+                .onSubmit(addTodo),
+
+            Box({Text("Add").fontSize(16).color(TEXT_COLOR)})
+                .backgroundColor(ACCENT_COLOR)
+                .borderRadius(4)
+                .padding(12)
+                .marginLeft(8)
+                .onClick(addTodo),
+        });
+    };
+}
+
 VNode TodoItemView(const TodoItem& item) {
     return Row({
                    // Checkbox
@@ -146,65 +182,37 @@ VNode TodoItemView(const TodoItem& item) {
         .setKey(std::to_string(item.id));
 }
 
-VNode buildUI() {
-    const auto& state = store->use();
+Component TodoApp() {
+    return [](ComponentContext&) -> VNode {
+        const auto& state = store->use();
 
-    std::vector<VNode> todoItems;
-    for (const auto& item : state.todos) {
-        todoItems.push_back(TodoItemView(item));
-    }
+        std::vector<Child> todoItems;
+        for (const auto& item : state.todos) {
+            todoItems.push_back(TodoItemView(item));
+        }
 
-    return Column({
-                      // Title
-                      Text("Todo App").fontSize(28).color(TEXT_COLOR).marginBottom(20),
+        return Column({
+                          // Title
+                          Text("Todo App").fontSize(28).color(TEXT_COLOR).marginBottom(20),
 
-                      // Input row
-                      Row({
-                              Input(const_cast<std::string*>(&store->peek().inputText))
-                                  .placeholder("Add a new todo...")
-                                  .fontSize(16)
-                                  .color(TEXT_COLOR)
-                                  .backgroundColor(CARD_COLOR)
-                                  .borderRadius(4)
-                                  .padding(12)
-                                  .flexGrow(1)
-                                  .onSubmit([]() {
-                                      store->set([](AppState& s) {
-                                          if (!s.inputText.empty()) {
-                                              s.todos.push_back({s.nextId++, s.inputText, false});
-                                              s.inputText.clear();
-                                          }
-                                      });
-                                  }),
+                          // Input row (component with local state for draft text)
+                          TodoInput(),
 
-                              Box({Text("Add").fontSize(16).color(TEXT_COLOR)})
-                                  .backgroundColor(ACCENT_COLOR)
-                                  .borderRadius(4)
-                                  .padding(12)
-                                  .marginLeft(8)
-                                  .onClick([]() {
-                                      store->set([](AppState& s) {
-                                          if (!s.inputText.empty()) {
-                                              s.todos.push_back({s.nextId++, s.inputText, false});
-                                              s.inputText.clear();
-                                          }
-                                      });
-                                  }),
-                          })
-                          .marginBottom(20),
+                          Gap(20),
 
-                      // Todo list
-                      Scroll(Column(std::move(todoItems)).flexGrow(1)).flexGrow(1),
+                          // Todo list
+                          Scroll(Column(std::move(todoItems)).flexGrow(1)).flexGrow(1),
 
-                      // Footer
-                      Text(std::to_string(state.todos.size()) + " items")
-                          .fontSize(12)
-                          .color(MUTED_COLOR)
-                          .marginTop(12),
-                  })
-        .padding(24)
-        .flexGrow(1)
-        .backgroundColor(BG_COLOR);
+                          // Footer
+                          Text(std::to_string(state.todos.size()) + " items")
+                              .fontSize(12)
+                              .color(MUTED_COLOR)
+                              .marginTop(12),
+                      })
+            .padding(24)
+            .flexGrow(1)
+            .backgroundColor(BG_COLOR);
+    };
 }
 
 // Host
@@ -212,7 +220,7 @@ class TodoHost : public Host {
 public:
     TodoHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
         renderer_.registerMeasureFunc();
-        setRender(buildUI);
+        setRender(TodoApp());
     }
 
     void frame(int w, int h, float dt) {

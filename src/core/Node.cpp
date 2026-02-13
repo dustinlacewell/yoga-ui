@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <spdlog/spdlog.h>
 
 namespace yui {
 
@@ -20,8 +19,6 @@ Node::~Node() {
 
 void Node::applyLayoutProps(const LayoutProps& p) {
     // Reset all dimension/layout styles to defaults first.
-    // This is critical for node reuse: when a node is reused for a different VNode,
-    // old styles (like width=4 from a Gap) must not persist.
     YGNodeStyleSetWidth(yogaNode, YGUndefined);
     YGNodeStyleSetHeight(yogaNode, YGUndefined);
     YGNodeStyleSetMinWidth(yogaNode, YGUndefined);
@@ -59,11 +56,14 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     YGNodeStyleSetAspectRatio(yogaNode, YGUndefined);
 
     // Now apply the new props
-    // Dimensions
     if (p.width)
         YGNodeStyleSetWidth(yogaNode, *p.width);
+    if (p.widthPercent)
+        YGNodeStyleSetWidthPercent(yogaNode, *p.widthPercent);
     if (p.height)
         YGNodeStyleSetHeight(yogaNode, *p.height);
+    if (p.heightPercent)
+        YGNodeStyleSetHeightPercent(yogaNode, *p.heightPercent);
     if (p.minWidth)
         YGNodeStyleSetMinWidth(yogaNode, *p.minWidth);
     if (p.minHeight)
@@ -73,7 +73,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     if (p.maxHeight)
         YGNodeStyleSetMaxHeight(yogaNode, *p.maxHeight);
 
-    // Flex
     if (p.flexGrow)
         YGNodeStyleSetFlexGrow(yogaNode, *p.flexGrow);
     if (p.flexShrink)
@@ -242,7 +241,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
         YGNodeStyleSetDisplay(yogaNode, disp);
     }
 
-    // Padding
     if (p.padding)
         YGNodeStyleSetPadding(yogaNode, YGEdgeAll, *p.padding);
     if (p.paddingTop)
@@ -254,7 +252,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     if (p.paddingLeft)
         YGNodeStyleSetPadding(yogaNode, YGEdgeLeft, *p.paddingLeft);
 
-    // Margin
     if (p.margin)
         YGNodeStyleSetMargin(yogaNode, YGEdgeAll, *p.margin);
     if (p.marginTop)
@@ -266,7 +263,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     if (p.marginLeft)
         YGNodeStyleSetMargin(yogaNode, YGEdgeLeft, *p.marginLeft);
 
-    // Gap
     if (p.gap)
         YGNodeStyleSetGap(yogaNode, YGGutterAll, *p.gap);
     if (p.rowGap)
@@ -274,7 +270,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     if (p.columnGap)
         YGNodeStyleSetGap(yogaNode, YGGutterColumn, *p.columnGap);
 
-    // Absolute positioning
     if (p.positionLeft)
         YGNodeStyleSetPosition(yogaNode, YGEdgeLeft, *p.positionLeft);
     if (p.positionTop)
@@ -284,7 +279,6 @@ void Node::applyLayoutProps(const LayoutProps& p) {
     if (p.positionBottom)
         YGNodeStyleSetPosition(yogaNode, YGEdgeBottom, *p.positionBottom);
 
-    // Aspect ratio
     if (p.aspectRatio)
         YGNodeStyleSetAspectRatio(yogaNode, *p.aspectRatio);
 }
@@ -300,20 +294,17 @@ void Node::syncLayoutFromYoga() {
     }
 }
 
-// Forward declaration
 static void layoutScrollContent(Node* node);
 
 void Node::calculateLayout(float availableWidth, float availableHeight) {
     YGNodeCalculateLayout(yogaNode, availableWidth, availableHeight, YGDirectionLTR);
     syncLayoutFromYoga();
-    // After main layout, calculate ScrollNode children with unconstrained height
     layoutScrollContent(this);
 }
 
 bool Node::update(float dt) {
     bool animating = false;
 
-    // Update this node if it's a ScrollNode
     if (type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(this);
         if (scrollNode->updateSmooth(dt)) {
@@ -321,7 +312,6 @@ bool Node::update(float dt) {
         }
     }
 
-    // Recurse into children
     for (auto& child : children) {
         if (child->update(dt)) {
             animating = true;
@@ -331,18 +321,17 @@ bool Node::update(float dt) {
     return animating;
 }
 
-// Recursively find ScrollNodes and layout their children as separate Yoga roots
 static void layoutScrollContent(Node* node) {
     if (node->type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(node);
-        // Layout children with scroll container's width but unconstrained height
         for (auto& child : scrollNode->children) {
-            YGNodeCalculateLayout(child->yogaNode, scrollNode->layout.width, YGUndefined, YGDirectionLTR);
-            child->syncLayoutFromYoga();
+            if (child->yogaNode) {
+                YGNodeCalculateLayout(child->yogaNode, scrollNode->layout.width, YGUndefined, YGDirectionLTR);
+                child->syncLayoutFromYoga();
+            }
         }
         scrollNode->updateContentSize();
     }
-    // Recurse into children (handles nested ScrollNodes)
     for (auto& child : node->children) {
         layoutScrollContent(child.get());
     }
@@ -353,8 +342,12 @@ static void layoutScrollContent(Node* node) {
 BoxNode::BoxNode() = default;
 
 void BoxNode::updateProps(const PropsVariant& p) {
-    props = std::get<BoxProps>(p);
-    applyLayoutProps(props);
+    const auto& newProps = std::get<BoxProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    props = newProps;
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
 }
 
 // --- TextNode ---
@@ -364,10 +357,16 @@ TextNode::TextNode() {
 }
 
 void TextNode::updateProps(const PropsVariant& p) {
-    props = std::get<TextProps>(p);
-    applyLayoutProps(props);
-    // Mark layout dirty since text content may have changed
-    YGNodeMarkDirty(yogaNode);
+    const auto& newProps = std::get<TextProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    bool textChanged = newProps.text != props.text || newProps.fontSize != props.fontSize;
+    props = newProps;
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
+    if (textChanged) {
+        YGNodeMarkDirty(yogaNode);
+    }
 }
 
 void TextNode::setupMeasureFunc() {
@@ -394,26 +393,31 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
 InputNode::InputNode() = default;
 
 void InputNode::updateProps(const PropsVariant& p) {
-    props = std::get<InputProps>(p);
-    applyLayoutProps(props);
+    const auto& newProps = std::get<InputProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    props = newProps;
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
+    displayText = props.value;
 }
 
 // --- ScrollNode ---
 
 ScrollNode::ScrollNode() {
-    // Children are laid out separately with unconstrained height (see layoutScrollContent)
-    // so YGOverflowScroll isn't strictly needed, but set it for semantic clarity
     YGNodeStyleSetOverflow(yogaNode, YGOverflowScroll);
 }
 
 void ScrollNode::updateProps(const PropsVariant& p) {
-    props = std::get<ScrollProps>(p);
-    applyLayoutProps(props);
+    const auto& newProps = std::get<ScrollProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    props = newProps;
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
 }
 
 void ScrollNode::updateContentSize() {
-    // With YGAlignFlexStart, children are sized to their intrinsic dimensions.
-    // Content size is simply the bounding box of direct children.
     contentWidth = 0;
     contentHeight = 0;
 
@@ -438,7 +442,6 @@ void ScrollNode::clampScrollOffset() {
 }
 
 bool ScrollNode::updateSmooth(float dt) {
-    // Exponential smoothing - reaches ~95% of target in ~0.15 seconds
     constexpr float smoothingSpeed = 20.0f;
     float t = 1.0f - std::exp(-smoothingSpeed * dt);
 
@@ -448,14 +451,13 @@ bool ScrollNode::updateSmooth(float dt) {
     scrollOffsetX += dx * t;
     scrollOffsetY += dy * t;
 
-    // Snap to target if very close
     constexpr float snapThreshold = 0.5f;
     if (std::abs(dx) < snapThreshold && std::abs(dy) < snapThreshold) {
         scrollOffsetX = targetScrollX;
         scrollOffsetY = targetScrollY;
-        return false;  // Done animating
+        return false;
     }
-    return true;  // Still animating
+    return true;
 }
 
 // --- CanvasNode ---
@@ -463,8 +465,12 @@ bool ScrollNode::updateSmooth(float dt) {
 CanvasNode::CanvasNode() = default;
 
 void CanvasNode::updateProps(const PropsVariant& p) {
-    props = std::get<CanvasProps>(p);
-    applyLayoutProps(props);
+    const auto& newProps = std::get<CanvasProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    props = newProps;
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
 }
 
 // --- Factory ---

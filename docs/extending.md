@@ -16,7 +16,7 @@ If it can be composed from existing primitives, make it a component instead.
 ### 1. Add to PrimitiveType enum (VNode.hpp)
 
 ```cpp
-enum class PrimitiveType { Box, Text, Input, Canvas };
+enum class PrimitiveType { Box, Text, Input, Scroll, Canvas };
 ```
 
 ### 2. Define props struct (Props.hpp)
@@ -25,26 +25,26 @@ Props structs inherit from `LayoutProps` and `EventProps`:
 
 ```cpp
 struct CanvasProps : LayoutProps, EventProps {
-    std::function<void(NVGcontext*, float w, float h)> draw;
+    std::function<void(void*, float w, float h)> draw;
     // Add state-based style overrides if needed
     std::optional<CanvasStyle> hoverStyle;
     std::optional<CanvasStyle> focusStyle;
 };
 
 // Add to PropsVariant
-using PropsVariant = std::variant<BoxProps, TextProps, InputProps, CanvasProps>;
+using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps>;
 ```
 
 ### 3. Create VNode factory (VNode.hpp)
 
 ```cpp
-inline VNode Canvas(std::function<void(NVGcontext*, float, float)> drawFn) {
-    VNode node;
-    node.type = PrimitiveType::Canvas;
+inline VNode Canvas(CanvasDrawFn drawFn) {
+    VNode n;
+    n.type = PrimitiveType::Canvas;
     CanvasProps p;
     p.draw = std::move(drawFn);
-    node.props = std::move(p);
-    return node;
+    n.props = std::move(p);
+    return n;
 }
 ```
 
@@ -69,6 +69,8 @@ void CanvasNode::updateProps(const PropsVariant& p) {
     applyLayoutProps(props);  // Apply layout to Yoga node
 }
 ```
+
+New primitives automatically participate in the dual-tree architecture. The Reconciler creates a Host fiber and corresponding render Node for each instance. No Fiber-specific code is needed — fibers only require special handling for Components.
 
 ### 5. Update createNode factory (Node.cpp)
 

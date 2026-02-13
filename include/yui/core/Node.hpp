@@ -42,14 +42,11 @@ public:
     // Props update (called by reconciler)
     virtual void updateProps(const PropsVariant& props) = 0;
 
-    // Lifecycle
-    virtual void willUnmount() {}
-
     // Tree structure
     std::vector<std::unique_ptr<Node>> children;
     Node* parent = nullptr;
 
-    // Layout
+    // Layout — every node has a valid yogaNode
     YGNodeRef yogaNode = nullptr;
     LayoutResult layout;
 
@@ -104,6 +101,9 @@ public:
     void updateProps(const PropsVariant& props) override;
 
     InputProps props;
+
+    // Display text - synced from props.value, modified during editing
+    std::string displayText;
 };
 
 class ScrollNode : public Node {
@@ -114,7 +114,7 @@ public:
 
     ScrollProps props;
 
-    // Scroll state - target is where we want to be, current is interpolated
+    // Scroll state
     float targetScrollX = 0;
     float targetScrollY = 0;
     float scrollOffsetX = 0;
@@ -124,14 +124,8 @@ public:
     float contentWidth = 0;
     float contentHeight = 0;
 
-    // Sync content size from children's current layout
     void updateContentSize();
-
-    // Clamp scroll offset to valid range
     void clampScrollOffset();
-
-    // Update smooth scrolling (call each frame with delta time)
-    // Returns true if still animating
     bool updateSmooth(float dt);
 };
 

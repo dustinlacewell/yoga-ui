@@ -29,66 +29,64 @@ using namespace showcase;
 // Canvas Demo - NanoVG-specific custom drawing
 // ============================================================================
 
-VNode CanvasDemo() {
-    const auto& t = theme();
+Component CanvasDemo() {
+    return [](ComponentContext&) -> VNode {
+        const auto& t = theme();
 
-    return Section("Canvas", {
-                                 Box(Canvas([](void* ctx, float w, float h) {
-                                         auto* vg = static_cast<NVGcontext*>(ctx);
-                                         float cx = w / 2;
-                                         float cy = h / 2;
-                                         float radius = std::min(w, h) / 2 - 4;
+        return Section("Canvas", {
+             Box(Canvas([](void* ctx, float w, float h) {
+                     auto* vg = static_cast<NVGcontext*>(ctx);
+                     float cx = w / 2;
+                     float cy = h / 2;
+                     float radius = std::min(w, h) / 2 - 4;
 
-                                         // Face
-                                         nvgBeginPath(vg);
-                                         nvgCircle(vg, cx, cy, radius);
-                                         nvgFillColor(vg, nvgRGB(0xFF, 0xD7, 0x00));
-                                         nvgFill(vg);
+                     // Face
+                     nvgBeginPath(vg);
+                     nvgCircle(vg, cx, cy, radius);
+                     nvgFillColor(vg, nvgRGB(0xFF, 0xD7, 0x00));
+                     nvgFill(vg);
 
-                                         // Eyes
-                                         nvgFillColor(vg, nvgRGB(0x00, 0x00, 0x00));
-                                         float eyeR = radius * 0.12f;
-                                         float eyeY = cy - radius * 0.25f;
+                     // Eyes
+                     nvgFillColor(vg, nvgRGB(0x00, 0x00, 0x00));
+                     float eyeR = radius * 0.12f;
+                     float eyeY = cy - radius * 0.25f;
 
-                                         nvgBeginPath(vg);
-                                         nvgCircle(vg, cx - radius * 0.3f, eyeY, eyeR);
-                                         nvgFill(vg);
+                     nvgBeginPath(vg);
+                     nvgCircle(vg, cx - radius * 0.3f, eyeY, eyeR);
+                     nvgFill(vg);
 
-                                         nvgBeginPath(vg);
-                                         nvgCircle(vg, cx + radius * 0.3f, eyeY, eyeR);
-                                         nvgFill(vg);
+                     nvgBeginPath(vg);
+                     nvgCircle(vg, cx + radius * 0.3f, eyeY, eyeR);
+                     nvgFill(vg);
 
-                                         // Smile
-                                         nvgBeginPath(vg);
-                                         nvgArc(vg, cx, cy + radius * 0.1f, radius * 0.5f, 30.0f * M_PI / 180.0f,
-                                                150.0f * M_PI / 180.0f, NVG_CW);
-                                         nvgStrokeColor(vg, nvgRGB(0x00, 0x00, 0x00));
-                                         nvgStrokeWidth(vg, 3);
-                                         nvgStroke(vg);
-                                     })
-                                         .width(80)
-                                         .height(80))
-                                     .backgroundColor(t.bg)
-                                     .borderRadius(t.radiusSm)
-                                     .padding(t.gap),
+                     // Smile
+                     nvgBeginPath(vg);
+                     nvgArc(vg, cx, cy + radius * 0.1f, radius * 0.5f, 30.0f * M_PI / 180.0f,
+                            150.0f * M_PI / 180.0f, NVG_CW);
+                     nvgStrokeColor(vg, nvgRGB(0x00, 0x00, 0x00));
+                     nvgStrokeWidth(vg, 3);
+                     nvgStroke(vg);
+                 })
+                     .width(80)
+                     .height(80))
+                 .backgroundColor(t.bg)
+                 .borderRadius(t.radiusSm)
+                 .padding(t.gap),
 
-                                 Label("Custom NanoVG drawing"),
-                             });
+             Label("Custom NanoVG drawing"),
+         });
+    };
 }
 
 // ============================================================================
 // NVG Host
 // ============================================================================
 
-VNode buildUI() {
-    return App("YUI Showcase", "NanoVG", CanvasDemo());
-}
-
 class NvgHost : public Host {
 public:
     NvgHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
         renderer_.registerMeasureFunc();
-        setRender(buildUI);
+        setRender(App("YUI Showcase", "NanoVG", CanvasDemo()));
     }
 
     void frame(int width, int height, float dt) {

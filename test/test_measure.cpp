@@ -21,7 +21,8 @@ TEST_CASE("Text node uses intrinsic size") {
                     .width(200)
                     .alignItems(AlignItems::FlexStart);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
     // "Hello" = 5 chars * 10px = 50px width, 20px height
@@ -39,7 +40,8 @@ TEST_CASE("Text node respects explicit dimensions") {
     // Explicit width/height should override intrinsic
     auto tree = Text("Hello").fontSize(20).width(100).height(40);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
     CHECK(root->layout.width == doctest::Approx(100));
@@ -60,7 +62,8 @@ TEST_CASE("Text node with flexGrow expands") {
                     .width(200)
                     .height(50);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 50);
 
     // "Hi" = 2 chars * 10 = 20px intrinsic
@@ -79,7 +82,8 @@ TEST_CASE("Default fallback measure function") {
     // to let intrinsic sizing work
     auto tree = Text("Test").fontSize(12);
 
-    auto root = reconciler.mount(tree);
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(YGUndefined, YGUndefined);
 
     // Fallback: 0.6 * fontSize per char
@@ -97,14 +101,15 @@ TEST_CASE("Text updates trigger relayout") {
     });
 
     auto tree1 = Text("Hi").fontSize(16).setKey("txt");
-    auto root = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(tree1);
+    auto* root = reconciler.renderRoot();
     root->calculateLayout(YGUndefined, YGUndefined);
 
     CHECK(root->layout.width == doctest::Approx(20));  // "Hi" = 2 * 10
 
     // Update text
     auto tree2 = Text("Hello World").fontSize(16).setKey("txt");
-    reconciler.reconcile(root.get(), tree2);
+    reconciler.reconcile(fiber.get(), tree2);
     root->calculateLayout(YGUndefined, YGUndefined);
 
     CHECK(root->layout.width == doctest::Approx(110));  // "Hello World" = 11 * 10
