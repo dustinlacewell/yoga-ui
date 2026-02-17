@@ -393,6 +393,11 @@ if(BUILD_NVG_SHOWCASE)
 
     target_link_libraries(benchmark PRIVATE yui_nvg)
 
+    # Cascading menu example (build with: cmake --build build --target cascading_menu)
+    add_executable(cascading_menu WIN32 examples/cascading_menu.cpp)
+
+    target_link_libraries(cascading_menu PRIVATE yui_nvg)
+
     # Windows: Copy DLLs to output directory
     if(WIN32)
         if(CMAKE_PREFIX_PATH)
@@ -428,6 +433,11 @@ if(BUILD_NVG_SHOWCASE)
                         "${DLL_SEARCH_PATH}/${DLL}"
                         $<TARGET_FILE_DIR:benchmark>
                 )
+                add_custom_command(TARGET cascading_menu POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${DLL_SEARCH_PATH}/${DLL}"
+                        $<TARGET_FILE_DIR:cascading_menu>
+                )
             endif()
         endforeach()
     endif()
@@ -441,7 +451,7 @@ if(BUILD_SDL_SHOWCASE)
     list(APPEND ALL_EXAMPLE_TARGETS sdl_showcase hello_world)
 endif()
 if(BUILD_NVG_SHOWCASE)
-    list(APPEND ALL_EXAMPLE_TARGETS nvg_showcase todo_app pong benchmark)
+    list(APPEND ALL_EXAMPLE_TARGETS nvg_showcase todo_app pong benchmark cascading_menu)
 endif()
 
 if(ALL_EXAMPLE_TARGETS)

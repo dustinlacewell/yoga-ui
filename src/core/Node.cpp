@@ -331,6 +331,7 @@ static void layoutScrollContent(Node* node) {
             }
         }
         scrollNode->updateContentSize();
+        scrollNode->clampScrollOffset();
     }
     for (auto& child : node->children) {
         layoutScrollContent(child.get());

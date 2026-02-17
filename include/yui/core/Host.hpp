@@ -70,6 +70,7 @@ public:
         detail::liveHosts.insert(this);
 
         reconciler_.setNodeRemovedCallback([this](Node* node) { eventHandler_.onNodeRemoved(node); });
+        reconciler_.setAutoFocusCallback([this](InputNode* node) { eventHandler_.focusInput(node); });
         reconciler_.setHost(this);
     }
 

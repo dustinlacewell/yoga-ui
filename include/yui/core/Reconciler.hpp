@@ -16,8 +16,10 @@ class Host;
 class Reconciler {
 public:
     using NodeRemovedCallback = std::function<void(Node*)>;
+    using AutoFocusCallback = std::function<void(InputNode*)>;
 
     void setNodeRemovedCallback(NodeRemovedCallback callback) { onNodeRemoved_ = std::move(callback); }
+    void setAutoFocusCallback(AutoFocusCallback callback) { onAutoFocus_ = std::move(callback); }
     void setHost(Host* host) { host_ = host; }
 
     // Mount a VNode tree -> creates fiber tree AND render tree.
@@ -77,6 +79,7 @@ private:
     // --- State ---
     std::unique_ptr<Node> renderRoot_;
     NodeRemovedCallback onNodeRemoved_;
+    AutoFocusCallback onAutoFocus_;
     Host* host_ = nullptr;
 };
 

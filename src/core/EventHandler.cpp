@@ -435,6 +435,29 @@ void EventHandler::updateFocus(Node* clicked) {
     }
 }
 
+void EventHandler::focusInput(InputNode* node) {
+    if (node == focusedInput_)
+        return;
+
+    // Unfocus old
+    if (focusedInput_) {
+        focusedInput_->focused = false;
+        if (focusedInput_->props.onFocus) {
+            focusedInput_->props.onFocus(false);
+        }
+    }
+
+    focusedInput_ = node;
+
+    // Focus new
+    if (focusedInput_) {
+        focusedInput_->focused = true;
+        if (focusedInput_->props.onFocus) {
+            focusedInput_->props.onFocus(true);
+        }
+    }
+}
+
 void EventHandler::handleTextInput(const std::string& text) {
     if (!focusedInput_)
         return;

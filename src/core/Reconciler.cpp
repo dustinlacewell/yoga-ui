@@ -164,9 +164,21 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     node->intKey = vnode.intKey;
     fiber->renderNode = node.get();
 
+    // Check for autoFocus before moving ownership
+    bool wantsAutoFocus = false;
+    if (vnode.type == PrimitiveType::Input) {
+        const auto& inputProps = std::get<InputProps>(vnode.props);
+        wantsAutoFocus = inputProps.autoFocus.value_or(false);
+    }
+
     // Insert into render tree
     insertRenderNode(renderParent, std::move(node), renderIndex);
     renderIndex++;
+
+    // Notify host of autoFocus request
+    if (wantsAutoFocus && onAutoFocus_) {
+        onAutoFocus_(static_cast<InputNode*>(fiber->renderNode));
+    }
 
     // Mount children — this fiber's renderNode is the render parent for children
     size_t childRenderIndex = 0;

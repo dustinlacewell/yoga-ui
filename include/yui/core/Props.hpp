@@ -143,6 +143,7 @@ struct InputProps : LayoutProps, EventProps {
     std::optional<float> borderRadius;
     std::function<void(const std::string&)> onChange;
     std::function<void()> onSubmit;
+    std::optional<bool> autoFocus;
 
     // State-based style overrides
     std::optional<InputStyle> hoverStyle;

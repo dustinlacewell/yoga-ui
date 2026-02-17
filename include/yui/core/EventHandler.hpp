@@ -30,6 +30,9 @@ public:
     // Get the focused input node (for text input routing)
     InputNode* getFocusedInput() const { return focusedInput_; }
 
+    // Programmatically focus an input node (used by autoFocus)
+    void focusInput(InputNode* node);
+
     // Check if node or ancestors have a click handler for the given button
     bool hasClickHandler(Node* root, float x, float y, MouseButton button = MouseButton::Left);
 

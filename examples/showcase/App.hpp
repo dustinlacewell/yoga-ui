@@ -74,7 +74,7 @@ inline Component App(const std::string& title, const std::string& backend, Child
                                          Column({
                                                     DynamicList(),
                                                     LayoutDemo(),
-                                                    KeyboardDemo(),
+                                                    RightClickDemo(),
                                                 })
                                              .gap(t.gap)
                                              .flexBasis(0)
@@ -83,6 +83,8 @@ inline Component App(const std::string& title, const std::string& backend, Child
                                          // Third column (optional canvas demo)
                                          Column({
                                                     ScrollDemo(),
+                                                    AutoFocusDemo(),
+                                                    KeyboardDemo(),
                                                     canvasDemo,
                                                 })
                                              .gap(t.gap)

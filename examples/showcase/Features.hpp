@@ -83,7 +83,7 @@ inline auto LoginForm() -> Component {
         return Section(
             "Login",
             {
-                LabeledInput("Username", username, setUsername, "Enter username"),
+                Column({Label("Username"), TextInput(username, setUsername, "Enter username").autoFocus()}).gap(4).flexGrow(1),
                 LabeledInput("Password", password, setPassword, "Password", true),
 
                 Row({
@@ -479,6 +479,81 @@ inline Component HooksDemo() {
                                   })
                                .gap(t.gap),
                        });
+    };
+}
+
+// ============================================================================
+// Right-Click Demo - Demonstrates onRightClick event handling
+// ============================================================================
+
+inline Component RightClickDemo() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [message, setMessage] = ctx.useState<std::string>("Right-click or left-click the boxes");
+        const auto& t = theme();
+
+        auto clickBox = [&](const std::string& label, uint32_t bg) {
+            return Box(Text_(label, t.textOnAccent, 12.0f))
+                .backgroundColor(bg)
+                .borderRadius(t.radiusSm)
+                .padding(t.padding)
+                .flexGrow(1)
+                .justifyContent(JustifyContent::Center)
+                .alignItems(AlignItems::Center)
+                .hoverStyle(BoxStyle{.backgroundColor = t.border})
+                .onClick([setMessage, label] { setMessage("Left-clicked: " + label); })
+                .onRightClick([setMessage, label] { setMessage("Right-clicked: " + label); });
+        };
+
+        return Section("Right-Click",
+                       {
+                           Body(message),
+                           Row({
+                                   clickBox("Box A", t.accent),
+                                   clickBox("Box B", t.success),
+                                   clickBox("Box C", t.warning),
+                               })
+                               .gap(t.gap),
+                       });
+    };
+}
+
+// ============================================================================
+// AutoFocus Demo - Demonstrates autoFocus on Input
+// ============================================================================
+
+inline Component AutoFocusDemo() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [visible, setVisible] = ctx.useState<bool>(false);
+        auto [text, setText] = ctx.useState<std::string>("");
+        const auto& t = theme();
+
+        std::vector<Child> children;
+        children.push_back(Label("Toggle to show an auto-focused input:"));
+        children.push_back(
+            Row({
+                    Button(visible ? "Hide" : "Show Input", [setVisible, visible] { setVisible(!visible); }, t.surfaceAlt),
+                    Spacer(),
+                    When(!text.empty(), Badge("Typed: " + text, t.surfaceAlt)),
+                })
+                .alignItems(AlignItems::Center));
+
+        if (visible) {
+            children.push_back(
+                Input()
+                    .value(text)
+                    .onChange([setText](const std::string& v) { setText(v); })
+                    .placeholder("I'm auto-focused!")
+                    .autoFocus()
+                    .height(32)
+                    .color(t.text)
+                    .backgroundColor(t.bg)
+                    .borderColor(t.accent)
+                    .borderWidth(2)
+                    .borderRadius(t.radiusSm)
+                    .focusStyle(InputStyle{.borderColor = t.success}));
+        }
+
+        return Section("AutoFocus", std::move(children));
     };
 }
 

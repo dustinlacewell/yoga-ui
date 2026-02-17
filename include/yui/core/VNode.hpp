@@ -324,6 +324,10 @@ struct VNode {
         inputProps().onSubmit = std::move(fn);
         return *this;
     }
+    VNode& autoFocus(bool v = true) {
+        inputProps().autoFocus = v;
+        return *this;
+    }
 
     // --- State-based style overrides ---
     VNode& hoverStyle(BoxStyle style);
