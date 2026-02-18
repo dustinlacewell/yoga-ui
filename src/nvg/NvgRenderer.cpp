@@ -388,7 +388,7 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
             float cursorX = x + textPad;
             if (!node->displayText.empty()) {
                 float bounds[4];
-                nvgTextBounds(vg_, 0, 0, node->displayText.c_str(), nullptr, bounds);
+                nvgTextBounds(vg_, 0, 0, textToDraw.c_str(), nullptr, bounds);
                 cursorX += bounds[2] - bounds[0];
             }
             float cursorTop = y + 3;
