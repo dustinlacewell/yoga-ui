@@ -2,6 +2,7 @@
 #include <yui/nvg/NvgRenderer.hpp>
 
 #include <nanovg.h>
+#include <chrono>
 
 namespace yui {
 namespace nvg {
@@ -361,17 +362,44 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         textColor = 0x808080FF;
     }
 
+    // Set up font for text and cursor measurement
+    constexpr float textPad = 4.0f;
+    nvgFontSize(vg_, fontSize);
+    if (fontId_ >= 0) {
+        nvgFontFaceId(vg_, fontId_);
+    } else {
+        nvgFontFace(vg_, "default");
+    }
+    nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+
     if (!textToDraw.empty()) {
-        nvgFontSize(vg_, fontSize);
-        if (fontId_ >= 0) {
-            nvgFontFaceId(vg_, fontId_);
-        } else {
-            nvgFontFace(vg_, "default");
-        }
         nvgFillColor(vg_, nvgRGBA((textColor >> 24) & 0xFF, (textColor >> 16) & 0xFF, (textColor >> 8) & 0xFF,
                                   textColor & 0xFF));
-        nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgText(vg_, x + 4, y + h / 2, textToDraw.c_str(), nullptr);
+        nvgText(vg_, x + textPad, y + h / 2, textToDraw.c_str(), nullptr);
+    }
+
+    // Blinking cursor when focused
+    if (node->focused) {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        bool cursorVisible = (ms % 1000) < 530;
+
+        if (cursorVisible) {
+            float cursorX = x + textPad;
+            if (!node->displayText.empty()) {
+                float bounds[4];
+                nvgTextBounds(vg_, 0, 0, node->displayText.c_str(), nullptr, bounds);
+                cursorX += bounds[2] - bounds[0];
+            }
+            float cursorTop = y + 3;
+            float cursorBottom = y + h - 3;
+            nvgBeginPath(vg_);
+            nvgMoveTo(vg_, cursorX, cursorTop);
+            nvgLineTo(vg_, cursorX, cursorBottom);
+            nvgStrokeColor(vg_, nvgRGBA((c >> 24) & 0xFF, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF));
+            nvgStrokeWidth(vg_, 1.0f);
+            nvgStroke(vg_);
+        }
     }
 }
 
