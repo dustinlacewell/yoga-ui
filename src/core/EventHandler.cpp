@@ -207,56 +207,39 @@ bool EventHandler::dispatchEvent(Node* node, Event& event) {
     // Get event handlers from props based on node type
     std::function<void()>* onClick = nullptr;
     std::function<void()>* onRightClick = nullptr;
+    std::function<void()>* onMouseDown = nullptr;
     std::function<void(float, float)>* onScroll = nullptr;
     std::function<void(int, uint16_t)>* onKeyDown = nullptr;
     std::function<void(int, uint16_t)>* onKeyUp = nullptr;
 
+#define YUI_EXTRACT_EVENTS(nodeType, castType) \
+    case PrimitiveType::nodeType: { \
+        auto* n = static_cast<castType*>(node); \
+        onClick = n->props.onClick ? &n->props.onClick : nullptr; \
+        onRightClick = n->props.onRightClick ? &n->props.onRightClick : nullptr; \
+        onMouseDown = n->props.onMouseDown ? &n->props.onMouseDown : nullptr; \
+        onScroll = n->props.onScroll ? &n->props.onScroll : nullptr; \
+        onKeyDown = n->props.onKeyDown ? &n->props.onKeyDown : nullptr; \
+        onKeyUp = n->props.onKeyUp ? &n->props.onKeyUp : nullptr; \
+        break; \
+    }
+
     switch (node->type()) {
-    case PrimitiveType::Box: {
-        auto* boxNode = static_cast<BoxNode*>(node);
-        onClick = boxNode->props.onClick ? &boxNode->props.onClick : nullptr;
-        onRightClick = boxNode->props.onRightClick ? &boxNode->props.onRightClick : nullptr;
-        onScroll = boxNode->props.onScroll ? &boxNode->props.onScroll : nullptr;
-        onKeyDown = boxNode->props.onKeyDown ? &boxNode->props.onKeyDown : nullptr;
-        onKeyUp = boxNode->props.onKeyUp ? &boxNode->props.onKeyUp : nullptr;
-        break;
+    YUI_EXTRACT_EVENTS(Box, BoxNode)
+    YUI_EXTRACT_EVENTS(Text, TextNode)
+    YUI_EXTRACT_EVENTS(Input, InputNode)
+    YUI_EXTRACT_EVENTS(Scroll, ScrollNode)
+    YUI_EXTRACT_EVENTS(Canvas, CanvasNode)
     }
-    case PrimitiveType::Text: {
-        auto* textNode = static_cast<TextNode*>(node);
-        onClick = textNode->props.onClick ? &textNode->props.onClick : nullptr;
-        onRightClick = textNode->props.onRightClick ? &textNode->props.onRightClick : nullptr;
-        onScroll = textNode->props.onScroll ? &textNode->props.onScroll : nullptr;
-        onKeyDown = textNode->props.onKeyDown ? &textNode->props.onKeyDown : nullptr;
-        onKeyUp = textNode->props.onKeyUp ? &textNode->props.onKeyUp : nullptr;
-        break;
-    }
-    case PrimitiveType::Input: {
-        auto* inputNode = static_cast<InputNode*>(node);
-        onClick = inputNode->props.onClick ? &inputNode->props.onClick : nullptr;
-        onRightClick = inputNode->props.onRightClick ? &inputNode->props.onRightClick : nullptr;
-        onScroll = inputNode->props.onScroll ? &inputNode->props.onScroll : nullptr;
-        onKeyDown = inputNode->props.onKeyDown ? &inputNode->props.onKeyDown : nullptr;
-        onKeyUp = inputNode->props.onKeyUp ? &inputNode->props.onKeyUp : nullptr;
-        break;
-    }
-    case PrimitiveType::Scroll: {
-        auto* scrollNode = static_cast<ScrollNode*>(node);
-        onClick = scrollNode->props.onClick ? &scrollNode->props.onClick : nullptr;
-        onRightClick = scrollNode->props.onRightClick ? &scrollNode->props.onRightClick : nullptr;
-        onScroll = scrollNode->props.onScroll ? &scrollNode->props.onScroll : nullptr;
-        onKeyDown = scrollNode->props.onKeyDown ? &scrollNode->props.onKeyDown : nullptr;
-        onKeyUp = scrollNode->props.onKeyUp ? &scrollNode->props.onKeyUp : nullptr;
-        break;
-    }
-    case PrimitiveType::Canvas: {
-        auto* canvasNode = static_cast<CanvasNode*>(node);
-        onClick = canvasNode->props.onClick ? &canvasNode->props.onClick : nullptr;
-        onRightClick = canvasNode->props.onRightClick ? &canvasNode->props.onRightClick : nullptr;
-        onScroll = canvasNode->props.onScroll ? &canvasNode->props.onScroll : nullptr;
-        onKeyDown = canvasNode->props.onKeyDown ? &canvasNode->props.onKeyDown : nullptr;
-        onKeyUp = canvasNode->props.onKeyUp ? &canvasNode->props.onKeyUp : nullptr;
-        break;
-    }
+
+#undef YUI_EXTRACT_EVENTS
+
+    // Handle mouseDown events (fires on press)
+    if (event.type == Event::Type::MouseDown) {
+        if (event.button == MouseButton::Left && onMouseDown && *onMouseDown) {
+            (*onMouseDown)();
+            event.consume();
+        }
     }
 
     // Handle click events (mouseUp triggers click)

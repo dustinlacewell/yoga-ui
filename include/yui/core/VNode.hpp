@@ -268,6 +268,10 @@ struct VNode {
         eventProps().onRightClick = std::move(fn);
         return *this;
     }
+    VNode& onMouseDown(std::function<void()> fn) {
+        eventProps().onMouseDown = std::move(fn);
+        return *this;
+    }
     VNode& onHover(std::function<void(bool)> fn) {
         eventProps().onHover = std::move(fn);
         return *this;
