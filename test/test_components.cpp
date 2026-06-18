@@ -507,6 +507,117 @@ TEST_CASE("Component - UpdateResult reflects component changes") {
     CHECK(result.layoutChanged == false);
 }
 
+TEST_CASE("Component - useState setter is a safe no-op after unmount") {
+    // Regression for B3: the useState setter captures the fiber. A consumer may
+    // store the setter so it outlives the component (here: a plain std::function
+    // that survives the unmount), then invoke it after the component unmounts via
+    // conditional render. Without a liveness guard the setter dereferenced the
+    // freed fiber (use-after-free). It must now be a safe no-op.
+    TestHost host;
+    Store<bool> showComponent(true);
+    int renderCount = 0;
+
+    std::function<void(int)> storedSetter;  // outlives the component
+    std::shared_ptr<bool> fiberAlive;       // the unmounted fiber's liveness token
+
+    auto Counter = [&](ComponentContext& ctx) {
+        renderCount++;
+        auto [count, setter] = ctx.useState<int>(0);
+        storedSetter = setter;          // escape: stored outside the fiber
+        fiberAlive = ctx.fiber()->alive;  // observe the fiber's liveness from the test
+        return Text(std::to_string(count));
+    };
+
+    host.setRender(std::function<VNode()>([&]() {
+        if (showComponent.use()) {
+            return Box({Component(Counter)});
+        }
+        return Box();
+    }));
+
+    host.update(200, 200);
+    CHECK(renderCount == 1);
+    CHECK(*fiberAlive == true);
+
+    // Setter works while mounted.
+    storedSetter(7);
+    host.update(200, 200);
+    CHECK(renderCount == 2);
+
+    // Unmount the component via conditional render — its fiber is freed.
+    showComponent.set(false);
+    host.update(200, 200);
+
+    // The fiber is genuinely dead: ~Fiber cleared its liveness token. This is the
+    // precondition the stale setter must detect. (A sanitizer would flag the
+    // pre-fix freed-memory access; this assertion locks in the death point even
+    // without one.)
+    CHECK(*fiberAlive == false);
+
+    int renderCountAfterUnmount = renderCount;
+
+    // Invoke the stale setter. Pre-fix this dereferenced the freed fiber. It must
+    // now no-op: no crash, no re-render of the gone component.
+    storedSetter(99);
+    host.update(200, 200);
+    CHECK(renderCount == renderCountAfterUnmount);
+}
+
+TEST_CASE("Component - a remounted sibling's setter still works after another unmounts") {
+    // Liveness is per-fiber: unmounting one component must not poison a still-
+    // mounted component's setter.
+    TestHost host;
+    Store<bool> showFirst(true);
+    int liveRenderCount = 0;
+
+    std::function<void(int)> staleSetter;  // from the component that unmounts
+    std::function<void(int)> liveSetter;   // from the component that stays
+
+    auto Vanishing = [&](ComponentContext& ctx) {
+        auto [count, setter] = ctx.useState<int>(0);
+        staleSetter = setter;
+        return Text(std::to_string(count));
+    };
+
+    auto Persistent = [&](ComponentContext& ctx) {
+        liveRenderCount++;
+        auto [count, setter] = ctx.useState<int>(0);
+        liveSetter = setter;
+        return Text(std::to_string(count));
+    };
+
+    host.setRender(std::function<VNode()>([&]() {
+        std::vector<Child> kids;
+        if (showFirst.use()) {
+            kids.push_back(Component(Vanishing));
+        }
+        kids.push_back(Component(Persistent));
+        return Box(kids);
+    }));
+
+    host.update(200, 200);
+    CHECK(liveRenderCount == 1);
+
+    // Unmount the first component.
+    showFirst.set(false);
+    host.update(200, 200);
+
+    // Stale setter no-ops.
+    staleSetter(123);
+    host.update(200, 200);
+
+    // The still-mounted component's setter remains live.
+    int before = liveRenderCount;
+    liveSetter(5);
+    host.update(200, 200);
+    CHECK(liveRenderCount == before + 1);
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    REQUIRE(rootBox->children.size() == 1);
+    auto* textNode = static_cast<TextNode*>(rootBox->children[0].get());
+    CHECK(textNode->props.text == "5");
+}
+
 TEST_CASE("Component - useField binds to Store field") {
     struct FormState {
         std::string username;

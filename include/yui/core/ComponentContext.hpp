@@ -62,8 +62,15 @@ std::pair<T, std::function<void(T)>> ComponentContext::useState(T initial) {
 
     T& value = std::any_cast<T&>(fiber_->hookState[index]);
 
+    // The setter may outlive the component (stored in a node prop, a sibling's
+    // handler, a Store, a timer, an async completion). Capture the fiber's
+    // liveness token by copy and verify it before touching the fiber, so an
+    // invocation after unmount is a safe no-op instead of a use-after-free.
+    // Mirrors Store's alive_ token / the isHostLive pattern.
     Fiber* captured = fiber_;
-    auto setter = [captured, index](T newValue) {
+    auto alive = fiber_->alive;
+    auto setter = [captured, alive = std::move(alive), index](T newValue) {
+        if (!*alive) return;  // fiber unmounted — do not dereference it
         if (index < captured->hookState.size()) {
             captured->hookState[index] = std::move(newValue);
             captured->markDirty();

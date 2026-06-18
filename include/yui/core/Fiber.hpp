@@ -49,6 +49,26 @@ struct Fiber {
     const char* debugName = nullptr;
 #endif
 
+    // Liveness token shared with callbacks that outlive this fiber — notably the
+    // useState setter, which a consumer may store in a sibling's handler, a Store,
+    // a timer, or an async completion. Cleared in ~Fiber so those callbacks no-op
+    // instead of dereferencing a freed fiber. Mirrors the isHostLive / Store alive_
+    // pattern: observe via a copy, verify liveness before touching the fiber.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
+    Fiber() = default;
+    ~Fiber() {
+        if (alive) *alive = false;  // null after a move-out (see remountRoot)
+    }
+
+    // Move-only (children are unique_ptr-owned). remountRoot move-assigns a fresh
+    // fiber into the root; a user-declared destructor would otherwise suppress the
+    // implicit move ops and fall back to a (deleted) copy.
+    Fiber(Fiber&&) = default;
+    Fiber& operator=(Fiber&&) = default;
+    Fiber(const Fiber&) = delete;
+    Fiber& operator=(const Fiber&) = delete;
+
     // --- Methods ---
     void runCleanups();   // Clean up this fiber's effects and subscriptions (non-recursive)
     void willUnmount();   // Recursive: runCleanups() on this fiber and all descendants
