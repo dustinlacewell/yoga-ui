@@ -272,28 +272,44 @@ void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
 }
 
 void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
-    // Tear down the old root subtree's lifecycle (effects/subscriptions) and
-    // notify the host that its render nodes are gone. The root render node has
-    // no render parent, so we drop it via ownership rather than removeRenderNode.
+    // Transactional: build the NEW tree fully before destroying the old one. If
+    // mount() fails for any reason (a callback throwing, bad_alloc, …) we return
+    // with the old root still fully intact — no dangling renderRoot_, no
+    // use-after-free on the next frame.
+    //
+    // Park the old render root in a local first. Without a host the reconciler
+    // still owns renderRoot_ (the host takes it after the first frame); moving it
+    // aside both keeps it alive for an orderly teardown below and frees the
+    // renderRoot_ slot so mount() can populate it without clobbering live nodes.
+    auto oldRenderRoot = std::move(renderRoot_);
+
+    auto fresh = mount(vnode);          // populates renderRoot_ with the new tree
+    auto freshRenderRoot = takeRenderRoot();
+
+    // The new tree is built and safely parked in freshRenderRoot. Only now tear
+    // down the old root subtree's lifecycle (effects/subscriptions) and notify the
+    // host that its render nodes are gone. The root render node has no render
+    // parent, so it is dropped via ownership (oldRenderRoot) rather than
+    // removeRenderNode.
     notifyRenderRemoved(fiber->renderNode);
     fiber->willUnmount();
-    renderRoot_.reset();
+    oldRenderRoot.reset();
 
-    // Rebuild a fresh root fiber + render root from the new VNode, then move its
-    // state into the existing root fiber so the host's fiberRoot_ pointer (and
-    // any parent links into it) stay valid — no dangling, no leaks.
-    auto fresh = mount(vnode);
+    // Move the fresh fiber's state into the existing root fiber so the host's
+    // fiberRoot_ pointer (and any parent links into it) stay valid.
     *fiber = std::move(*fresh);
     for (auto& child : fiber->children) {
         child->parent = fiber;
     }
 
-    // Hand the newly-built render root to the host. After the first frame the
-    // host owns renderRoot_ (via takeRenderRoot()), so without this it would keep
-    // pointing at the freed old root. Reuses the existing host_ back-reference
-    // rather than adding another reconciler callback.
+    // Install the newly-built render root. After the first frame the host owns the
+    // render root (via takeRenderRoot()), so it must be handed back through
+    // replaceRenderRoot(); before that — and in host-less reconciler tests — the
+    // reconciler keeps ownership in renderRoot_.
     if (host_) {
-        host_->replaceRenderRoot(std::move(renderRoot_));
+        host_->replaceRenderRoot(std::move(freshRenderRoot));
+    } else {
+        renderRoot_ = std::move(freshRenderRoot);
     }
 }
 
@@ -327,7 +343,17 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
     bool childrenUnchanged = true;
     size_t newChildIndex = 0;
 
-    std::vector<std::unique_ptr<Fiber>> newFibers;
+    // Plan the new ordering WITHOUT moving ownership out of the live vector. Each
+    // slot is either a reused existing child (referenced by index, still owned in
+    // place) or a freshly-mounted fiber (owned here until the final swap). The
+    // live parentFiber->children keeps all of its entries — no transient null
+    // holes — so any observable iteration (willUnmount, ~Host) stays sound even if
+    // a mount/reconcile below were to bail out early.
+    struct PlannedSlot {
+        size_t reuseIndex = SIZE_MAX;          // index into parentFiber->children, or SIZE_MAX
+        std::unique_ptr<Fiber> freshFiber;     // owns a newly-mounted fiber otherwise
+    };
+    std::vector<PlannedSlot> plan;
 
     for (size_t i = 0; i < children.size(); ++i) {
         const auto& child = children[i];
@@ -336,7 +362,8 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
         size_t existingIndex = lookup.find(child, i, parentFiber->children, reused);
 
         if (existingIndex != SIZE_MAX) {
-            // Reuse existing fiber
+            // Reuse existing fiber — mutate through the raw pointer, leaving the
+            // unique_ptr owned in place in parentFiber->children.
             reused[existingIndex] = true;
             auto& existingFiber = parentFiber->children[existingIndex];
             existingFiber->sourcePosition = i;
@@ -352,7 +379,7 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
                 reconcileComponent(existingFiber.get(), std::get<Component>(child));
             }
 
-            newFibers.push_back(std::move(parentFiber->children[existingIndex]));
+            plan.push_back(PlannedSlot{existingIndex, nullptr});
 
             if (existingIndex != newChildIndex) {
                 childrenUnchanged = false;
@@ -366,20 +393,35 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
             auto newFiber = mountChild(child, i, renderParent, dummyRenderIndex);
             if (newFiber) {
                 newFiber->parent = parentFiber;
-                newFibers.push_back(std::move(newFiber));
+                plan.push_back(PlannedSlot{SIZE_MAX, std::move(newFiber)});
             }
         }
         newChildIndex++;
     }
 
-    if (newFibers.size() != parentFiber->children.size()) {
+    if (plan.size() != parentFiber->children.size()) {
         childrenUnchanged = false;
     }
 
-    // Unmount fibers that weren't reused
+    // Unmount fibers that weren't reused. The live vector is still fully populated
+    // here, so these reads are safe and unmount happens through the real owned
+    // fibers — preserving the normal unmount/destruction path (~Fiber clears alive).
     for (size_t i = 0; i < parentFiber->children.size(); ++i) {
         if (!reused[i] && parentFiber->children[i]) {
             unmountFiber(parentFiber->children[i].get(), renderParent);
+        }
+    }
+
+    // Materialize the new ordering in a single pass and swap it in atomically.
+    // Moving out of the live vector happens only here, immediately before the
+    // assignment, so no observable null-hole window ever exists.
+    std::vector<std::unique_ptr<Fiber>> newFibers;
+    newFibers.reserve(plan.size());
+    for (auto& slot : plan) {
+        if (slot.reuseIndex != SIZE_MAX) {
+            newFibers.push_back(std::move(parentFiber->children[slot.reuseIndex]));
+        } else {
+            newFibers.push_back(std::move(slot.freshFiber));
         }
     }
 

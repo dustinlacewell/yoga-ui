@@ -1,6 +1,7 @@
 #include "doctest.h"
 
 #include <cmath>
+#include <memory>
 #include <yui/core/Reconciler.hpp>
 
 using namespace yui;
@@ -119,6 +120,66 @@ TEST_CASE("Reconciler removes unmatched nodes") {
 
     CHECK(root->children.size() == 1);
     CHECK(root->children[0]->key == "a");
+}
+
+TEST_CASE("Reconciler reuses+reorders+removes keyed children with clean teardown") {
+    // Stresses the reconcileChildren rewrite: a single reconcile that reuses
+    // several existing fibers, REORDERS them, and REMOVES others. The previous
+    // implementation moved each reused fiber out of the live parentFiber->children
+    // mid-loop, leaving transient null holes in the still-observable vector before
+    // the final swap. This builds the new ordering without ever holing the live
+    // vector; the assertions verify correctness and that subsequent teardown
+    // (reconciler destruction below) walks the fiber tree without hitting a hole.
+    auto reconciler = std::make_unique<Reconciler>();
+
+    auto tree1 = Column({
+        Text("A").setKey("a"),
+        Text("B").setKey("b"),
+        Text("C").setKey("c"),
+        Text("D").setKey("d"),
+    });
+    auto fiber = reconciler->mount(tree1);
+    auto* root = reconciler->renderRoot();
+    REQUIRE(root->children.size() == 4);
+
+    auto* nodeA = root->children[0].get();
+    auto* nodeC = root->children[2].get();
+    auto* nodeD = root->children[3].get();
+
+    // Reuse a/c/d, reorder them (d,a,c), drop b, and add a brand-new keyed child.
+    auto tree2 = Column({
+        Text("D").setKey("d"),
+        Text("A").setKey("a"),
+        Text("C").setKey("c"),
+        Text("E").setKey("e"),
+    });
+    reconciler->reconcile(fiber.get(), tree2);
+
+    REQUIRE(root->children.size() == 4);
+    // Reused fibers keep their node identity, now in the new order.
+    CHECK(root->children[0].get() == nodeD);
+    CHECK(root->children[1].get() == nodeA);
+    CHECK(root->children[2].get() == nodeC);
+    CHECK(root->children[0]->key == "d");
+    CHECK(root->children[1]->key == "a");
+    CHECK(root->children[2]->key == "c");
+    // The new child is a fresh node.
+    CHECK(root->children[3]->key == "e");
+    CHECK(root->children[3].get() != nodeA);
+    CHECK(root->children[3].get() != nodeC);
+    CHECK(root->children[3].get() != nodeD);
+    // Removed "b" is gone.
+    for (auto& c : root->children) CHECK(c->key != "b");
+
+    // Fiber children mirror the render order and contain no null holes.
+    REQUIRE(fiber->children.size() == 4);
+    for (auto& f : fiber->children) CHECK(f != nullptr);
+
+    // Destroy everything — exercises willUnmount/~Fiber/~Node teardown over the
+    // reconciled tree. A leftover null hole would crash here.
+    fiber.reset();
+    reconciler.reset();
+    CHECK(true);  // reached teardown without crashing
 }
 
 TEST_CASE("Reconciler updates props on reused node") {

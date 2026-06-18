@@ -1,5 +1,7 @@
 #include <yui/nvg/NvgRenderer.hpp>
 
+#include <yui/nvg/detail/NvgScopes.hpp>
+
 #include <nanovg.h>
 #include <chrono>
 
@@ -225,7 +227,7 @@ void NvgRenderer::drawScroll(DrawContext& ctx, ScrollNode* node) {
         nvgStroke(vg_);
     }
 
-    nvgSave(vg_);
+    detail::NvgSaveScope saveScope(vg_);
     nvgTranslate(vg_, x, y);
     nvgIntersectScissor(vg_, 0, 0, w, h);
 
@@ -236,8 +238,6 @@ void NvgRenderer::drawScroll(DrawContext& ctx, ScrollNode* node) {
     for (auto& child : node->children) {
         drawNode(childCtx, child.get());
     }
-
-    nvgRestore(vg_);
 }
 
 void NvgRenderer::drawCanvas(DrawContext& ctx, CanvasNode* node) {
@@ -249,10 +249,9 @@ void NvgRenderer::drawCanvas(DrawContext& ctx, CanvasNode* node) {
     float w = node->layout.width;
     float h = node->layout.height;
 
-    nvgSave(vg_);
+    detail::NvgSaveScope saveScope(vg_);
     nvgTranslate(vg_, x, y);
     node->props.draw(vg_, w, h);
-    nvgRestore(vg_);
 }
 
 void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {

@@ -19,7 +19,7 @@ void Fiber::runCleanups() {
 void Fiber::willUnmount() {
     runCleanups();
     for (auto& child : children) {
-        child->willUnmount();
+        if (child) child->willUnmount();  // defense-in-depth against any transient hole
     }
 }
 

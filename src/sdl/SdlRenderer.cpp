@@ -1,5 +1,7 @@
 #include "yui/sdl/SdlRenderer.hpp"
 
+#include "yui/sdl/detail/SdlScopes.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -283,17 +285,14 @@ void SdlRenderer::renderScroll(ScrollNode* node, float offsetX, float offsetY) {
         drawRoundedRect(x, y, w, h, radius, *border, false);
     }
 
-    // Save current clip rect and apply scroll clipping
-    SDL_Rect prevClip;
-    SDL_bool hadClip = SDL_RenderIsClipEnabled(renderer_);
-    if (hadClip) {
-        SDL_RenderGetClipRect(renderer_, &prevClip);
-    }
+    // Save current clip rect (restored on any scope exit) and apply scroll clip.
+    detail::SdlClipScope clipScope(renderer_);
 
     SDL_Rect clipRect = {static_cast<int>(x), static_cast<int>(y), static_cast<int>(w), static_cast<int>(h)};
 
     // Intersect with previous clip if there was one
-    if (hadClip) {
+    if (clipScope.hadClip()) {
+        const SDL_Rect& prevClip = clipScope.prevClip();
         int x1 = std::max(clipRect.x, prevClip.x);
         int y1 = std::max(clipRect.y, prevClip.y);
         int x2 = std::min(clipRect.x + clipRect.w, prevClip.x + prevClip.w);
@@ -313,13 +312,6 @@ void SdlRenderer::renderScroll(ScrollNode* node, float offsetX, float offsetY) {
     for (auto& child : node->children) {
         renderNode(child.get(), childOffsetX, childOffsetY);
     }
-
-    // Restore previous clip state
-    if (hadClip) {
-        SDL_RenderSetClipRect(renderer_, &prevClip);
-    } else {
-        SDL_RenderSetClipRect(renderer_, nullptr);
-    }
 }
 
 void SdlRenderer::renderCanvas(CanvasNode* node, float x, float y) {
@@ -331,32 +323,32 @@ void SdlRenderer::renderCanvas(CanvasNode* node, float x, float y) {
     if (w <= 0 || h <= 0)
         return;
 
-    // Create a texture as render target for the canvas
-    SDL_Texture* target = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w, h);
+    // Create a texture as render target for the canvas. The RAII holder destroys
+    // it on any scope exit (early return, exception, or normal fall-through).
+    detail::SdlTexture target(
+        SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w, h));
     if (!target)
         return;
 
-    SDL_SetTextureBlendMode(target, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(target.get(), SDL_BLENDMODE_BLEND);
 
-    // Save current render target and switch to our texture
-    SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
-    SDL_SetRenderTarget(renderer_, target);
+    {
+        // Switch the render target to our texture and draw onto it. The scope
+        // restores the previous target on exit — before the blit below, matching
+        // the original ordering (blit happens against the restored target).
+        detail::SdlRenderTargetScope targetScope(renderer_, target.get());
 
-    // Clear with transparent
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
-    SDL_RenderClear(renderer_);
+        // Clear with transparent
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+        SDL_RenderClear(renderer_);
 
-    // User draws on this texture at (0,0) relative coordinates
-    node->props.draw(renderer_, static_cast<float>(w), static_cast<float>(h));
-
-    // Restore previous render target
-    SDL_SetRenderTarget(renderer_, prevTarget);
+        // User draws on this texture at (0,0) relative coordinates
+        node->props.draw(renderer_, static_cast<float>(w), static_cast<float>(h));
+    }
 
     // Blit the texture to the correct position
     SDL_FRect dst = {x, y, static_cast<float>(w), static_cast<float>(h)};
-    SDL_RenderCopyF(renderer_, target, nullptr, &dst);
-
-    SDL_DestroyTexture(target);
+    SDL_RenderCopyF(renderer_, target.get(), nullptr, &dst);
 }
 
 void SdlRenderer::drawRoundedRect(float x, float y, float w, float h, float radius, uint32_t color, bool filled) {
