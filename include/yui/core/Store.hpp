@@ -31,17 +31,36 @@ public:
     const T& use() const {
         std::lock_guard lock(mutex_);
         if (currentRenderFiber) {
-            // Inside a component - subscribe just this fiber
-            auto [it, inserted] = fiberSubscribers_.insert(currentRenderFiber);
-            if (inserted) {
-                Fiber* fiber = currentRenderFiber;
-                auto alive = alive_;
-                fiber->subscriptionCleanups.push_back([this, fiber, alive] {
-                    if (!*alive) return;  // Store already destroyed — nothing to unsubscribe
-                    std::lock_guard lock(mutex_);
-                    fiberSubscribers_.erase(fiber);
-                });
-            }
+            // Inside a component - subscribe just this fiber. The insert is the
+            // live subscription for THIS render; it is idempotent (set keyed by
+            // Fiber*).
+            fiberSubscribers_.insert(currentRenderFiber);
+
+            // Record the subscription unconditionally — even when membership
+            // already existed. The re-render path (rerenderComponent) relies on
+            // every render's use() producing a record so it can: (a) on a thrown
+            // render, restore the exact pre-render membership via resubscribe; and
+            // (b) on a successful render, dedupe old-vs-new records by `store`
+            // identity. A redundant record (same store use()'d twice in one
+            // render) is harmless: insert/erase are both idempotent. The old
+            // membership-gated append broke (a) — a use()-after-snapshot saw the
+            // fiber as already-member and skipped the record, so the snapshot
+            // restore could not re-arm it.
+            Fiber* fiber = currentRenderFiber;
+            auto alive = alive_;
+            const Store* self = this;
+            fiber->subscriptionCleanups.push_back(SubscriptionRecord{
+                self,
+                [self, fiber, alive] {  // resubscribe
+                    if (!*alive) return;  // Store destroyed — nothing to re-arm
+                    std::lock_guard lock(self->mutex_);
+                    self->fiberSubscribers_.insert(fiber);
+                },
+                [self, fiber, alive] {  // unsubscribe
+                    if (!*alive) return;  // Store destroyed — nothing to unsubscribe
+                    std::lock_guard lock(self->mutex_);
+                    self->fiberSubscribers_.erase(fiber);
+                }});
         } else if (currentRenderHost) {
             // Top-level render - subscribe the whole host
             hostSubscribers_.insert(currentRenderHost);

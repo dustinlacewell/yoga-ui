@@ -4,8 +4,10 @@
 #include "Node.hpp"
 #include "VNode.hpp"
 
+#include <exception>
 #include <functional>
 #include <memory>
+#include <string_view>
 
 #include <yoga/Yoga.h>
 
@@ -84,6 +86,11 @@ private:
     // --- Cleanup ---
     void unmountFiber(Fiber* fiber, Node* renderParent);
     void notifyRenderRemoved(Node* node);
+
+    // --- Diagnostics ---
+    // Route a caught user-callback exception to the host's sink via the existing
+    // host_ back-reference. No-op when host-less (reconciler-only unit tests).
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
 
     // --- State ---
     std::unique_ptr<Node> renderRoot_;

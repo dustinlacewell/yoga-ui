@@ -13,6 +13,24 @@ namespace yui {
 class Node;
 class Host;
 
+// One Store subscription held by a component fiber. A subscription is a pair of
+// inverse actions over the Store's fiberSubscribers_ set, plus the store's
+// identity:
+//   - unsubscribe: remove this fiber from the store (teardown / re-render reset)
+//   - resubscribe: re-add this fiber to the store
+// Both are idempotent (set insert/erase) and liveness-guarded (no-op once the
+// Store is gone), mirroring the Store/Host alive_ idiom. The pair lets the
+// re-render path restore the EXACT pre-render membership when a render throws:
+// Store::set() consumed (cleared) the triggering store's membership before the
+// re-render ran, so a throw-before-use() would otherwise leave the fiber
+// permanently unsubscribed — resubscribe re-arms it. `store` identity lets a
+// successful re-render dedupe old-vs-new so a still-used store is not torn down.
+struct SubscriptionRecord {
+    const void* store = nullptr;            // Store identity (for old-vs-new dedupe)
+    std::function<void()> resubscribe;      // re-add fiber to the store's set
+    std::function<void()> unsubscribe;      // remove fiber from the store's set
+};
+
 struct Fiber {
     enum class Tag { Host, Component };
     Tag tag;
@@ -38,7 +56,7 @@ struct Fiber {
     // --- Component fiber fields ---
     ComponentFn componentFn;
     std::vector<std::any> hookState;
-    std::vector<std::function<void()>> subscriptionCleanups;
+    std::vector<SubscriptionRecord> subscriptionCleanups;
     std::vector<std::function<void()>> effectCleanups;
     std::vector<std::function<std::function<void()>()>> pendingEffects;
     Host* host = nullptr;
@@ -70,8 +88,15 @@ struct Fiber {
     Fiber& operator=(const Fiber&) = delete;
 
     // --- Methods ---
-    void runCleanups();   // Clean up this fiber's effects and subscriptions (non-recursive)
-    void willUnmount();   // Recursive: runCleanups() on this fiber and all descendants
+    // runCleanups/willUnmount fire from destructors (~Host, ~Fiber) and the
+    // unmount path; they are noexcept and isolate each user cleanup internally so
+    // one throwing cleanup neither skips the rest nor terminates during teardown.
+    void runCleanups() noexcept;   // Clean up this fiber's effects and subscriptions (non-recursive)
+    void willUnmount() noexcept;   // Recursive: runCleanups() on this fiber and all descendants
+    // Run+clear ONLY the subscription cleanups (Store unsubscribes), leaving effect
+    // cleanups in place. Used by the re-render path to reset store membership
+    // before the fresh render re-subscribes. noexcept / per-cleanup isolated.
+    void runSubscriptionCleanups() noexcept;
     void markDirty();
     void runPendingEffects();
 

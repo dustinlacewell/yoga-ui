@@ -4,11 +4,22 @@
 
 #include <nanovg.h>
 #include <chrono>
+#include <exception>
 
 namespace yui {
 namespace nvg {
 
-NvgRenderer::NvgRenderer(NVGcontext* vg, int fontId) : vg_(vg), fontId_(fontId) {}
+NvgRenderer::NvgRenderer(NVGcontext* vg, int fontId, ErrorHandler onError)
+    : vg_(vg), fontId_(fontId), onError_(std::move(onError)) {}
+
+void NvgRenderer::reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+    if (!onError_)
+        return;
+    try {
+        onError_(where, eOrNull);
+    } catch (...) {
+    }
+}
 
 Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidth) const {
     if (!vg_) {
@@ -33,12 +44,23 @@ Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidt
     return {width, height};
 }
 
-void NvgRenderer::render(Node* root) {
+void NvgRenderer::render(Node* root) noexcept {
     if (!vg_ || !root)
         return;
 
-    DrawContext ctx{0, 0};
-    drawNode(ctx, root);
+    // Backstop: a draw exception is already isolated per-Canvas in drawCanvas, but
+    // anything else thrown during the walk must not escape into the draw-time C
+    // boundary. The per-Canvas RAII scopes (landed in the prior commit) have
+    // already restored NanoVG state on unwind, so catching here leaves the context
+    // balanced.
+    try {
+        DrawContext ctx{0, 0};
+        drawNode(ctx, root);
+    } catch (const std::exception& e) {
+        reportError("NvgRenderer::render", &e);
+    } catch (...) {
+        reportError("NvgRenderer::render", nullptr);
+    }
 }
 
 void NvgRenderer::drawNode(DrawContext& ctx, Node* node) {
@@ -249,9 +271,17 @@ void NvgRenderer::drawCanvas(DrawContext& ctx, CanvasNode* node) {
     float w = node->layout.width;
     float h = node->layout.height;
 
+    // The save scope restores NanoVG state on any exit, including a throw from the
+    // user draw callback. Isolate that throw and continue rendering siblings.
     detail::NvgSaveScope saveScope(vg_);
     nvgTranslate(vg_, x, y);
-    node->props.draw(vg_, w, h);
+    try {
+        node->props.draw(vg_, w, h);
+    } catch (const std::exception& e) {
+        reportError("draw", &e);
+    } catch (...) {
+        reportError("draw", nullptr);
+    }
 }
 
 void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {

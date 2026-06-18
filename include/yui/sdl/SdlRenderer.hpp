@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../core/ErrorHandler.hpp"
 #include "../core/Node.hpp"
 
 #include <string>
@@ -15,11 +16,16 @@ namespace sdl {
 // measurer (install via Host::setTextMeasurer).
 class SdlRenderer : public ITextMeasurer {
 public:
-    SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize = 16);
+    // The optional ErrorHandler keeps the renderer decoupled from core Host: a
+    // throwing Canvas draw callback is caught and routed here (default: swallow)
+    // rather than escaping into the draw-time C boundary.
+    SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize = 16,
+                ErrorHandler onError = {});
     ~SdlRenderer() override;
 
-    // Render a node tree
-    void render(Node* root);
+    // Render a node tree. noexcept backstop: rendering runs inside the platform's
+    // draw callback (a C boundary), so a throw must never escape.
+    void render(Node* root) noexcept;
 
     // ITextMeasurer: measure text using this renderer's font cache.
     Size measure(const std::string& text, float fontSize, float maxWidth) const override;
@@ -41,9 +47,13 @@ private:
     // Get or create a font at the specified size (lazily fills the cache).
     TTF_Font* getFont(int size) const;
 
+    // Route a caught draw exception to the optional sink (no-op if unset).
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
+
     SDL_Renderer* renderer_;
     std::string fontPath_;
     int baseFontSize_;
+    ErrorHandler onError_;
     // Mutable: lazily populated by getFont, including from const measure().
     mutable std::unordered_map<int, TTF_Font*> fontCache_;
 };

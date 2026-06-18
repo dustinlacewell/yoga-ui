@@ -159,7 +159,7 @@ struct Fiber {
     // Component fibers hold state and hooks
     ComponentFn componentFn;
     std::vector<std::any> hookState;        // useState, useRef storage
-    std::vector<std::function<void()>> subscriptionCleanups;
+    std::vector<SubscriptionRecord> subscriptionCleanups;  // {store, resubscribe, unsubscribe}
     std::vector<std::function<void()>> effectCleanups;
     bool dirty = false;
 };

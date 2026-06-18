@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../core/ErrorHandler.hpp"
 #include "../core/Node.hpp"
 
 // Forward declare NanoVG context
@@ -12,10 +13,14 @@ namespace nvg {
 // (install via Host::setTextMeasurer).
 class NvgRenderer : public ITextMeasurer {
 public:
-    NvgRenderer(NVGcontext* vg, int fontId = -1);
+    // The optional ErrorHandler keeps the renderer decoupled from core Host: a
+    // throwing Canvas draw callback is caught and routed here (default: swallow)
+    // rather than escaping into the draw-time C boundary.
+    NvgRenderer(NVGcontext* vg, int fontId = -1, ErrorHandler onError = {});
 
-    // Render a node tree
-    void render(Node* root);
+    // Render a node tree. noexcept backstop: rendering runs inside the platform's
+    // draw callback (a C boundary), so a throw must never escape.
+    void render(Node* root) noexcept;
 
     // ITextMeasurer: measure text using this renderer's nanovg context/font.
     Size measure(const std::string& text, float fontSize, float maxWidth) const override;
@@ -33,8 +38,12 @@ private:
     void drawScroll(DrawContext& ctx, ScrollNode* node);
     void drawCanvas(DrawContext& ctx, CanvasNode* node);
 
+    // Route a caught draw exception to the optional sink (no-op if unset).
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
+
     NVGcontext* vg_;
     int fontId_;
+    ErrorHandler onError_;
 };
 
 }  // namespace nvg

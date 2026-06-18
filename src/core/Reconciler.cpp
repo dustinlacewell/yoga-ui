@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace yui {
 
@@ -212,14 +213,28 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
     fiber->debugName = comp.debugName;
 #endif
 
-    // Set render context for Store subscriptions
-    FiberRenderContext fiberCtx(fiber.get());
+    // Call the component function. If it throws, discard this never-published
+    // fiber (its subscriptions self-unsubscribe via ~Fiber's cleanup path) and
+    // mount nothing — no live fiber exists to corrupt. Returning nullptr matches
+    // the empty-result contract: the caller simply attaches no child.
+    VNode result;
+    {
+        FiberRenderContext fiberCtx(fiber.get());
+        ComponentContext ctx(fiber.get(), host_);
+        try {
+            result = comp.fn(ctx);
+        } catch (const std::exception& e) {
+            fiber->runCleanups();  // unsubscribe anything the partial render registered
+            reportError("mountComponent", &e);
+            return nullptr;
+        } catch (...) {
+            fiber->runCleanups();
+            reportError("mountComponent", nullptr);
+            return nullptr;
+        }
+    }
 
-    // Call the component function
-    ComponentContext ctx(fiber.get(), host_);
-    VNode result = comp.fn(ctx);
-
-    // Run pending effects
+    // Run pending effects (each effect body isolated in runPendingEffects)
     fiber->runPendingEffects();
 
     // Mount the result — render parent is the SAME as ours (component is invisible)
@@ -461,20 +476,104 @@ bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
 void Reconciler::rerenderComponent(Fiber* fiber) {
     if (!fiber || !fiber->isComponent()) return;
 
-    fiber->dirty = false;
+    // Transactional render — don't-clear-until-success. The fiber's subscriptions
+    // are NEUTRAL across a failed render and exactly the current render's set after
+    // a successful one. Neither the tree nor the subscription state is destructively
+    // mutated before the render is known to have succeeded.
+    //
+    // Why this ordering (vs. the obvious "run old cleanups, then render"):
+    //   A Store's fiberSubscribers_ set is keyed by Fiber*. The Store::set() that
+    //   marked this fiber dirty already REMOVED it from that store's set (notify()
+    //   clears subscribers). So at entry the triggering store has no membership to
+    //   fall back on. If we ran the old cleanups up front and the render then threw
+    //   BEFORE its use() (legal: hooks run in body order), the fiber would be left
+    //   unsubscribed from every store with no use() to re-arm it — permanently dead
+    //   to those stores. That is the bug this path fixes.
+    //
+    // Snapshot the OLD subscription records out (leaving the fiber's list empty so
+    // the render's use() calls append into a clean vector) WITHOUT running them, so
+    // the fiber keeps whatever memberships it still had at entry. Then render. The
+    // old records carry both an unsubscribe and a resubscribe action plus the store
+    // identity, which is what makes both exits exact:
+    //
+    //   ON THROW  — leave subscriptions EXACTLY as they were at entry. Undo only the
+    //     genuinely-new memberships this partial render added (run each fresh
+    //     record's unsubscribe), then re-arm the pre-render memberships (run each
+    //     old record's resubscribe — necessary because set() had consumed the
+    //     triggering store's membership), then restore the old record list. Net: the
+    //     fiber is subscribed to exactly its pre-render stores, one record each,
+    //     dirty still set, children untouched — so a later set() still re-renders it.
+    //
+    //   ON SUCCESS — keep exactly the current render's subscriptions. The fresh
+    //     records already hold every store the render use()'d (membership re-inserted
+    //     by use()). Dedupe the old records by store identity: an old record whose
+    //     store the render re-used is redundant (fresh record + live membership
+    //     supersede it) and is dropped WITHOUT running — running its unsubscribe
+    //     would erase the still-wanted membership. An old record whose store the
+    //     render no longer uses is torn down (run its unsubscribe). End state: the
+    //     fiber is subscribed to exactly the stores its current render use()'d, once
+    //     each, with one record each.
+    //
+    // Effect cleanups persist across re-renders (they fire on unmount), so only the
+    // subscription records participate here. Each unsubscribe/resubscribe is liveness
+    // -guarded and isolated, so a throwing teardown cannot escape.
+    //
+    // Alive-token semantics: the failure path destroys NO fiber and publishes no new
+    // subtree (tree work happens only after success), so every live fiber and its
+    // alive token (captured by useState setters) survives.
+    std::vector<SubscriptionRecord> oldSubs = std::move(fiber->subscriptionCleanups);
+    fiber->subscriptionCleanups.clear();  // defensive: moved-from vector is unspecified
 
-    // Clear old subscription cleanups
-    for (auto& cleanup : fiber->subscriptionCleanups) {
-        cleanup();
+    const size_t preEffects = fiber->pendingEffects.size();  // 0 in steady state
+
+    VNode result;
+    bool threw = false;
+    {
+        FiberRenderContext fiberCtx(fiber);
+        ComponentContext ctx(fiber, host_);
+        try {
+            result = fiber->componentFn(ctx);
+        } catch (const std::exception& e) {
+            threw = true;
+            reportError("rerenderComponent", &e);
+        } catch (...) {
+            threw = true;
+            reportError("rerenderComponent", nullptr);
+        }
     }
-    fiber->subscriptionCleanups.clear();
 
-    // Set render context
-    FiberRenderContext fiberCtx(fiber);
+    if (threw) {
+        // Subscription-neutral rollback. Undo only the memberships this partial
+        // render newly added (its fresh records' unsubscribe), re-arm the pre-render
+        // memberships (the old records' resubscribe), then reinstate the old records.
+        for (auto& fresh : fiber->subscriptionCleanups) {
+            if (fresh.unsubscribe) fresh.unsubscribe();
+        }
+        for (auto& old : oldSubs) {
+            if (old.resubscribe) old.resubscribe();
+        }
+        fiber->subscriptionCleanups = std::move(oldSubs);
+        fiber->pendingEffects.resize(preEffects);
+        return;  // dirty stays set; children untouched
+    }
 
-    // Call component function
-    ComponentContext ctx(fiber, host_);
-    VNode result = fiber->componentFn(ctx);
+    // Render succeeded. Tear down stale subscriptions: run the old records whose
+    // store the current render did NOT re-use; drop (without running) the old
+    // records whose store the render re-used, since the fresh records already hold
+    // their live membership. The fresh records remain the fiber's subscription list.
+    std::unordered_set<const void*> currentStores;
+    currentStores.reserve(fiber->subscriptionCleanups.size());
+    for (auto& fresh : fiber->subscriptionCleanups) {
+        currentStores.insert(fresh.store);
+    }
+    for (auto& old : oldSubs) {
+        if (currentStores.find(old.store) == currentStores.end() && old.unsubscribe) {
+            old.unsubscribe();
+        }
+    }
+
+    // dirty is cleared here (after success), not before, so a failed pass leaves it set.
+    fiber->dirty = false;
 
     // Run pending effects
     fiber->runPendingEffects();
@@ -675,6 +774,12 @@ void Reconciler::notifyRenderRemoved(Node* node) {
 
     for (auto& child : node->children) {
         notifyRenderRemoved(child.get());
+    }
+}
+
+void Reconciler::reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+    if (host_) {
+        host_->reportError(where, eOrNull);
     }
 }
 

@@ -2,6 +2,10 @@
 
 #include <yui/core/EventHandler.hpp>
 #include <yui/core/Reconciler.hpp>
+#include <yui/yui.hpp>
+
+#include <stdexcept>
+#include <string>
 
 using namespace yui;
 
@@ -608,4 +612,100 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
     // The content should exceed the scroll container, enabling scrolling
     CHECK(scrollNode->contentHeight == 714);
     CHECK(scrollNode->contentHeight > scrollNode->layout.height);
+}
+
+// ============================================================================
+// Exception-safety contract (B2 commit 2): a throwing event handler is isolated,
+// routed to the sink, never aborts the dispatch walk, and never desyncs hover /
+// focus bookkeeping.
+// ============================================================================
+
+namespace {
+// A Host subclass whose render returns a fixed tree, for driving the noexcept
+// Host::handle* backstops end to end.
+class EventTestHost : public Host {
+public:
+    explicit EventTestHost(std::function<VNode()> fn) { setRender(std::move(fn)); }
+};
+}  // namespace
+
+TEST_CASE("Exception - throwing onClick is isolated; bubble target still fires") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int errorCount = 0;
+    std::string errorWhere;
+    events.setErrorHandler([&](std::string_view where, const std::exception*) {
+        errorCount++;
+        errorWhere = std::string(where);
+    });
+
+    bool parentClicked = false;
+    // Inner box throws on click; the click bubbles to the parent, whose handler
+    // must still run despite the inner throw.
+    auto tree = Box({
+                        Box().width(50).height(50).setKey("inner").onClick(
+                            [&]() { throw std::runtime_error("click boom"); }),
+                    })
+                    .width(100)
+                    .height(100)
+                    .onClick([&]() { parentClicked = true; });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    CHECK_NOTHROW(events.handleMouseUp(root, 25, 25, MouseButton::Left));
+
+    CHECK(errorCount == 1);
+    CHECK(errorWhere == "onClick");
+    CHECK(parentClicked == true);  // dispatch walk continued past the throwing handler
+}
+
+TEST_CASE("Exception - throwing onHover keeps hover state consistent") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int errorCount = 0;
+    events.setErrorHandler([&](std::string_view, const std::exception*) { errorCount++; });
+
+    auto tree = Box({
+                        Box().width(50).height(50).setKey("inner").onHover(
+                            [&](bool) { throw std::runtime_error("hover boom"); }),
+                    })
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    Node* inner = root->children[0].get();
+
+    // Hover in: onHover(true) throws but the flag + hoveredNode_ must commit.
+    CHECK_NOTHROW(events.handleMouseMove(root, 25, 25));
+    CHECK(events.getHoveredNode() == inner);
+    CHECK(inner->hovered == true);
+    CHECK(errorCount == 1);
+
+    // Hover out: onHover(false) throws but state must still flip cleanly.
+    CHECK_NOTHROW(events.handleMouseMove(root, 150, 150));
+    CHECK(events.getHoveredNode() == nullptr);
+    CHECK(inner->hovered == false);
+    CHECK(errorCount == 2);
+}
+
+TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing onClick") {
+    int errorCount = 0;
+
+    EventTestHost host([&]() {
+        return Box().width(100).height(100).onClick([&]() { throw std::runtime_error("boom"); });
+    });
+    host.setErrorHandler([&](std::string_view, const std::exception*) { errorCount++; });
+
+    host.update(100, 100);
+
+    // The platform calls Host::handle* directly; a throwing handler must not
+    // escape (noexcept) and must reach the host sink.
+    CHECK_NOTHROW(host.handleMouseUp(50, 50, MouseButton::Left));
+    CHECK(errorCount == 1);
 }

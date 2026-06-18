@@ -2,21 +2,49 @@
 
 #include <yui/core/Host.hpp>
 
+#include <exception>
+
 namespace yui {
 
-void Fiber::runCleanups() {
-    for (auto& cleanup : effectCleanups) {
+namespace {
+
+// Run one teardown callback, swallowing any throw. runCleanups/willUnmount fire
+// from ~Host / ~Fiber and from the unmount path, so a throwing cleanup must
+// neither abort the rest of the loop nor escape a destructor (which would
+// terminate). Route to the owning component fiber's host sink when available;
+// only component fibers carry cleanups, and they always have host set.
+void runOneCleanup(std::function<void()>& cleanup, Host* host) noexcept {
+    try {
         cleanup();
+    } catch (const std::exception& e) {
+        if (host) host->reportError("cleanup", &e);
+    } catch (...) {
+        if (host) host->reportError("cleanup", nullptr);
+    }
+}
+
+}  // namespace
+
+void Fiber::runCleanups() noexcept {
+    for (auto& cleanup : effectCleanups) {
+        runOneCleanup(cleanup, host);
     }
     effectCleanups.clear();
 
-    for (auto& cleanup : subscriptionCleanups) {
-        cleanup();
+    for (auto& sub : subscriptionCleanups) {
+        runOneCleanup(sub.unsubscribe, host);
     }
     subscriptionCleanups.clear();
 }
 
-void Fiber::willUnmount() {
+void Fiber::runSubscriptionCleanups() noexcept {
+    for (auto& sub : subscriptionCleanups) {
+        runOneCleanup(sub.unsubscribe, host);
+    }
+    subscriptionCleanups.clear();
+}
+
+void Fiber::willUnmount() noexcept {
     runCleanups();
     for (auto& child : children) {
         if (child) child->willUnmount();  // defense-in-depth against any transient hole
@@ -31,10 +59,19 @@ void Fiber::markDirty() {
 }
 
 void Fiber::runPendingEffects() {
+    // Each effect body is a user callback; isolate a throw so one bad effect does
+    // not skip the rest. A throwing effect registers no cleanup. The whole list is
+    // still drained either way.
     for (auto& effect : pendingEffects) {
-        auto cleanup = effect();
-        if (cleanup) {
-            effectCleanups.push_back(std::move(cleanup));
+        try {
+            auto cleanup = effect();
+            if (cleanup) {
+                effectCleanups.push_back(std::move(cleanup));
+            }
+        } catch (const std::exception& e) {
+            if (host) host->reportError("effect", &e);
+        } catch (...) {
+            if (host) host->reportError("effect", nullptr);
         }
     }
     pendingEffects.clear();

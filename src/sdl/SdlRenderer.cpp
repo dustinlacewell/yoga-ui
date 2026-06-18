@@ -4,16 +4,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 
 #include <SDL2_gfxPrimitives.h>
 
 namespace yui {
 namespace sdl {
 
-SdlRenderer::SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize)
-    : renderer_(renderer), fontPath_(fontPath), baseFontSize_(baseFontSize) {
+SdlRenderer::SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize,
+                         ErrorHandler onError)
+    : renderer_(renderer), fontPath_(fontPath), baseFontSize_(baseFontSize), onError_(std::move(onError)) {
     // Pre-load base font
     getFont(baseFontSize);
+}
+
+void SdlRenderer::reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+    if (!onError_)
+        return;
+    try {
+        onError_(where, eOrNull);
+    } catch (...) {
+    }
 }
 
 SdlRenderer::~SdlRenderer() {
@@ -64,10 +75,22 @@ Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidt
     return {width, height};
 }
 
-void SdlRenderer::render(Node* root) {
+void SdlRenderer::render(Node* root) noexcept {
     if (!root)
         return;
-    renderNode(root, 0, 0);
+
+    // Backstop: a draw exception is already isolated per-Canvas in renderCanvas,
+    // but anything else thrown during the walk must not escape into the draw-time
+    // C boundary. The per-Canvas RAII scopes (clip / render-target / texture,
+    // landed in the prior commit) have already restored SDL state on unwind, so
+    // catching here leaves the renderer balanced.
+    try {
+        renderNode(root, 0, 0);
+    } catch (const std::exception& e) {
+        reportError("SdlRenderer::render", &e);
+    } catch (...) {
+        reportError("SdlRenderer::render", nullptr);
+    }
 }
 
 void SdlRenderer::renderNode(Node* node, float offsetX, float offsetY) {
@@ -342,8 +365,16 @@ void SdlRenderer::renderCanvas(CanvasNode* node, float x, float y) {
         SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
         SDL_RenderClear(renderer_);
 
-        // User draws on this texture at (0,0) relative coordinates
-        node->props.draw(renderer_, static_cast<float>(w), static_cast<float>(h));
+        // User draws on this texture at (0,0) relative coordinates. The target /
+        // texture scopes restore SDL state on any exit, including a throw from the
+        // callback; isolate it and continue rendering siblings.
+        try {
+            node->props.draw(renderer_, static_cast<float>(w), static_cast<float>(h));
+        } catch (const std::exception& e) {
+            reportError("draw", &e);
+        } catch (...) {
+            reportError("draw", nullptr);
+        }
     }
 
     // Blit the texture to the correct position

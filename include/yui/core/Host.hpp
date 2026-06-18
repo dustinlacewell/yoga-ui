@@ -1,11 +1,14 @@
 #pragma once
 
+#include "ErrorHandler.hpp"
 #include "EventHandler.hpp"
 #include "Fiber.hpp"
 #include "Node.hpp"
 #include "Reconciler.hpp"
 #include "VNode.hpp"
 
+#include <cstdio>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -74,6 +77,12 @@ public:
         reconciler_.setAutoFocusCallback([this](InputNode* node) { eventHandler_.focusInput(node); });
         reconciler_.setHost(this);
         reconciler_.setConfig(config_.get());
+
+        // The event handler routes a throwing user callback to the same sink the
+        // reconciler uses. The lambda forwards through reportError so the default
+        // policy (debug-stderr / release-swallow) lives in one place.
+        eventHandler_.setErrorHandler(
+            [this](std::string_view where, const std::exception* e) { reportError(where, e); });
     }
 
     virtual ~Host() {
@@ -139,6 +148,32 @@ public:
         }
     }
 
+    // Install the diagnostic sink for exceptions escaping user callbacks. A single
+    // host-level sink covers reconciliation, events, and effects. Pass {} to fall
+    // back to the default policy (debug-stderr / release-swallow). See reportError.
+    void setErrorHandler(ErrorHandler handler) { errorHandler_ = std::move(handler); }
+
+    // Route a caught user-callback exception to the installed sink, or to the
+    // default policy when none is installed: in debug, mirror the hook-count
+    // diagnostic to stderr; in release, swallow. Marked noexcept — it runs from
+    // contexts that are already recovering from (or unwinding) a failed callback,
+    // including destructors, and must never add a second exception.
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+        if (errorHandler_) {
+            try {
+                errorHandler_(where, eOrNull);
+            } catch (...) {
+                // A throwing sink must not defeat the guarantee it serves.
+            }
+            return;
+        }
+#ifndef NDEBUG
+        fprintf(stderr, "yui: exception escaped user callback at '%.*s': %s\n",
+                static_cast<int>(where.size()), where.data(),
+                eOrNull ? eOrNull->what() : "<non-std::exception>");
+#endif
+    }
+
     // Mark for re-render on next update
     void markDirty() { dirty_ = true; }
 
@@ -148,63 +183,86 @@ public:
     bool isDirty() const { return dirty_; }
     bool needsUpdate() const { return dirty_ || componentsDirty_; }
 
-    // Call each frame to update animations, reconcile if dirty, and layout
-    UpdateResult update(float width, float height, float dt = 1.f / 60.f) {
+    // Call each frame to update animations, reconcile if dirty, and layout.
+    //
+    // noexcept is the edge guarantee: yui runs in-process alongside other plugins,
+    // so a throw must never escape into the host (an uncaught throw there
+    // terminates the user's whole DAW). The body catches normal throws and routes
+    // them to the sink; the noexcept is the backstop for the unexpected (a yui
+    // bug) — a throw through it is a clean terminate at the yui edge rather than
+    // silent corruption of host state.
+    UpdateResult update(float width, float height, float dt = 1.f / 60.f) noexcept {
         UpdateResult result;
         if (!render_)
             return result;
         if (width <= 0 || height <= 0)
             return result;
 
-        // Update animations every frame
-        if (renderRoot_) {
-            result.animating = renderRoot_->update(dt);
-        }
-
-        // Check if size changed
-        if (width != lastWidth_ || height != lastHeight_) {
-            lastWidth_ = width;
-            lastHeight_ = height;
-            dirty_ = true;
-        }
-
-        // Process dirty components - walk FIBER tree
-        bool componentsReconciled = false;
-        if (componentsDirty_ && fiberRoot_) {
-            componentsDirty_ = false;
-            componentsReconciled = reconciler_.reconcileDirtyComponents(fiberRoot_.get());
-        }
-
-        // Full re-render only for structural changes
-        bool fullReconcile = false;
-        if (dirty_) {
-            dirty_ = false;
-            fullReconcile = true;
-
-            VNode vnode;
-            {
-                RenderContext ctx(this);
-                vnode = render_();
+        try {
+            // Update animations every frame
+            if (renderRoot_) {
+                result.animating = renderRoot_->update(dt);
             }
-            if (vnode.isEmpty)
-                return result;
 
-            if (!fiberRoot_) {
-                fiberRoot_ = reconciler_.mount(vnode);
-                renderRoot_ = reconciler_.takeRenderRoot();
-            } else {
-                reconciler_.reconcile(fiberRoot_.get(), vnode);
+            // Check if size changed
+            if (width != lastWidth_ || height != lastHeight_) {
+                lastWidth_ = width;
+                lastHeight_ = height;
+                dirty_ = true;
             }
-        }
 
-        // Re-layout on RENDER tree
-        if (renderRoot_ && (fullReconcile || componentsReconciled)) {
-            renderRoot_->calculateLayout(width, height);
-            result.layoutChanged = true;
-        }
+            // Process dirty components - walk FIBER tree
+            bool componentsReconciled = false;
+            if (componentsDirty_ && fiberRoot_) {
+                componentsDirty_ = false;
+                componentsReconciled = reconciler_.reconcileDirtyComponents(fiberRoot_.get());
+            }
 
-        // Set needsRepaint if anything visual changed
-        result.needsRepaint = fullReconcile || componentsReconciled || result.animating;
+            // Full re-render only for structural changes
+            bool fullReconcile = false;
+            if (dirty_) {
+                dirty_ = false;
+                fullReconcile = true;
+
+                VNode vnode;
+                {
+                    // The render fn is a user callback; isolate a throw so the
+                    // frame degrades to "no structural change" rather than escaping.
+                    RenderContext ctx(this);
+                    try {
+                        vnode = render_();
+                    } catch (const std::exception& e) {
+                        reportError("render", &e);
+                        return result;
+                    } catch (...) {
+                        reportError("render", nullptr);
+                        return result;
+                    }
+                }
+                if (vnode.isEmpty)
+                    return result;
+
+                if (!fiberRoot_) {
+                    fiberRoot_ = reconciler_.mount(vnode);
+                    renderRoot_ = reconciler_.takeRenderRoot();
+                } else {
+                    reconciler_.reconcile(fiberRoot_.get(), vnode);
+                }
+            }
+
+            // Re-layout on RENDER tree
+            if (renderRoot_ && (fullReconcile || componentsReconciled)) {
+                renderRoot_->calculateLayout(width, height);
+                result.layoutChanged = true;
+            }
+
+            // Set needsRepaint if anything visual changed
+            result.needsRepaint = fullReconcile || componentsReconciled || result.animating;
+        } catch (const std::exception& e) {
+            reportError("Host::update", &e);
+        } catch (...) {
+            reportError("Host::update", nullptr);
+        }
 
         return result;
     }
@@ -218,67 +276,89 @@ public:
     // takeRenderRoot(), so it must swap in the freshly-built root here.
     void replaceRenderRoot(std::unique_ptr<Node> newRoot) { renderRoot_ = std::move(newRoot); }
 
-    // Event handling - returns true if event was consumed
-    bool handleMouseDown(float x, float y, MouseButton btn) {
-        if (!renderRoot_)
-            return false;
-        return eventHandler_.handleMouseDown(renderRoot_.get(), x, y, btn);
+    // Event handling - returns true if event was consumed.
+    //
+    // Every entrypoint is noexcept: it is a yui edge called directly from the
+    // platform's event loop, so a throw must never escape (see Host::update). The
+    // EventHandler already isolates each user callback and routes it to the sink;
+    // these guards are the truthful backstop for anything else, so the noexcept
+    // never fires for a normal callback throw.
+    bool handleMouseDown(float x, float y, MouseButton btn) noexcept {
+        return guardedBool("Host::handleMouseDown", [&] {
+            if (!renderRoot_)
+                return false;
+            return eventHandler_.handleMouseDown(renderRoot_.get(), x, y, btn);
+        });
     }
 
-    bool handleMouseUp(float x, float y, MouseButton btn) {
-        if (!renderRoot_)
-            return false;
-        return eventHandler_.handleMouseUp(renderRoot_.get(), x, y, btn);
+    bool handleMouseUp(float x, float y, MouseButton btn) noexcept {
+        return guardedBool("Host::handleMouseUp", [&] {
+            if (!renderRoot_)
+                return false;
+            return eventHandler_.handleMouseUp(renderRoot_.get(), x, y, btn);
+        });
     }
 
-    void handleMouseMove(float x, float y) {
-        if (!renderRoot_)
-            return;
-        eventHandler_.handleMouseMove(renderRoot_.get(), x, y);
+    void handleMouseMove(float x, float y) noexcept {
+        guardedVoid("Host::handleMouseMove", [&] {
+            if (!renderRoot_)
+                return;
+            eventHandler_.handleMouseMove(renderRoot_.get(), x, y);
+        });
     }
 
-    bool handleScroll(float x, float y, float dx, float dy) {
-        if (!renderRoot_)
-            return false;
-        bool consumed = eventHandler_.handleScroll(renderRoot_.get(), x, y, dx, dy);
-        if (consumed)
-            dirty_ = true;
-        return consumed;
+    bool handleScroll(float x, float y, float dx, float dy) noexcept {
+        return guardedBool("Host::handleScroll", [&] {
+            if (!renderRoot_)
+                return false;
+            bool consumed = eventHandler_.handleScroll(renderRoot_.get(), x, y, dx, dy);
+            if (consumed)
+                dirty_ = true;
+            return consumed;
+        });
     }
 
-    void handleMouseLeave() {
-        if (!renderRoot_)
-            return;
-        eventHandler_.handleMouseMove(renderRoot_.get(), -1, -1);
+    void handleMouseLeave() noexcept {
+        guardedVoid("Host::handleMouseLeave", [&] {
+            if (!renderRoot_)
+                return;
+            eventHandler_.handleMouseMove(renderRoot_.get(), -1, -1);
+        });
     }
 
-    bool handleKeyDown(int keyCode, uint16_t keyMod, bool repeat = false) {
-        if (!renderRoot_)
-            return false;
-        bool consumed = eventHandler_.handleKeyDown(renderRoot_.get(), keyCode, keyMod, repeat);
-        if (consumed)
-            dirty_ = true;
-        return consumed;
+    bool handleKeyDown(int keyCode, uint16_t keyMod, bool repeat = false) noexcept {
+        return guardedBool("Host::handleKeyDown", [&] {
+            if (!renderRoot_)
+                return false;
+            bool consumed = eventHandler_.handleKeyDown(renderRoot_.get(), keyCode, keyMod, repeat);
+            if (consumed)
+                dirty_ = true;
+            return consumed;
+        });
     }
 
-    bool handleKeyUp(int keyCode, uint16_t keyMod) {
-        if (!renderRoot_)
-            return false;
-        bool consumed = eventHandler_.handleKeyUp(renderRoot_.get(), keyCode, keyMod);
-        if (consumed)
-            dirty_ = true;
-        return consumed;
+    bool handleKeyUp(int keyCode, uint16_t keyMod) noexcept {
+        return guardedBool("Host::handleKeyUp", [&] {
+            if (!renderRoot_)
+                return false;
+            bool consumed = eventHandler_.handleKeyUp(renderRoot_.get(), keyCode, keyMod);
+            if (consumed)
+                dirty_ = true;
+            return consumed;
+        });
     }
 
-    void handleTextInput(const std::string& text) {
-        eventHandler_.handleTextInput(text);
+    void handleTextInput(const std::string& text) noexcept {
+        guardedVoid("Host::handleTextInput", [&] { eventHandler_.handleTextInput(text); });
     }
 
-    void handleBackspace() {
-        eventHandler_.handleBackspace();
+    void handleBackspace() noexcept {
+        guardedVoid("Host::handleBackspace", [&] { eventHandler_.handleBackspace(); });
     }
 
-    void handleSubmit() { eventHandler_.handleSubmit(); }
+    void handleSubmit() noexcept {
+        guardedVoid("Host::handleSubmit", [&] { eventHandler_.handleSubmit(); });
+    }
 
     InputNode* getFocusedInput() const { return eventHandler_.getFocusedInput(); }
 
@@ -286,6 +366,34 @@ public:
         if (!renderRoot_)
             return false;
         return eventHandler_.hasClickHandler(renderRoot_.get(), x, y, btn);
+    }
+
+private:
+    // Backstop wrappers for the noexcept event entrypoints: run the body, and on a
+    // throw that slipped past the per-callback isolation inside EventHandler route
+    // it to the sink instead of propagating through noexcept. bool variants return
+    // false (event not consumed) on failure.
+    template <typename Fn>
+    bool guardedBool(std::string_view where, Fn&& fn) noexcept {
+        try {
+            return fn();
+        } catch (const std::exception& e) {
+            reportError(where, &e);
+        } catch (...) {
+            reportError(where, nullptr);
+        }
+        return false;
+    }
+
+    template <typename Fn>
+    void guardedVoid(std::string_view where, Fn&& fn) noexcept {
+        try {
+            fn();
+        } catch (const std::exception& e) {
+            reportError(where, &e);
+        } catch (...) {
+            reportError(where, nullptr);
+        }
     }
 
 protected:
@@ -299,6 +407,7 @@ protected:
     std::unique_ptr<std::remove_pointer_t<YGConfigRef>, ConfigDeleter> config_{YGConfigNew()};
 
     std::function<VNode()> render_;
+    ErrorHandler errorHandler_;
     Reconciler reconciler_;
     EventHandler eventHandler_;
 

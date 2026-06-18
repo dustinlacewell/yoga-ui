@@ -1,28 +1,39 @@
 #pragma once
 
+#include "ErrorHandler.hpp"
 #include "Event.hpp"
 #include "Node.hpp"
+
+#include <exception>
+#include <utility>
 
 namespace yui {
 
 // Handles event dispatch and hit testing
 class EventHandler {
 public:
-    // Process a mouse event at absolute coordinates
-    // Returns true if any node consumed the event
-    bool handleMouseDown(Node* root, float x, float y, MouseButton button = MouseButton::Left);
-    bool handleMouseUp(Node* root, float x, float y, MouseButton button = MouseButton::Left);
-    bool handleMouseMove(Node* root, float x, float y);
-    bool handleScroll(Node* root, float x, float y, float deltaX, float deltaY);
+    // Install the diagnostic sink. Owned by Host; a throwing user handler is
+    // caught at its call site and routed here so the dispatch walk / hover-focus
+    // bookkeeping survives intact.
+    void setErrorHandler(ErrorHandler handler) { errorHandler_ = std::move(handler); }
+
+    // Process a mouse event at absolute coordinates.
+    // Returns true if any node consumed the event. noexcept: these are reached
+    // from the platform event loop; each user callback is isolated at its call
+    // site (routed to the sink), so a normal handler throw never reaches here.
+    bool handleMouseDown(Node* root, float x, float y, MouseButton button = MouseButton::Left) noexcept;
+    bool handleMouseUp(Node* root, float x, float y, MouseButton button = MouseButton::Left) noexcept;
+    bool handleMouseMove(Node* root, float x, float y) noexcept;
+    bool handleScroll(Node* root, float x, float y, float deltaX, float deltaY) noexcept;
 
     // Keyboard events - dispatched to focused node (or root if none)
-    bool handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat = false);
-    bool handleKeyUp(Node* root, int keyCode, uint16_t keyMod);
+    bool handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat = false) noexcept;
+    bool handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept;
 
     // Text input for focused input node
-    void handleTextInput(const std::string& text);
-    void handleBackspace();
-    void handleSubmit();
+    void handleTextInput(const std::string& text) noexcept;
+    void handleBackspace() noexcept;
+    void handleSubmit() noexcept;
 
     // Get the currently hovered node (for cursor changes, etc.)
     Node* getHoveredNode() const { return hoveredNode_; }
@@ -66,6 +77,18 @@ private:
     // Find first node with a keyboard handler (DFS)
     Node* findKeyTarget(Node* node);
 
+    // Route a caught user-callback exception to the installed sink (no-op if none
+    // installed; the Host always installs one that applies the default policy).
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+        if (!errorHandler_)
+            return;
+        try {
+            errorHandler_(where, eOrNull);
+        } catch (...) {
+        }
+    }
+
+    ErrorHandler errorHandler_;
     Node* hoveredNode_ = nullptr;
     InputNode* focusedInput_ = nullptr;
 };

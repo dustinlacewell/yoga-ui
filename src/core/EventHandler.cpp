@@ -1,8 +1,33 @@
 #include <yui/core/EventHandler.hpp>
 
+#include <exception>
+
 namespace yui {
 
-bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button) {
+namespace {
+
+// Invoke a user callback inside its own try, routing any throw to the sink.
+// Returns true iff the callback ran to completion. For hover/focus the state
+// mutation has already committed (the caller structures it so) so an isolated
+// throw never desyncs hoveredNode_/focusedInput_ from the node flags. For event
+// dispatch the return value decides consumption: a throwing handler does NOT
+// consume the event, so the bubble walk continues to ancestor handlers.
+template <typename Invoke, typename Report>
+bool fireCallback(std::string_view where, Invoke&& invoke, Report&& report) {
+    try {
+        invoke();
+        return true;
+    } catch (const std::exception& e) {
+        report(where, &e);
+    } catch (...) {
+        report(where, nullptr);
+    }
+    return false;
+}
+
+}  // namespace
+
+bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button) noexcept {
     Node* target = hitTest(root, x, y);
 
     // Update focus on click
@@ -20,7 +45,7 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     return dispatchEvent(target, event);
 }
 
-bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton button) {
+bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton button) noexcept {
     Node* target = hitTest(root, x, y);
     if (!target)
         return false;
@@ -34,7 +59,7 @@ bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton butto
     return dispatchEvent(target, event);
 }
 
-bool EventHandler::handleMouseMove(Node* root, float x, float y) {
+bool EventHandler::handleMouseMove(Node* root, float x, float y) noexcept {
     Node* target = hitTest(root, x, y);
 
     // Update hover state
@@ -51,7 +76,7 @@ bool EventHandler::handleMouseMove(Node* root, float x, float y) {
     return dispatchEvent(target, event);
 }
 
-bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, float deltaY) {
+bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, float deltaY) noexcept {
     Node* target = hitTest(root, x, y);
     if (!target)
         return false;
@@ -66,7 +91,7 @@ bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, floa
     return dispatchEvent(target, event);
 }
 
-bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) {
+bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) noexcept {
     // Keyboard events go to focused node, or first node with a key handler
     Node* target;
     if (focusedInput_) {
@@ -87,7 +112,7 @@ bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool 
     return dispatchEvent(target, event);
 }
 
-bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) {
+bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept {
     // Keyboard events go to focused node, or first node with a key handler
     Node* target;
     if (focusedInput_) {
@@ -234,22 +259,26 @@ bool EventHandler::dispatchEvent(Node* node, Event& event) {
 
 #undef YUI_EXTRACT_EVENTS
 
-    // Handle mouseDown events (fires on press)
+    auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
+
+    // The user callback is isolated; it consumes the event only if it ran to
+    // completion. A throwing handler does NOT consume, so the event bubbles on to
+    // ancestor handlers — a throw never aborts the rest of the dispatch walk.
     if (event.type == Event::Type::MouseDown) {
         if (event.button == MouseButton::Left && onMouseDown && *onMouseDown) {
-            (*onMouseDown)();
-            event.consume();
+            if (fireCallback("onMouseDown", [&] { (*onMouseDown)(); }, report))
+                event.consume();
         }
     }
 
     // Handle click events (mouseUp triggers click)
     if (event.type == Event::Type::MouseUp) {
         if (event.button == MouseButton::Left && onClick && *onClick) {
-            (*onClick)();
-            event.consume();
+            if (fireCallback("onClick", [&] { (*onClick)(); }, report))
+                event.consume();
         } else if (event.button == MouseButton::Right && onRightClick && *onRightClick) {
-            (*onRightClick)();
-            event.consume();
+            if (fireCallback("onRightClick", [&] { (*onRightClick)(); }, report))
+                event.consume();
         }
     }
 
@@ -275,19 +304,19 @@ bool EventHandler::dispatchEvent(Node* node, Event& event) {
 
         // Custom scroll handler
         if (!event.consumed && onScroll && *onScroll) {
-            (*onScroll)(event.scrollDeltaX, event.scrollDeltaY);
-            event.consume();
+            if (fireCallback("onScroll", [&] { (*onScroll)(event.scrollDeltaX, event.scrollDeltaY); }, report))
+                event.consume();
         }
     }
 
     // Handle keyboard events
     if (event.type == Event::Type::KeyDown && onKeyDown && *onKeyDown) {
-        (*onKeyDown)(event.keyCode, event.keyMod);
-        event.consume();
+        if (fireCallback("onKeyDown", [&] { (*onKeyDown)(event.keyCode, event.keyMod); }, report))
+            event.consume();
     }
     if (event.type == Event::Type::KeyUp && onKeyUp && *onKeyUp) {
-        (*onKeyUp)(event.keyCode, event.keyMod);
-        event.consume();
+        if (fireCallback("onKeyUp", [&] { (*onKeyUp)(event.keyCode, event.keyMod); }, report))
+            event.consume();
     }
 
     // If not consumed, bubble to parent
@@ -302,7 +331,12 @@ void EventHandler::updateHover(Node* newHovered) {
     if (newHovered == hoveredNode_)
         return;
 
-    // Clear hovered flag and call onHover(false) on old node and ancestors
+    auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
+
+    // Clear hovered flag and call onHover(false) on old node and ancestors. The
+    // flag toggle commits before the callback fires, and hoveredNode_ is assigned
+    // unconditionally at the end — so a throwing onHover can never leave the node
+    // flags out of sync with hoveredNode_.
     Node* oldNode = hoveredNode_;
     while (oldNode) {
         oldNode->hovered = false;
@@ -335,7 +369,7 @@ void EventHandler::updateHover(Node* newHovered) {
         }
 
         if (onHover && *onHover) {
-            (*onHover)(false);
+            fireCallback("onHover", [&] { (*onHover)(false); }, report);
         }
 
         oldNode = oldNode->parent;
@@ -374,7 +408,7 @@ void EventHandler::updateHover(Node* newHovered) {
         }
 
         if (onHover && *onHover) {
-            (*onHover)(true);
+            fireCallback("onHover", [&] { (*onHover)(true); }, report);
         }
 
         newNode = newNode->parent;
@@ -399,11 +433,17 @@ void EventHandler::updateFocus(Node* clicked) {
     if (newFocus == focusedInput_)
         return;
 
-    // Clear focused flag and fire onFocus(false) on old
+    auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
+
+    // Clear focused flag and fire onFocus(false) on old. The flag commits before
+    // the callback, the callback is isolated, and focusedInput_ is reassigned
+    // unconditionally — so a throwing onFocus cannot desync the flag from
+    // focusedInput_.
     if (focusedInput_) {
         focusedInput_->focused = false;
         if (focusedInput_->props.onFocus) {
-            focusedInput_->props.onFocus(false);
+            InputNode* old = focusedInput_;
+            fireCallback("onFocus", [&] { old->props.onFocus(false); }, report);
         }
     }
 
@@ -413,7 +453,7 @@ void EventHandler::updateFocus(Node* clicked) {
     if (focusedInput_) {
         focusedInput_->focused = true;
         if (focusedInput_->props.onFocus) {
-            focusedInput_->props.onFocus(true);
+            fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
         }
     }
 }
@@ -422,11 +462,14 @@ void EventHandler::focusInput(InputNode* node) {
     if (node == focusedInput_)
         return;
 
-    // Unfocus old
+    auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
+
+    // Unfocus old (same state-commits-before-callback discipline as updateFocus).
     if (focusedInput_) {
         focusedInput_->focused = false;
         if (focusedInput_->props.onFocus) {
-            focusedInput_->props.onFocus(false);
+            InputNode* old = focusedInput_;
+            fireCallback("onFocus", [&] { old->props.onFocus(false); }, report);
         }
     }
 
@@ -436,44 +479,52 @@ void EventHandler::focusInput(InputNode* node) {
     if (focusedInput_) {
         focusedInput_->focused = true;
         if (focusedInput_->props.onFocus) {
-            focusedInput_->props.onFocus(true);
+            fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
         }
     }
 }
 
-void EventHandler::handleTextInput(const std::string& text) {
+void EventHandler::handleTextInput(const std::string& text) noexcept {
     if (!focusedInput_)
         return;
 
-    // Update display text for immediate feedback
+    // Optimistic advance for immediate feedback. The display state commits first;
+    // only the onChange notification is isolated, so a throwing handler preserves
+    // the on-screen feedback (per the decided contract) instead of rolling it back.
     focusedInput_->displayText += text;
 
-    // Notify via onChange - this triggers re-render with new controlled value
     if (focusedInput_->props.onChange) {
-        focusedInput_->props.onChange(focusedInput_->displayText);
+        fireCallback(
+            "onChange", [&] { focusedInput_->props.onChange(focusedInput_->displayText); },
+            [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
 }
 
-void EventHandler::handleBackspace() {
+void EventHandler::handleBackspace() noexcept {
     if (!focusedInput_)
         return;
 
     if (!focusedInput_->displayText.empty()) {
+        // Same optimistic-advance contract as handleTextInput: commit the edit,
+        // isolate only the onChange notification.
         focusedInput_->displayText.pop_back();
 
-        // Notify via onChange - this triggers re-render with new controlled value
         if (focusedInput_->props.onChange) {
-            focusedInput_->props.onChange(focusedInput_->displayText);
+            fireCallback(
+                "onChange", [&] { focusedInput_->props.onChange(focusedInput_->displayText); },
+                [this](std::string_view w, const std::exception* e) { reportError(w, e); });
         }
     }
 }
 
-void EventHandler::handleSubmit() {
+void EventHandler::handleSubmit() noexcept {
     if (!focusedInput_)
         return;
 
     if (focusedInput_->props.onSubmit) {
-        focusedInput_->props.onSubmit();
+        fireCallback(
+            "onSubmit", [&] { focusedInput_->props.onSubmit(); },
+            [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
 }
 
