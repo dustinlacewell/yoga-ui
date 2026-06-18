@@ -1,5 +1,6 @@
 #include <yui/nvg/NvgRenderer.hpp>
 
+#include <yui/core/RenderDefaults.hpp>
 #include <yui/nvg/detail/NvgScopes.hpp>
 
 #include <nanovg.h>
@@ -67,22 +68,36 @@ void NvgRenderer::drawNode(DrawContext& ctx, Node* node) {
     float x = ctx.offsetX + node->layout.left;
     float y = ctx.offsetY + node->layout.top;
 
+    // No default: every enumerator is cased, so -Wswitch flags a newly-added
+    // PrimitiveType that has no draw path (which would otherwise silently render
+    // nothing). The `handled` sentinel lets us report the only remaining failure
+    // mode — a corrupt/out-of-range type value — AFTER the switch, without a
+    // default that would suppress -Wswitch.
+    bool handled = false;
     switch (node->type()) {
     case PrimitiveType::Box:
         drawBox(ctx, static_cast<BoxNode*>(node));
+        handled = true;
         break;
     case PrimitiveType::Text:
         drawText(ctx, static_cast<TextNode*>(node));
+        handled = true;
         break;
     case PrimitiveType::Input:
         drawInput(ctx, static_cast<InputNode*>(node));
+        handled = true;
         break;
     case PrimitiveType::Scroll:
         drawScroll(ctx, static_cast<ScrollNode*>(node));
         return;  // drawScroll handles its own children
     case PrimitiveType::Canvas:
         drawCanvas(ctx, static_cast<CanvasNode*>(node));
+        handled = true;
         break;
+    }
+    if (!handled) {  // only reachable for a corrupt type value
+        reportError("NvgRenderer::drawNode: unknown PrimitiveType", nullptr);
+        return;
     }
 
     DrawContext childCtx = ctx;
@@ -162,8 +177,8 @@ void NvgRenderer::drawText(DrawContext& ctx, TextNode* node) {
     auto& p = node->props;
 
     // Resolve styles: base < hover < focus
-    float fontSize = p.fontSize.value_or(12.0f);
-    uint32_t c = p.color.value_or(0xFFFFFFFF);
+    float fontSize = p.fontSize.value_or(render_defaults::kDefaultFontSize);
+    uint32_t c = p.color.value_or(render_defaults::kDefaultTextColor);
 
     if (node->hovered && p.hoverStyle) {
         if (p.hoverStyle->fontSize)
@@ -292,22 +307,19 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
 
     auto& p = node->props;
 
-    // Default styles for Input
-    constexpr uint32_t DEFAULT_BG = 0x282828FF;
-    constexpr uint32_t DEFAULT_BORDER = 0x505050FF;
-    constexpr uint32_t DEFAULT_HOVER_BORDER = 0x707070FF;
-    constexpr uint32_t DEFAULT_FOCUS_BORDER = 0x4a9fffFF;
+    namespace rd = render_defaults;
 
-    // Resolve styles: base < hover < focus
-    uint32_t bg = p.backgroundColor.value_or(DEFAULT_BG);
-    uint32_t border = p.borderColor.value_or(DEFAULT_BORDER);
-    float borderW = p.borderWidth.value_or(1.0f);
-    float radius = p.borderRadius.value_or(0.0f);
-    float fontSize = p.fontSize.value_or(12.0f);
-    uint32_t c = p.color.value_or(0xFFFFFFFF);
+    // Resolve styles: base < hover < focus. Defaults are shared with the SDL
+    // backend (and the layout fallback for fontSize) via RenderDefaults.hpp.
+    uint32_t bg = p.backgroundColor.value_or(rd::kInputBg);
+    uint32_t border = p.borderColor.value_or(rd::kInputBorder);
+    float borderW = p.borderWidth.value_or(rd::kInputBorderWidth);
+    float radius = p.borderRadius.value_or(rd::kInputBorderRadius);
+    float fontSize = p.fontSize.value_or(rd::kDefaultFontSize);
+    uint32_t c = p.color.value_or(rd::kDefaultTextColor);
 
     if (node->hovered) {
-        border = p.borderColor.value_or(DEFAULT_HOVER_BORDER);
+        border = p.borderColor.value_or(rd::kInputHoverBorder);
         if (p.hoverStyle) {
             if (p.hoverStyle->backgroundColor)
                 bg = *p.hoverStyle->backgroundColor;
@@ -324,7 +336,7 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         }
     }
     if (node->focused) {
-        border = p.borderColor.value_or(DEFAULT_FOCUS_BORDER);
+        border = p.borderColor.value_or(rd::kInputFocusBorder);
         if (p.focusStyle) {
             if (p.focusStyle->backgroundColor)
                 bg = *p.focusStyle->backgroundColor;
@@ -375,11 +387,11 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         }
     } else if (p.placeholder) {
         textToDraw = *p.placeholder;
-        textColor = 0x808080FF;
+        textColor = rd::kPlaceholderColor;
     }
 
     // Set up font for text and cursor measurement
-    constexpr float textPad = 4.0f;
+    constexpr float textPad = rd::kInputTextPad;
     nvgFontSize(vg_, fontSize);
     if (fontId_ >= 0) {
         nvgFontFaceId(vg_, fontId_);
@@ -398,7 +410,7 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
     if (node->focused) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        bool cursorVisible = (ms % 1000) < 530;
+        bool cursorVisible = (ms % rd::kCaretBlinkPeriodMs) < rd::kCaretBlinkOnMs;
 
         if (cursorVisible) {
             float cursorX = x + textPad;
@@ -407,13 +419,13 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
                 nvgTextBounds(vg_, 0, 0, textToDraw.c_str(), nullptr, bounds);
                 cursorX += bounds[2] - bounds[0];
             }
-            float cursorTop = y + 3;
-            float cursorBottom = y + h - 3;
+            float cursorTop = y + rd::kCaretInset;
+            float cursorBottom = y + h - rd::kCaretInset;
             nvgBeginPath(vg_);
             nvgMoveTo(vg_, cursorX, cursorTop);
             nvgLineTo(vg_, cursorX, cursorBottom);
             nvgStrokeColor(vg_, nvgRGBA((c >> 24) & 0xFF, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF));
-            nvgStrokeWidth(vg_, 1.0f);
+            nvgStrokeWidth(vg_, rd::kCaretWidth);
             nvgStroke(vg_);
         }
     }

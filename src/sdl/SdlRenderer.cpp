@@ -1,8 +1,10 @@
 #include "yui/sdl/SdlRenderer.hpp"
 
+#include "yui/core/RenderDefaults.hpp"
 #include "yui/sdl/detail/SdlScopes.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 
@@ -97,22 +99,36 @@ void SdlRenderer::renderNode(Node* node, float offsetX, float offsetY) {
     float x = offsetX + node->layout.left;
     float y = offsetY + node->layout.top;
 
+    // No default: every enumerator is cased, so -Wswitch flags a newly-added
+    // PrimitiveType that has no render path (which would otherwise silently draw
+    // nothing). The `handled` sentinel lets us report the only remaining failure
+    // mode — a corrupt/out-of-range type value — AFTER the switch, without a
+    // default that would suppress -Wswitch.
+    bool handled = false;
     switch (node->type()) {
     case PrimitiveType::Box:
         renderBox(static_cast<BoxNode*>(node), x, y);
+        handled = true;
         break;
     case PrimitiveType::Text:
         renderText(static_cast<TextNode*>(node), x, y);
+        handled = true;
         break;
     case PrimitiveType::Input:
         renderInput(static_cast<InputNode*>(node), x, y);
+        handled = true;
         break;
     case PrimitiveType::Scroll:
         renderScroll(static_cast<ScrollNode*>(node), offsetX, offsetY);
         return;  // renderScroll handles its own children
     case PrimitiveType::Canvas:
         renderCanvas(static_cast<CanvasNode*>(node), x, y);
+        handled = true;
         break;
+    }
+    if (!handled) {  // only reachable for a corrupt type value
+        reportError("SdlRenderer::renderNode: unknown PrimitiveType", nullptr);
+        return;
     }
 
     for (auto& child : node->children) {
@@ -168,8 +184,8 @@ void SdlRenderer::renderText(TextNode* node, float x, float y) {
     auto& p = node->props;
 
     // Resolve styles: base < hover < focus
-    float fontSize = p.fontSize.value_or(14.0f);
-    uint32_t color = p.color.value_or(0xFFFFFFFF);
+    float fontSize = p.fontSize.value_or(render_defaults::kDefaultFontSize);
+    uint32_t color = p.color.value_or(render_defaults::kDefaultTextColor);
 
     if (node->hovered && p.hoverStyle) {
         if (p.hoverStyle->fontSize)
@@ -192,23 +208,20 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
     float h = node->layout.height;
     auto& p = node->props;
 
-    // Default styles for Input
-    constexpr uint32_t DEFAULT_BG = 0x333333FF;
-    constexpr uint32_t DEFAULT_BORDER = 0x666666FF;
-    constexpr uint32_t DEFAULT_HOVER_BORDER = 0x888888FF;
-    constexpr uint32_t DEFAULT_FOCUS_BORDER = 0x4a9fffFF;
+    namespace rd = render_defaults;
 
-    // Resolve styles: base < hover < focus (with defaults for Input)
-    uint32_t bg = p.backgroundColor.value_or(DEFAULT_BG);
-    uint32_t border = p.borderColor.value_or(DEFAULT_BORDER);
-    float borderW = p.borderWidth.value_or(1.0f);
-    float radius = p.borderRadius.value_or(4.0f);
-    float fontSize = p.fontSize.value_or(14.0f);
-    uint32_t color = p.color.value_or(0xFFFFFFFF);
+    // Resolve styles: base < hover < focus. Defaults are shared with the NanoVG
+    // backend (and the layout fallback for fontSize) via RenderDefaults.hpp.
+    uint32_t bg = p.backgroundColor.value_or(rd::kInputBg);
+    uint32_t border = p.borderColor.value_or(rd::kInputBorder);
+    float borderW = p.borderWidth.value_or(rd::kInputBorderWidth);
+    float radius = p.borderRadius.value_or(rd::kInputBorderRadius);
+    float fontSize = p.fontSize.value_or(rd::kDefaultFontSize);
+    uint32_t color = p.color.value_or(rd::kDefaultTextColor);
 
     if (node->hovered) {
         // Apply default hover style, then user overrides
-        border = p.borderColor.value_or(DEFAULT_HOVER_BORDER);
+        border = p.borderColor.value_or(rd::kInputHoverBorder);
         if (p.hoverStyle) {
             if (p.hoverStyle->backgroundColor)
                 bg = *p.hoverStyle->backgroundColor;
@@ -226,7 +239,7 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
     }
     if (node->focused) {
         // Apply default focus style, then user overrides
-        border = p.borderColor.value_or(DEFAULT_FOCUS_BORDER);
+        border = p.borderColor.value_or(rd::kInputFocusBorder);
         if (p.focusStyle) {
             if (p.focusStyle->backgroundColor)
                 bg = *p.focusStyle->backgroundColor;
@@ -248,7 +261,7 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
         drawRoundedRect(x, y, w, h, radius, border, false);
     }
 
-    float padding = 8;
+    const float padding = rd::kInputTextPad;
 
     std::string displayText;
     if (!p.value.empty()) {
@@ -259,7 +272,40 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
         }
         drawText(displayText, x + padding, y + (h - fontSize) / 2, fontSize, color);
     } else if (p.placeholder) {
-        drawText(*p.placeholder, x + padding, y + (h - fontSize) / 2, fontSize, 0x888888FF);
+        drawText(*p.placeholder, x + padding, y + (h - fontSize) / 2, fontSize, rd::kPlaceholderColor);
+    }
+
+    // Blinking focus caret — mirrors the NanoVG backend (NvgRenderer::drawInput).
+    // Shared cadence/geometry constants keep the two backends visually identical.
+    // NOTE: backend-CI-verified only — the SDL path cannot be compiled or run in
+    // the dev sandbox (no SDL2_ttf), so this is a careful mirror of the working
+    // NanoVG caret rather than something exercised here.
+    if (node->focused) {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count();
+        bool caretVisible = (ms % rd::kCaretBlinkPeriodMs) < rd::kCaretBlinkOnMs;
+
+        if (caretVisible) {
+            float caretX = x + padding;
+            // Advance past the rendered text. Measure the masked display string so
+            // the caret tracks password dots, matching NanoVG.
+            if (!displayText.empty()) {
+                if (TTF_Font* font = getFont(static_cast<int>(fontSize + 0.5f))) {
+                    int textW = 0;
+                    int textH = 0;
+                    TTF_SizeUTF8(font, displayText.c_str(), &textW, &textH);
+                    caretX += static_cast<float>(textW);
+                }
+            }
+            float caretTop = y + rd::kCaretInset;
+            float caretBottom = y + h - rd::kCaretInset;
+            uint32_t cc = color;
+            vlineRGBA(renderer_, static_cast<Sint16>(caretX), static_cast<Sint16>(caretTop),
+                      static_cast<Sint16>(caretBottom), static_cast<Uint8>((cc >> 24) & 0xFF),
+                      static_cast<Uint8>((cc >> 16) & 0xFF), static_cast<Uint8>((cc >> 8) & 0xFF),
+                      static_cast<Uint8>(cc & 0xFF));
+        }
     }
 }
 

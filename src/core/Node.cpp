@@ -1,6 +1,9 @@
 #include <yui/core/Node.hpp>
 
+#include <yui/core/RenderDefaults.hpp>
+
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 
 namespace yui {
@@ -385,7 +388,7 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
         return {0, 0};
     }
 
-    float fontSize = textNode->props.fontSize.value_or(12.0f);
+    float fontSize = textNode->props.fontSize.value_or(render_defaults::kDefaultFontSize);
     float maxWidth = (widthMode == YGMeasureModeUndefined) ? 0 : width;
 
     // The host's text measurer lives in the per-host Yoga config context. Recover
@@ -485,6 +488,14 @@ void CanvasNode::updateProps(const PropsVariant& p) {
 // --- Factory ---
 
 std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config) {
+    // Every enumerator is cased and returns directly, with NO default: that keeps
+    // -Wswitch exhaustiveness live, so adding a PrimitiveType without a node here
+    // is a compile-time warning. Falling through the switch means `type` held a
+    // value outside the enum (corrupt/out-of-range) — the callers (Reconciler)
+    // immediately dereference the result, so failing loudly here localizes the
+    // fault instead of surfacing as a downstream null-deref. There is no error
+    // sink reachable from this free function, so assert; in release we still
+    // return nullptr rather than fabricate a node of the wrong type.
     switch (type) {
     case PrimitiveType::Box:
         return std::make_unique<BoxNode>(config);
@@ -497,6 +508,7 @@ std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config) {
     case PrimitiveType::Canvas:
         return std::make_unique<CanvasNode>(config);
     }
+    assert(false && "createNode: PrimitiveType out of range");
     return nullptr;
 }
 
