@@ -47,6 +47,24 @@ struct UpdateResult {
 
 class Host;
 
+// --- Linkage contract for the process-global state below ---------------------
+//
+// liveHosts/liveHostsMutex (the host registry consulted by Store notification)
+// and the currentRender* thread-locals are `inline`, so they collapse to a
+// single definition within ONE linked module. yui's supported consumption model
+// is source-embedded per module: each executable or plugin compiles yui's
+// sources into itself (see yui.mk for VCV Rack plugins) and gets its own private
+// copy of this state. That is correct and intended — a module only ever
+// registers and notifies its own Hosts.
+//
+// What is NOT supported: sharing yui objects (Host, Store, Fiber, VNode) across
+// a module boundary — e.g. a Store created in one DLL/.so whose subscribers live
+// in another. Because each module has its own `liveHosts`, cross-module
+// notification would silently consult the wrong registry. If yui is ever built
+// as a single shared library linked by multiple modules, this state must be
+// exported from one TU (YUI_API/dllexport + a single definition) so all modules
+// share it. 1.0 ships static/source-embedded and makes no cross-module promise.
+
 // Global registry of live hosts for safe Store notification
 namespace detail {
 inline std::unordered_set<Host*> liveHosts;
