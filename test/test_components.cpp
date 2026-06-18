@@ -1005,3 +1005,88 @@ TEST_CASE("Exception - throwing cleanup is isolated; ~Host teardown does not cra
     // Reaching here at all proves ~Host did not crash on the throwing cleanup.
     CHECK(errorCount >= 1);
 }
+
+// ============================================================================
+// UpdateStatus: the three all-false early-returns must be distinguishable from a
+// steady-state no-op, and each must emit one diagnostic through the error sink.
+// ============================================================================
+
+TEST_CASE("UpdateStatus - no render fn reports NoRenderFn and a diagnostic") {
+    TestHost host;  // setRender never called -> render_ unset
+
+    int errorCount = 0;
+    std::string where;
+    host.setErrorHandler([&](std::string_view w, const std::exception*) {
+        errorCount++;
+        where = std::string(w);
+    });
+
+    auto r = host.update(200, 200);
+    CHECK(r.status == UpdateStatus::NoRenderFn);
+    CHECK(r.needsRepaint == false);
+    CHECK(errorCount == 1);
+    CHECK(where == "Host::update: no render function set");
+
+    // State-transition gating: a second update in the same state does not re-spam.
+    auto r2 = host.update(200, 200);
+    CHECK(r2.status == UpdateStatus::NoRenderFn);
+    CHECK(errorCount == 1);
+}
+
+TEST_CASE("UpdateStatus - zero viewport reports ZeroViewport and a diagnostic") {
+    TestHost host;
+    host.setRender(std::function<VNode()>([&]() { return Box(); }));
+
+    int errorCount = 0;
+    std::string where;
+    host.setErrorHandler([&](std::string_view w, const std::exception*) {
+        errorCount++;
+        where = std::string(w);
+    });
+
+    auto r = host.update(0, 200);  // width <= 0
+    CHECK(r.status == UpdateStatus::ZeroViewport);
+    CHECK(r.needsRepaint == false);
+    CHECK(errorCount == 1);
+    CHECK(where == "Host::update: viewport has non-positive dimensions");
+
+    // A subsequent valid update returns Ok and clears the latch.
+    auto ok = host.update(200, 200);
+    CHECK(ok.status == UpdateStatus::Ok);
+
+    // Re-entering the bad state re-fires the diagnostic (latch was cleared).
+    auto r2 = host.update(-1, 200);
+    CHECK(r2.status == UpdateStatus::ZeroViewport);
+    CHECK(errorCount == 2);
+}
+
+TEST_CASE("UpdateStatus - empty render reports EmptyRender and a diagnostic") {
+    TestHost host;
+    host.setRender(std::function<VNode()>([&]() { return VNode::empty(); }));
+
+    int errorCount = 0;
+    std::string where;
+    host.setErrorHandler([&](std::string_view w, const std::exception*) {
+        errorCount++;
+        where = std::string(w);
+    });
+
+    auto r = host.update(200, 200);
+    CHECK(r.status == UpdateStatus::EmptyRender);
+    CHECK(r.needsRepaint == false);
+    CHECK(errorCount == 1);
+    CHECK(where == "Host::update: root rendered empty");
+}
+
+TEST_CASE("UpdateStatus - normal update reports Ok with no diagnostic") {
+    TestHost host;
+    host.setRender(std::function<VNode()>([&]() { return Box().width(100).height(50); }));
+
+    int errorCount = 0;
+    host.setErrorHandler([&](std::string_view, const std::exception*) { errorCount++; });
+
+    auto r = host.update(200, 200);
+    CHECK(r.status == UpdateStatus::Ok);
+    CHECK(r.needsRepaint == true);
+    CHECK(errorCount == 0);
+}

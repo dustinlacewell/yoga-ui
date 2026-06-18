@@ -17,11 +17,22 @@
 
 namespace yui {
 
+// Why an update() produced an all-false result. Ok is the steady-state no-op;
+// the others are early-returns that a caller would otherwise mistake for one —
+// they signal misconfiguration, not "nothing changed".
+enum class UpdateStatus {
+    Ok,            // ran normally (whether or not anything changed)
+    NoRenderFn,    // no render function set (setRender never called)
+    EmptyRender,   // render function returned VNode::empty()
+    ZeroViewport,  // width <= 0 || height <= 0
+};
+
 // Result of Host::update() - tells caller what happened
 struct UpdateResult {
     bool needsRepaint = false;   // something visual changed, should render
     bool layoutChanged = false;  // layout was recalculated
     bool animating = false;      // animation in progress (smooth scroll, etc)
+    UpdateStatus status = UpdateStatus::Ok;  // why the result is as it is
 };
 
 class Host;
@@ -194,9 +205,11 @@ public:
     UpdateResult update(float width, float height, float dt = 1.f / 60.f) noexcept {
         UpdateResult result;
         if (!render_)
-            return result;
+            return earlyReturn(result, UpdateStatus::NoRenderFn,
+                               "Host::update: no render function set");
         if (width <= 0 || height <= 0)
-            return result;
+            return earlyReturn(result, UpdateStatus::ZeroViewport,
+                               "Host::update: viewport has non-positive dimensions");
 
         try {
             // Update animations every frame
@@ -240,7 +253,8 @@ public:
                     }
                 }
                 if (vnode.isEmpty)
-                    return result;
+                    return earlyReturn(result, UpdateStatus::EmptyRender,
+                                       "Host::update: root rendered empty");
 
                 if (!fiberRoot_) {
                     fiberRoot_ = reconciler_.mount(vnode);
@@ -264,6 +278,9 @@ public:
             reportError("Host::update", nullptr);
         }
 
+        // Reached the steady-state path: clear the latch so a later transition
+        // back into a misconfigured state re-emits its diagnostic.
+        lastReportedStatus_ = UpdateStatus::Ok;
         return result;
     }
 
@@ -396,6 +413,22 @@ private:
         }
     }
 
+    // Tag an early-return UpdateResult with its status and emit ONE diagnostic
+    // through the existing error sink — but only on a state-transition, so a
+    // caller stuck in a misconfigured state (e.g. a headless host with no render
+    // fn) gets a single report per entry into that state, not one per frame. The
+    // sink is severity-free (where + optional exception); these are non-fatal
+    // diagnostics, so eOrNull is null and the label carries the message.
+    UpdateResult earlyReturn(UpdateResult result, UpdateStatus status,
+                             std::string_view message) noexcept {
+        result.status = status;
+        if (status != lastReportedStatus_) {
+            lastReportedStatus_ = status;
+            reportError(message, nullptr);
+        }
+        return result;
+    }
+
 protected:
     // Per-host yoga config. Render nodes are created against it so their measure
     // callback can recover this host's text measurer from the config context.
@@ -419,6 +452,12 @@ protected:
     float lastHeight_ = 0;
     bool dirty_ = true;
     bool componentsDirty_ = false;
+
+    // Last early-return status reported through the sink. update() only emits a
+    // diagnostic when the status changes, so a persistent misconfiguration is
+    // reported once per transition into it rather than every frame. Reset to Ok
+    // on any normally-completing update so re-entering a bad state re-fires.
+    UpdateStatus lastReportedStatus_ = UpdateStatus::Ok;
 
     // Currently installed text measurer (raw, non-owning). Tracked so the host
     // can deregister from it on replacement and in ~Host.
