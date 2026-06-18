@@ -209,9 +209,7 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
     fiber->componentFn = comp.fn;
     fiber->host = host_;
 
-#ifndef NDEBUG
-    fiber->debugName = comp.debugName;
-#endif
+    fiber->debugName = comp.debugName;  // unconditional: feeds always-on hook diagnostics
 
     // Call the component function. If it throws, discard this never-published
     // fiber (its subscriptions self-unsubscribe via ~Fiber's cleanup path) and

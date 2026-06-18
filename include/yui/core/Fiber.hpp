@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <typeindex>
 #include <vector>
 
 namespace yui {
@@ -13,6 +14,29 @@ namespace yui {
 // Forward declarations
 class Node;
 class Host;
+
+// Per-hook-slot identity, recorded in call order on a component fiber (see
+// Fiber::hookTags). The rules-of-hooks contract is positional: the Nth hook call
+// of every render must be the same hook. A HookTag captures enough of "which
+// hook" to detect a violation at slot N — the hook KIND (so a useState and a
+// useRef at the same index disagree even if T matches) and the value TYPE (so a
+// useState<int> and a useState<string> at the same index disagree).
+//
+// The tag is the single mechanism behind two guards:
+//   - the std::any_cast type guard (a slot's T changed across renders), and
+//   - the always-on rules-of-hooks check (hook order/kind/type changed),
+// which are the same event observed at the same point: a tag mismatch at index N.
+//
+// Effects carry no value type; they tag as Kind::Effect / typeid(void) so an
+// effect that swaps places with a state hook is still caught.
+struct HookTag {
+    enum class Kind { State, Ref, Field, Effect };
+    Kind kind;
+    std::type_index type;
+
+    bool operator==(const HookTag& o) const { return kind == o.kind && type == o.type; }
+    bool operator!=(const HookTag& o) const { return !(*this == o); }
+};
 
 // One Store subscription held by a component fiber. A subscription is a pair of
 // inverse actions over the Store's fiberSubscribers_ set, plus the store's
@@ -85,6 +109,23 @@ struct Fiber {
     // --- Component fiber fields ---
     ComponentFn componentFn;
     std::vector<std::any> hookState;
+    // One HookTag per hook CALL, in call order (indexed by ComponentContext's
+    // hookIndex_, which counts EVERY hook — effects and fields included — unlike
+    // hookState, whose index (ComponentContext::stateSlot_) is advanced only by the
+    // hooks that own a hookState entry: useState/useRef). Appended as each slot is first encountered and
+    // compared on every later render to enforce rules-of-hooks and guard the
+    // std::any_cast. Shares hookState's lifecycle exactly: grown on first render,
+    // never explicitly cleared, destroyed with the fiber; a remount is a fresh
+    // fiber with an empty vector. Unconditional (release builds guard too) — the
+    // cost is one std::type_index per hook, a handful per component.
+    std::vector<HookTag> hookTags;
+    // Latches true once the first render has finished establishing the hook list, so
+    // checkHookTag knows the difference between "first render, growing the list" (an
+    // append) and "later render reached a slot the first render never did" (a rules-
+    // of-hooks violation — a new trailing/conditional hook). Without this, a later
+    // render that calls MORE hooks would silently grow hookTags and slip past the
+    // count check. Shares hookTags' lifecycle: false on a fresh fiber, never reset.
+    bool hooksEstablished = false;
     std::vector<SubscriptionRecord> subscriptionCleanups;
     std::vector<std::function<void()>> effectCleanups;
     std::vector<std::function<std::function<void()>()>> pendingEffects;
@@ -94,10 +135,11 @@ struct Fiber {
     // that mutex. Atomic for the same reason as Host::dirty_/componentsDirty_.
     MovableAtomicBool dirty{false};
 
-#ifndef NDEBUG
-    size_t expectedHookCount = 0;
+    // Component label for hook diagnostics. Unconditional: the rules-of-hooks /
+    // any_cast guards are always-on (release too), so the name they print must be
+    // available in release. A bare const char* (points at a string literal in the
+    // VNode/Component descriptor) — no allocation, no per-render cost.
     const char* debugName = nullptr;
-#endif
 
     // Liveness token shared with callbacks that outlive this fiber — notably the
     // useState setter, which a consumer may store in a sibling's handler, a Store,

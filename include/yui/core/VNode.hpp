@@ -41,9 +41,10 @@ struct Component {
     std::string key;
     int64_t intKey = NO_INT_KEY;
 
-#ifndef NDEBUG
+    // Unconditional (release too): feeds the always-on rules-of-hooks / any_cast
+    // hook diagnostics, which must name the offending component in any build. A
+    // bare const char* to a literal — no storage cost when unset.
     const char* debugName = nullptr;
-#endif
 
     // Accept any const-callable that returns VNode from ComponentContext&
     // Rejects mutable lambdas — component functions must be repeatable (called every re-render)
@@ -63,13 +64,11 @@ struct Component {
         return *this;
     }
 
-#ifndef NDEBUG
-    // Set debug name (for better error messages in debug mode)
+    // Set debug name (for better hook-diagnostic messages, in any build)
     Component& setName(const char* name) {
         debugName = name;
         return *this;
     }
-#endif
 
     // Key helpers
     bool hasKey() const { return intKey != NO_INT_KEY || !key.empty(); }

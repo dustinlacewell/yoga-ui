@@ -1337,3 +1337,267 @@ TEST_CASE("Store - set() outside render emits no spurious diagnostic") {
 
     CHECK(diagnostics == 0);
 }
+
+// --- FIX #7 / #8: per-slot hook type tag (rules-of-hooks + any_cast guard) ---
+
+TEST_CASE("Hooks - changing a hook's TYPE at a stable index is diagnosed (FIX #7)") {
+    // A conditional that swaps WHICH hook runs at a fixed call-order index, keeping
+    // the same total count. Render 1 puts a useState<int> at index 0; render 2 puts
+    // a useState<std::string> at index 0. Pre-fix the slot's std::any_cast<string&>
+    // would throw a context-free std::bad_any_cast. Now the per-slot type tag catches
+    // it first: a "rules-of-hooks violation" diagnostic naming the index, then a
+    // clear throw (fail-stop but diagnosable) routed through the sink as a re-render
+    // error. We assert the specific diagnostic fired — not an exact total count.
+    TestHost host;
+    Store<bool> useStringVariant(false);
+
+    std::vector<std::string> diagnostics;
+    host.setErrorHandler([&](std::string_view where, const std::exception*) {
+        diagnostics.push_back(std::string(where));
+    });
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        bool asString = useStringVariant.use();  // subscribe so set() re-renders THIS fiber
+        if (asString) {
+            auto [s, setS] = ctx.useState<std::string>("hi");  // index 0: string
+            return Text(s);
+        }
+        auto [n, setN] = ctx.useState<int>(0);                 // index 0: int
+        return Text(std::to_string(n));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);                 // render 1: index 0 == useState<int>
+    CHECK(diagnostics.empty());            // no false positive on the clean first render
+
+    useStringVariant.set(true);            // flip the branch; re-renders the SAME fiber
+    CHECK_NOTHROW(host.update(200, 200));  // the throw is isolated by the reconciler
+
+    // The specific rules-of-hooks / type-change diagnostic must have fired.
+    bool sawRulesViolation = false;
+    for (auto& d : diagnostics) {
+        if (d.find("rules-of-hooks violation") != std::string::npos &&
+            d.find("hook index 0") != std::string::npos) {
+            sawRulesViolation = true;
+        }
+    }
+    CHECK(sawRulesViolation);
+}
+
+TEST_CASE("Hooks - reordering different-KIND hooks at an index is diagnosed (FIX #8)") {
+    // Same total count, but two hooks of different KIND swap positions across renders.
+    // Render 1: [useState<int>, useRef<int>]. Render 2: [useRef<int>, useState<int>].
+    // Count-only checks (the old #ifndef NDEBUG guard) miss this entirely; the per-
+    // slot tag catches it because Kind::State != Kind::Ref at index 0.
+    TestHost host;
+    Store<bool> swapped(false);
+
+    std::vector<std::string> diagnostics;
+    host.setErrorHandler([&](std::string_view where, const std::exception*) {
+        diagnostics.push_back(std::string(where));
+    });
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        bool flip = swapped.use();
+        if (flip) {
+            int& r = ctx.useRef<int>(1);                 // index 0: ref
+            auto [n, setN] = ctx.useState<int>(2);       // index 1: state
+            return Text(std::to_string(r + n));
+        }
+        auto [n, setN] = ctx.useState<int>(2);           // index 0: state
+        int& r = ctx.useRef<int>(1);                     // index 1: ref
+        return Text(std::to_string(r + n));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);
+    CHECK(diagnostics.empty());
+
+    swapped.set(true);
+    CHECK_NOTHROW(host.update(200, 200));
+
+    bool sawRulesViolation = false;
+    for (auto& d : diagnostics) {
+        if (d.find("rules-of-hooks violation") != std::string::npos) sawRulesViolation = true;
+    }
+    CHECK(sawRulesViolation);
+}
+
+TEST_CASE("Hooks - changing the hook COUNT between renders is diagnosed (FIX #8)") {
+    // A conditional trailing hook: render 1 calls one hook, render 2 calls two. No
+    // per-slot mismatch occurs at the indices both renders reach (index 0 matches),
+    // so only the always-on count backstop in ~ComponentContext catches it.
+    TestHost host;
+    Store<bool> extra(false);
+
+    std::vector<std::string> diagnostics;
+    host.setErrorHandler([&](std::string_view where, const std::exception*) {
+        diagnostics.push_back(std::string(where));
+    });
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        bool more = extra.use();
+        auto [a, setA] = ctx.useState<int>(0);   // index 0 on both renders
+        if (more) {
+            auto [b, setB] = ctx.useState<int>(0);  // index 1 only on render 2
+            return Text(std::to_string(a + b));
+        }
+        return Text(std::to_string(a));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);
+    CHECK(diagnostics.empty());
+
+    extra.set(true);
+    CHECK_NOTHROW(host.update(200, 200));
+
+    bool sawCountViolation = false;
+    for (auto& d : diagnostics) {
+        if (d.find("rules-of-hooks violation") != std::string::npos &&
+            d.find("hook count changed") != std::string::npos) {
+            sawCountViolation = true;
+        }
+    }
+    CHECK(sawCountViolation);
+}
+
+TEST_CASE("Hooks - stable hooks across many renders produce ZERO diagnostics (no false positives)") {
+    // The critical no-false-positive guard. A component with a fixed hook sequence
+    // (state, ref, field, effect) re-rendered repeatedly must never trip the tag or
+    // count checks. This mirrors the shape every real component uses.
+    struct Form { int n = 0; std::string label = "x"; };
+    TestHost host;
+    Store<int> bump(0);
+    Store<Form> form;
+
+    int diagnostics = 0;
+    host.setErrorHandler([&](std::string_view, const std::exception*) { diagnostics++; });
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        int b = bump.use();                                  // subscribe -> re-render on set()
+        auto [n, setN] = ctx.useState<int>(b);               // index 0
+        int& r = ctx.useRef<int>(7);                         // index 1
+        auto [label, setLabel] = ctx.useField(form, &Form::label);  // index 2
+        ctx.useEffect([&]() { return nullptr; });            // index 3
+        (void)setN; (void)setLabel;
+        return Text(std::to_string(n + r) + label);
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    for (int i = 0; i < 5; ++i) {
+        bump.set(i + 1);          // re-render the same fiber each frame
+        host.update(200, 200);
+    }
+
+    CHECK(diagnostics == 0);
+}
+
+// ============================================================================
+// Hook-state index correctness (counter split). The positional/tag counter
+// (hookIndex_) advances for EVERY hook, but hookState slots are owned only by
+// useState/useRef. If a hookState slot were indexed by the positional counter, a
+// non-stateful hook (useEffect/useField) preceding a stateful one would push the
+// stateful hook's slot index past its true position — an out-of-bounds any_cast
+// (UB). The three cases below order hooks the dangerous way; each would read OOB
+// under a single shared counter, so they prove the two index spaces are separate.
+// ============================================================================
+
+TEST_CASE("Hooks - useEffect BEFORE useState keeps state at the right slot") {
+    // hookIndex_ reaches 1 at the useState, but its hookState slot must be 0.
+    TestHost host;
+    int effectRuns = 0;
+    std::function<void(int)> setCount;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() { effectRuns++; return nullptr; });   // tag index 0, no state slot
+        auto [count, setter] = ctx.useState<int>(7);              // tag index 1, state slot 0
+        setCount = setter;
+        return Text(std::to_string(count));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    auto* textNode = static_cast<TextNode*>(rootBox->children[0].get());
+    CHECK(textNode->props.text == "7");
+
+    setCount(42);
+    host.update(200, 200);
+    CHECK(textNode->props.text == "42");
+    CHECK(effectRuns >= 1);
+}
+
+TEST_CASE("Hooks - useField BEFORE useState/useRef keeps state at the right slot") {
+    // useField advances only the positional counter; the following useState/useRef
+    // must still land on hookState slots 0 and 1.
+    struct Form { std::string label = "L"; };
+    TestHost host;
+    Store<Form> form;
+    std::function<void(int)> setCount;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        auto [label, setLabel] = ctx.useField(form, &Form::label);  // tag index 0, no state slot
+        auto [count, setter] = ctx.useState<int>(3);                // tag index 1, state slot 0
+        int& r = ctx.useRef<int>(100);                              // tag index 2, state slot 1
+        (void)setLabel;
+        setCount = setter;
+        return Text(label + ":" + std::to_string(count) + ":" + std::to_string(r));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    auto* textNode = static_cast<TextNode*>(rootBox->children[0].get());
+    CHECK(textNode->props.text == "L:3:100");
+
+    setCount(9);
+    host.update(200, 200);
+    CHECK(textNode->props.text == "L:9:100");  // state updated, ref persisted
+}
+
+TEST_CASE("Hooks - mixed effect/field/state/ref persists state with ZERO diagnostics") {
+    // The interleaved-worst-case shape: a non-stateful hook precedes EACH stateful
+    // one. Both stateful values must persist across re-renders AND no rules-of-hooks
+    // diagnostic may fire (the counter split must not desync the tag path).
+    struct Form { std::string label = "F"; };
+    TestHost host;
+    Store<Form> form;
+    int effectRuns = 0;
+    std::function<void(int)> setN;
+    std::string* refSlot = nullptr;
+
+    int diagnostics = 0;
+    host.setErrorHandler([&](std::string_view, const std::exception*) { diagnostics++; });
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() { effectRuns++; return nullptr; });      // tag 0, no state slot
+        auto [label, setLabel] = ctx.useField(form, &Form::label);   // tag 1, no state slot
+        auto [n, setter] = ctx.useState<int>(5);                     // tag 2, state slot 0
+        std::string& s = ctx.useRef<std::string>("ref");             // tag 3, state slot 1
+        (void)setLabel;
+        setN = setter;
+        refSlot = &s;
+        return Text(label + ":" + std::to_string(n) + ":" + s);
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    host.update(200, 200);
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    auto* textNode = static_cast<TextNode*>(rootBox->children[0].get());
+    CHECK(textNode->props.text == "F:5:ref");
+
+    // Mutate the ref slot in place; it must survive the re-render the setter triggers.
+    *refSlot = "kept";
+    setN(11);
+    host.update(200, 200);
+    CHECK(textNode->props.text == "F:11:kept");  // state updated AND ref persisted
+    CHECK(diagnostics == 0);                      // no false rules-of-hooks positives
+}
