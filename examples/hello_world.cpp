@@ -25,7 +25,7 @@ VNode buildUI() {
 class HelloHost : public Host {
 public:
     HelloHost(SDL_Renderer* renderer, const std::string& fontPath) : renderer_(renderer, fontPath, 16) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(buildUI);
     }
 

@@ -22,6 +22,11 @@ public:
     void setAutoFocusCallback(AutoFocusCallback callback) { onAutoFocus_ = std::move(callback); }
     void setHost(Host* host) { host_ = host; }
 
+    // The yoga config that render nodes are created against. Carries the host's
+    // text measurer in its context (see Host::setTextMeasurer). nullptr resolves
+    // to Yoga's default config.
+    void setConfig(YGConfigRef config) { config_ = config; }
+
     // Mount a VNode tree -> creates fiber tree AND render tree.
     // Returns the root fiber. The render tree root is stored internally.
     std::unique_ptr<Fiber> mount(const VNode& vnode);
@@ -85,6 +90,7 @@ private:
     NodeRemovedCallback onNodeRemoved_;
     AutoFocusCallback onAutoFocus_;
     Host* host_ = nullptr;
+    YGConfigRef config_ = nullptr;
 };
 
 }  // namespace yui

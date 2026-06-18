@@ -7,8 +7,10 @@ namespace yui {
 
 // --- Node base ---
 
-Node::Node() {
-    yogaNode = YGNodeNew();
+Node::Node(YGConfigRef config) {
+    // Yoga requires a non-null config; mirror YGNodeNew() by falling back to the
+    // default config when none was supplied (e.g. a host-less test reconciler).
+    yogaNode = YGNodeNewWithConfig(config ? config : YGConfigGetDefault());
 }
 
 Node::~Node() {
@@ -340,7 +342,7 @@ static void layoutScrollContent(Node* node) {
 
 // --- BoxNode ---
 
-BoxNode::BoxNode() = default;
+BoxNode::BoxNode(YGConfigRef config) : Node(config) {}
 
 void BoxNode::updateProps(const PropsVariant& p) {
     const auto& newProps = std::get<BoxProps>(p);
@@ -353,7 +355,7 @@ void BoxNode::updateProps(const PropsVariant& p) {
 
 // --- TextNode ---
 
-TextNode::TextNode() {
+TextNode::TextNode(YGConfigRef config) : Node(config) {
     setupMeasureFunc();
 }
 
@@ -385,13 +387,18 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
     float fontSize = textNode->props.fontSize.value_or(12.0f);
     float maxWidth = (widthMode == YGMeasureModeUndefined) ? 0 : width;
 
-    Size size = Measure::measureText(textNode->props.text, fontSize, maxWidth);
+    // The host's text measurer lives in the per-host Yoga config context. Recover
+    // it from this node's config; fall back to the heuristic when none is set.
+    auto* measurer = static_cast<const ITextMeasurer*>(
+        YGConfigGetContext(YGNodeGetConfig(const_cast<YGNodeRef>(node))));
+    Size size = measurer ? measurer->measure(textNode->props.text, fontSize, maxWidth)
+                         : fallbackMeasure(textNode->props.text, fontSize, maxWidth);
     return {size.width, size.height};
 }
 
 // --- InputNode ---
 
-InputNode::InputNode() = default;
+InputNode::InputNode(YGConfigRef config) : Node(config) {}
 
 void InputNode::updateProps(const PropsVariant& p) {
     const auto& newProps = std::get<InputProps>(p);
@@ -405,7 +412,7 @@ void InputNode::updateProps(const PropsVariant& p) {
 
 // --- ScrollNode ---
 
-ScrollNode::ScrollNode() {
+ScrollNode::ScrollNode(YGConfigRef config) : Node(config) {
     YGNodeStyleSetOverflow(yogaNode, YGOverflowScroll);
 }
 
@@ -463,7 +470,7 @@ bool ScrollNode::updateSmooth(float dt) {
 
 // --- CanvasNode ---
 
-CanvasNode::CanvasNode() = default;
+CanvasNode::CanvasNode(YGConfigRef config) : Node(config) {}
 
 void CanvasNode::updateProps(const PropsVariant& p) {
     const auto& newProps = std::get<CanvasProps>(p);
@@ -476,18 +483,18 @@ void CanvasNode::updateProps(const PropsVariant& p) {
 
 // --- Factory ---
 
-std::unique_ptr<Node> createNode(PrimitiveType type) {
+std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config) {
     switch (type) {
     case PrimitiveType::Box:
-        return std::make_unique<BoxNode>();
+        return std::make_unique<BoxNode>(config);
     case PrimitiveType::Text:
-        return std::make_unique<TextNode>();
+        return std::make_unique<TextNode>(config);
     case PrimitiveType::Input:
-        return std::make_unique<InputNode>();
+        return std::make_unique<InputNode>(config);
     case PrimitiveType::Scroll:
-        return std::make_unique<ScrollNode>();
+        return std::make_unique<ScrollNode>(config);
     case PrimitiveType::Canvas:
-        return std::make_unique<CanvasNode>();
+        return std::make_unique<CanvasNode>(config);
     }
     return nullptr;
 }

@@ -11,17 +11,18 @@
 namespace yui {
 namespace sdl {
 
-// SDL2 + SDL2_ttf + SDL2_gfx renderer for yui
-class SdlRenderer {
+// SDL2 + SDL2_ttf + SDL2_gfx renderer for yui. Also serves as the host's text
+// measurer (install via Host::setTextMeasurer).
+class SdlRenderer : public ITextMeasurer {
 public:
     SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize = 16);
-    ~SdlRenderer();
+    ~SdlRenderer() override;
 
     // Render a node tree
     void render(Node* root);
 
-    // Register text measure function with yui::Measure
-    void registerMeasureFunc();
+    // ITextMeasurer: measure text using this renderer's font cache.
+    Size measure(const std::string& text, float fontSize, float maxWidth) const override;
 
 private:
     void renderNode(Node* node, float offsetX, float offsetY);
@@ -37,13 +38,14 @@ private:
     // Draw text at native font size (no scaling)
     void drawText(const std::string& text, float x, float y, float fontSize, uint32_t color);
 
-    // Get or create a font at the specified size
-    TTF_Font* getFont(int size);
+    // Get or create a font at the specified size (lazily fills the cache).
+    TTF_Font* getFont(int size) const;
 
     SDL_Renderer* renderer_;
     std::string fontPath_;
     int baseFontSize_;
-    std::unordered_map<int, TTF_Font*> fontCache_;
+    // Mutable: lazily populated by getFont, including from const measure().
+    mutable std::unordered_map<int, TTF_Font*> fontCache_;
 };
 
 // Initialize SDL2 and SDL2_ttf (call once at startup)

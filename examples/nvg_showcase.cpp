@@ -85,7 +85,7 @@ Component CanvasDemo() {
 class NvgHost : public Host {
 public:
     NvgHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(App("YUI Showcase", "NanoVG", CanvasDemo()));
     }
 

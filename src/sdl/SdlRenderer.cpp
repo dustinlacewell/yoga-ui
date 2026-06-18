@@ -1,7 +1,5 @@
 #include "yui/sdl/SdlRenderer.hpp"
 
-#include "yui/core/Measure.hpp"
-
 #include <algorithm>
 #include <cmath>
 
@@ -10,33 +8,8 @@
 namespace yui {
 namespace sdl {
 
-// Global font info for text measurement
-static std::string g_fontPath;
-static int g_baseFontSize = 16;
-static std::unordered_map<int, TTF_Font*>* g_fontCache = nullptr;
-
-static TTF_Font* getMeasureFont(int size) {
-    if (!g_fontCache || g_fontPath.empty())
-        return nullptr;
-
-    auto it = g_fontCache->find(size);
-    if (it != g_fontCache->end())
-        return it->second;
-
-    TTF_Font* font = TTF_OpenFont(g_fontPath.c_str(), size);
-    if (font) {
-        (*g_fontCache)[size] = font;
-    }
-    return font;
-}
-
 SdlRenderer::SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize)
     : renderer_(renderer), fontPath_(fontPath), baseFontSize_(baseFontSize) {
-    // Set up globals for text measurement
-    g_fontPath = fontPath;
-    g_baseFontSize = baseFontSize;
-    g_fontCache = &fontCache_;
-
     // Pre-load base font
     getFont(baseFontSize);
 }
@@ -48,10 +21,9 @@ SdlRenderer::~SdlRenderer() {
             TTF_CloseFont(font);
     }
     fontCache_.clear();
-    g_fontCache = nullptr;
 }
 
-TTF_Font* SdlRenderer::getFont(int size) {
+TTF_Font* SdlRenderer::getFont(int size) const {
     if (size < 1)
         size = 1;
 
@@ -66,30 +38,28 @@ TTF_Font* SdlRenderer::getFont(int size) {
     return font;
 }
 
-void SdlRenderer::registerMeasureFunc() {
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float maxWidth) -> Size {
-        if (text.empty())
-            return {0, fontSize};
+Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidth) const {
+    if (text.empty())
+        return {0, fontSize};
 
-        int size = static_cast<int>(fontSize + 0.5f);
-        TTF_Font* font = getMeasureFont(size);
-        if (!font)
-            return {0, fontSize};
+    int size = static_cast<int>(fontSize + 0.5f);
+    TTF_Font* font = getFont(size);
+    if (!font)
+        return {0, fontSize};
 
-        int w = 0, h = 0;
-        TTF_SizeUTF8(font, text.c_str(), &w, &h);
+    int w = 0, h = 0;
+    TTF_SizeUTF8(font, text.c_str(), &w, &h);
 
-        float width = static_cast<float>(w);
-        float height = static_cast<float>(h);
+    float width = static_cast<float>(w);
+    float height = static_cast<float>(h);
 
-        if (maxWidth > 0 && width > maxWidth) {
-            int lines = static_cast<int>(std::ceil(width / maxWidth));
-            width = maxWidth;
-            height = height * lines;
-        }
+    if (maxWidth > 0 && width > maxWidth) {
+        int lines = static_cast<int>(std::ceil(width / maxWidth));
+        width = maxWidth;
+        height = height * lines;
+    }
 
-        return {width, height};
-    });
+    return {width, height};
 }
 
 void SdlRenderer::render(Node* root) {

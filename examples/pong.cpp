@@ -464,7 +464,7 @@ VNode buildUI() {
 class PongHost : public Host {
 public:
     PongHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(buildUI);
     }
 

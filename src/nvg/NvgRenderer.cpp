@@ -1,4 +1,3 @@
-#include <yui/core/Measure.hpp>
 #include <yui/nvg/NvgRenderer.hpp>
 
 #include <nanovg.h>
@@ -7,41 +6,29 @@
 namespace yui {
 namespace nvg {
 
-// Global state for text measurement callback
-static NVGcontext* g_measureContext = nullptr;
-static int g_measureFontId = -1;
-
 NvgRenderer::NvgRenderer(NVGcontext* vg, int fontId) : vg_(vg), fontId_(fontId) {}
 
-void NvgRenderer::registerMeasureFunc() {
-    g_measureContext = vg_;
-    g_measureFontId = fontId_;
+Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidth) const {
+    if (!vg_) {
+        return fallbackMeasure(text, fontSize, maxWidth);
+    }
 
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float maxWidth) -> Size {
-        if (!g_measureContext) {
-            // Fallback when no context available
-            float charWidth = fontSize * 0.6f;
-            float width = text.length() * charWidth;
-            return {width, fontSize};
-        }
+    nvgFontSize(vg_, fontSize);
+    if (fontId_ >= 0) {
+        nvgFontFaceId(vg_, fontId_);
+    } else {
+        nvgFontFace(vg_, "default");
+    }
 
-        nvgFontSize(g_measureContext, fontSize);
-        if (g_measureFontId >= 0) {
-            nvgFontFaceId(g_measureContext, g_measureFontId);
-        } else {
-            nvgFontFace(g_measureContext, "default");
-        }
+    float bounds[4];
+    float width = nvgTextBounds(vg_, 0, 0, text.c_str(), nullptr, bounds);
+    float height = bounds[3] - bounds[1];
 
-        float bounds[4];
-        float width = nvgTextBounds(g_measureContext, 0, 0, text.c_str(), nullptr, bounds);
-        float height = bounds[3] - bounds[1];
+    if (maxWidth > 0 && width > maxWidth) {
+        width = maxWidth;
+    }
 
-        if (maxWidth > 0 && width > maxWidth) {
-            width = maxWidth;
-        }
-
-        return {width, height};
-    });
+    return {width, height};
 }
 
 void NvgRenderer::render(Node* root) {

@@ -219,7 +219,7 @@ Component TodoApp() {
 class TodoHost : public Host {
 public:
     TodoHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(TodoApp());
     }
 

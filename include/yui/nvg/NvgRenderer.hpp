@@ -8,16 +8,17 @@ struct NVGcontext;
 namespace yui {
 namespace nvg {
 
-// NanoVG renderer for yui
-class NvgRenderer {
+// NanoVG renderer for yui. Also serves as the host's text measurer
+// (install via Host::setTextMeasurer).
+class NvgRenderer : public ITextMeasurer {
 public:
     NvgRenderer(NVGcontext* vg, int fontId = -1);
 
     // Render a node tree
     void render(Node* root);
 
-    // Register text measure function with yui::Measure
-    void registerMeasureFunc();
+    // ITextMeasurer: measure text using this renderer's nanovg context/font.
+    Size measure(const std::string& text, float fontSize, float maxWidth) const override;
 
 private:
     struct DrawContext {

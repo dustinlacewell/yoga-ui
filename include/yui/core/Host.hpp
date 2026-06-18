@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 #include <unordered_set>
 
 namespace yui {
@@ -72,6 +73,7 @@ public:
         reconciler_.setNodeRemovedCallback([this](Node* node) { eventHandler_.onNodeRemoved(node); });
         reconciler_.setAutoFocusCallback([this](InputNode* node) { eventHandler_.focusInput(node); });
         reconciler_.setHost(this);
+        reconciler_.setConfig(config_.get());
     }
 
     virtual ~Host() {
@@ -79,9 +81,20 @@ public:
             std::lock_guard lock(detail::liveHostsMutex);
             detail::liveHosts.erase(this);
         }
+        // host-dies-first: deregister from the measurer so its destructor never
+        // touches our (about-to-be-freed) config. Marking alive_ false is a
+        // belt-and-braces guard for any registration that lingers.
+        if (installedMeasurer_)
+            installedMeasurer_->detachHost(this);
+        installedMeasurer_ = nullptr;
+        *alive_ = false;
         if (fiberRoot_) {
             fiberRoot_->willUnmount();
         }
+        // Drop the measurer reference before the node tree is torn down so no
+        // node can reach a dangling measurer mid-destruction. config_ itself is
+        // freed last (it is declared before the trees, so destroyed after them).
+        YGConfigSetContext(config_.get(), nullptr);
     }
 
     // Non-copyable, non-movable
@@ -100,6 +113,30 @@ public:
             return Box(std::vector<Child>{comp}).flexGrow(1);
         };
         markDirty();
+    }
+
+    // Install the backend text measurer for this host. Stored in the host's
+    // yoga config context; TextNode::measureFunc recovers it per measurement.
+    // Pass nullptr to clear (measurement falls back to the heuristic).
+    //
+    // Lifetime is self-managed in both directions — neither object need outlive
+    // the other. The measurer self-detaches: ~ITextMeasurer clears this host's
+    // context if the measurer dies first, and ~Host deregisters from the
+    // measurer if the host dies first. Either destruction order is safe; a dead
+    // measurer can never be read from a relayout.
+    void setTextMeasurer(ITextMeasurer* measurer) {
+        if (measurer == installedMeasurer_)
+            return;
+        // Drop the prior measurer's back-reference to us before installing the
+        // new one, so it does not later clear a context we have repurposed.
+        if (installedMeasurer_)
+            installedMeasurer_->detachHost(this);
+        installedMeasurer_ = measurer;
+        YGConfigSetContext(config_.get(), measurer);
+        if (measurer) {
+            YGConfigRef cfg = config_.get();
+            measurer->attachHost(this, alive_, [cfg] { YGConfigSetContext(cfg, nullptr); });
+        }
     }
 
     // Mark for re-render on next update
@@ -252,6 +289,15 @@ public:
     }
 
 protected:
+    // Per-host yoga config. Render nodes are created against it so their measure
+    // callback can recover this host's text measurer from the config context.
+    // Declared first so it is destroyed LAST — after the node trees that hold
+    // yoga nodes referencing it, so the config always outlives those nodes.
+    struct ConfigDeleter {
+        void operator()(YGConfigRef c) const { YGConfigFree(c); }
+    };
+    std::unique_ptr<std::remove_pointer_t<YGConfigRef>, ConfigDeleter> config_{YGConfigNew()};
+
     std::function<VNode()> render_;
     Reconciler reconciler_;
     EventHandler eventHandler_;
@@ -264,6 +310,15 @@ protected:
     float lastHeight_ = 0;
     bool dirty_ = true;
     bool componentsDirty_ = false;
+
+    // Currently installed text measurer (raw, non-owning). Tracked so the host
+    // can deregister from it on replacement and in ~Host.
+    ITextMeasurer* installedMeasurer_ = nullptr;
+
+    // Liveness token shared with the measurer's registration records, mirroring
+    // the Fiber/Store alive_ idiom. Cleared in ~Host so a measurer destroyed
+    // afterwards observes the host as dead and skips clearing our freed config.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 // Check if a host is still alive (for Store notification)

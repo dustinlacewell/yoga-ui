@@ -67,13 +67,15 @@ public:
     bool update(float dt);
 
 protected:
-    Node();
+    // The yoga node is created against the host's config so its measure
+    // callback can recover the host's text measurer from the config context.
+    explicit Node(YGConfigRef config);
 };
 
 // Concrete node types
 class BoxNode : public Node {
 public:
-    BoxNode();
+    explicit BoxNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Box; }
     void updateProps(const PropsVariant& props) override;
 
@@ -82,7 +84,7 @@ public:
 
 class TextNode : public Node {
 public:
-    TextNode();
+    explicit TextNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Text; }
     void updateProps(const PropsVariant& props) override;
 
@@ -96,7 +98,7 @@ private:
 
 class InputNode : public Node {
 public:
-    InputNode();
+    explicit InputNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Input; }
     void updateProps(const PropsVariant& props) override;
 
@@ -108,7 +110,7 @@ public:
 
 class ScrollNode : public Node {
 public:
-    ScrollNode();
+    explicit ScrollNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Scroll; }
     void updateProps(const PropsVariant& props) override;
 
@@ -131,14 +133,15 @@ public:
 
 class CanvasNode : public Node {
 public:
-    CanvasNode();
+    explicit CanvasNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Canvas; }
     void updateProps(const PropsVariant& props) override;
 
     CanvasProps props;
 };
 
-// Factory: create Node from VNode type
-std::unique_ptr<Node> createNode(PrimitiveType type);
+// Factory: create Node from VNode type. The yoga node is created against the
+// given config (may be nullptr, which resolves to Yoga's default config).
+std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config);
 
 }  // namespace yui

@@ -220,7 +220,7 @@ VNode buildUI() {
 class BenchHost : public Host {
 public:
     BenchHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(buildUI);
     }
 

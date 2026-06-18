@@ -119,7 +119,7 @@ std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
 
     // The root is always a host node. Mount it without a render parent
     // (the render root is stored in renderRoot_).
-    auto rootNode = createNode(vnode.type);
+    auto rootNode = createNode(vnode.type, config_);
     rootNode->updateProps(vnode.props);
     rootNode->key = vnode.key;
     rootNode->intKey = vnode.intKey;
@@ -160,7 +160,7 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     fiber->sourcePosition = sourcePos;
 
     // Create render node
-    auto node = createNode(vnode.type);
+    auto node = createNode(vnode.type, config_);
     node->updateProps(vnode.props);
     node->key = vnode.key;
     node->intKey = vnode.intKey;

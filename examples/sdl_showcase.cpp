@@ -87,7 +87,7 @@ VNode buildUI() {
 class SdlHost : public Host {
 public:
     SdlHost(SDL_Renderer* renderer, const std::string& fontPath) : renderer_(renderer, fontPath, 14) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(buildUI);
     }
 

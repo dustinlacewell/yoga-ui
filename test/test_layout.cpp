@@ -1,9 +1,23 @@
 #include "doctest.h"
 
-#include <yui/core/Measure.hpp>
+#include "TestMeasurer.hpp"
+
 #include <yui/core/Reconciler.hpp>
 
 using namespace yui;
+using yui::test::FnMeasurer;
+using yui::test::MeasureHarness;
+
+namespace {
+
+// Canonical test measurer: 10px per character, fontSize for height.
+FnMeasurer::Fn perChar10() {
+    return [](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
+        return {static_cast<float>(text.length()) * 10.0f, fontSize};
+    };
+}
+
+}  // namespace
 
 TEST_CASE("Basic layout calculation") {
     Reconciler reconciler;
@@ -232,12 +246,9 @@ TEST_CASE("layout persists after reconciliation") {
 }
 
 TEST_CASE("Box wraps Text child (intrinsic sizing)") {
-    Reconciler reconciler;
-
-    // Set up text measure function
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    });
+    FnMeasurer measurer(perChar10());
+    MeasureHarness h;
+    h.setMeasurer(&measurer);
 
     // Box wrapping Text with no explicit dimensions - should inherit child's size
     // This is the pattern: Box(Label(text)).backgroundColor(...)
@@ -246,8 +257,7 @@ TEST_CASE("Box wraps Text child (intrinsic sizing)") {
         .alignItems(AlignItems::Center)
         .setKey("box");
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(YGUndefined, YGUndefined);
 
     // "Hello" = 5 chars * 10px = 50px width, 16px height
@@ -257,11 +267,9 @@ TEST_CASE("Box wraps Text child (intrinsic sizing)") {
 }
 
 TEST_CASE("Box wraps Text child in Column with FlexStart") {
-    Reconciler reconciler;
-
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    });
+    FnMeasurer measurer(perChar10());
+    MeasureHarness h;
+    h.setMeasurer(&measurer);
 
     // Box inside Column with alignItems FlexStart (prevents stretch)
     auto tree = Column({
@@ -271,8 +279,7 @@ TEST_CASE("Box wraps Text child in Column with FlexStart") {
             .setKey("box")
     }).width(200).alignItems(AlignItems::FlexStart);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(200, YGUndefined);
 
     // Box should wrap text, not stretch to column width
@@ -281,11 +288,9 @@ TEST_CASE("Box wraps Text child in Column with FlexStart") {
 }
 
 TEST_CASE("Box wraps Text in Column - real app scenario") {
-    Reconciler reconciler;
-
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    });
+    FnMeasurer measurer(perChar10());
+    MeasureHarness h;
+    h.setMeasurer(&measurer);
 
     // Mimics the SessionScreen layout:
     // Column with fixed dimensions, Box header wrapping Text
@@ -304,8 +309,7 @@ TEST_CASE("Box wraps Text in Column - real app scenario") {
     .padding(4)
     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -324,10 +328,8 @@ TEST_CASE("Box wraps Text in Column - real app scenario") {
 }
 
 TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
-    Reconciler reconciler;
-
-    // Clear measure function - use fallback (0.6 * fontSize per char)
-    Measure::setTextMeasure(nullptr);
+    // No measurer installed -> fallback heuristic (0.6 * fontSize per char).
+    MeasureHarness h;
 
     auto tree = Column({
         Box(Text("Session Name").fontSize(12).setKey("txt"))
@@ -342,8 +344,7 @@ TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
     .padding(4)
     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -359,11 +360,9 @@ TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
 }
 
 TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus pattern") {
-    Reconciler reconciler;
-
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    });
+    FnMeasurer measurer(perChar10());
+    MeasureHarness h;
+    h.setMeasurer(&measurer);
 
     // This is the exact pattern from renderMissingStatus:
     // Box with explicit width(100) but no height, containing Label
@@ -384,8 +383,7 @@ TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus patte
     .padding(4)
     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(180, 480);
 
     auto* statusBox = root->children[0].get();
@@ -408,11 +406,9 @@ TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus patte
 }
 
 TEST_CASE("Header Box without explicit width - stretches and centers text") {
-    Reconciler reconciler;
-
-    Measure::setTextMeasure([](const std::string& text, float fontSize, float /*maxWidth*/) -> Size {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    });
+    FnMeasurer measurer(perChar10());
+    MeasureHarness h;
+    h.setMeasurer(&measurer);
 
     // This is the header pattern - NO explicit width on Box
     auto tree = Column({
@@ -428,8 +424,7 @@ TEST_CASE("Header Box without explicit width - stretches and centers text") {
     .padding(4)
     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -449,11 +444,9 @@ TEST_CASE("Header Box without explicit width - stretches and centers text") {
 }
 
 TEST_CASE("SessionScreen full structure - missing status box") {
-    Reconciler reconciler;
-
-    // Use nullptr to simulate first frame before registerMeasureFunc() is called
-    // This triggers the fallback: width = text.length() * fontSize * 0.6, height = fontSize
-    Measure::setTextMeasure(nullptr);
+    // No measurer installed: simulates the first frame before a measurer is set.
+    // Triggers the fallback: width = text.length() * fontSize * 0.6, height = fontSize.
+    MeasureHarness h;
 
     // Exact structure from SessionScreen::render()
     auto tree = Column({
@@ -487,8 +480,7 @@ TEST_CASE("SessionScreen full structure - missing status box") {
     .padding(4)
     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
-    auto* root = reconciler.renderRoot();
+    auto* root = h.mount(tree);
     // Simulate real app dimensions
     root->calculateLayout(180, 480);
 
