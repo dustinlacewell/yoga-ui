@@ -505,6 +505,12 @@ install(TARGETS yui yogacore
 
 install(DIRECTORY include/yui
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    # Internal headers (the reconciliation algorithm, the fiber-tree machinery,
+    # the backend RAII scope helpers) live under any "detail/" subdirectory and
+    # are deliberately NOT installed — they must not become part of the frozen
+    # 1.0 public ABI. This excludes include/yui/detail, include/yui/nvg/detail,
+    # and include/yui/sdl/detail.
+    PATTERN "detail" EXCLUDE
 )
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/yui/version.hpp

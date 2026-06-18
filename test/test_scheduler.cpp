@@ -2,7 +2,7 @@
 
 #include <yui/core/DirtyScheduler.hpp>
 #include <yui/core/Fiber.hpp>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 using namespace yui;
 

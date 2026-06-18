@@ -9,6 +9,5 @@
 #include <yui/core/Measure.hpp>
 #include <yui/core/Node.hpp>
 #include <yui/core/Props.hpp>
-#include <yui/core/Reconciler.hpp>
 #include <yui/core/Store.hpp>
 #include <yui/core/VNode.hpp>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <yui/core/Measure.hpp>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 #include <functional>
 #include <memory>

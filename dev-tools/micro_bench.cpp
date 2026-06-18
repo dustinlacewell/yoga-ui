@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <yui/core/VNode.hpp>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 using namespace yui;
 using Clock = std::chrono::high_resolution_clock;

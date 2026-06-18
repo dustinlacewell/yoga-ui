@@ -4,7 +4,7 @@
 // Run:   ./build/bin/bench_reconciler
 
 #include <yui/core/Host.hpp>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 #include <yui/core/Store.hpp>
 #include <yui/core/VNode.hpp>
 

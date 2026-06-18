@@ -1,7 +1,7 @@
 #include "doctest.h"
 
 #include <yui/core/EventHandler.hpp>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 #include <yui/yui.hpp>
 
 #include <stdexcept>

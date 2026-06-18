@@ -1,4 +1,4 @@
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 #include <yui/core/ComponentContext.hpp>
 #include <yui/core/DirtyScheduler.hpp>

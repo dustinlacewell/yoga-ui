@@ -2,7 +2,7 @@
 
 #include "TestMeasurer.hpp"
 
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 using namespace yui;
 using yui::test::FnMeasurer;

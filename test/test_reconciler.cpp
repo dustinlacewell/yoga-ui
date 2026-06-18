@@ -2,7 +2,7 @@
 
 #include <cmath>
 #include <memory>
-#include <yui/core/Reconciler.hpp>
+#include <yui/detail/Reconciler.hpp>
 
 using namespace yui;
 
