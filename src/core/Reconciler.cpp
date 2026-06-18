@@ -1,7 +1,7 @@
 #include <yui/core/Reconciler.hpp>
 
 #include <yui/core/ComponentContext.hpp>
-#include <yui/core/Host.hpp>
+#include <yui/core/DirtyScheduler.hpp>
 
 #include <algorithm>
 #include <unordered_map>

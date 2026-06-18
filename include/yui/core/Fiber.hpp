@@ -13,7 +13,7 @@ namespace yui {
 
 // Forward declarations
 class Node;
-class Host;
+class DirtyScheduler;
 
 // Per-hook-slot identity, recorded in call order on a component fiber (see
 // Fiber::hookTags). The rules-of-hooks contract is positional: the Nth hook call
@@ -129,7 +129,7 @@ struct Fiber {
     std::vector<SubscriptionRecord> subscriptionCleanups;
     std::vector<std::function<void()>> effectCleanups;
     std::vector<std::function<std::function<void()>()>> pendingEffects;
-    Host* host = nullptr;
+    DirtyScheduler* host = nullptr;
     // Cross-thread: written by a worker via Store::set() -> markDirty() under
     // Store::mutex_, but read/cleared on the host thread in the Reconciler without
     // that mutex. Atomic for the same reason as Host::dirty_/componentsDirty_.

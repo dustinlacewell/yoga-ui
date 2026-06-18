@@ -13,7 +13,7 @@
 
 namespace yui {
 
-class Host;
+class DirtyScheduler;
 
 class Reconciler {
 public:
@@ -22,7 +22,7 @@ public:
 
     void setNodeRemovedCallback(NodeRemovedCallback callback) { onNodeRemoved_ = std::move(callback); }
     void setAutoFocusCallback(AutoFocusCallback callback) { onAutoFocus_ = std::move(callback); }
-    void setHost(Host* host) { host_ = host; }
+    void setHost(DirtyScheduler* host) { host_ = host; }
 
     // The yoga config that render nodes are created against. Carries the host's
     // text measurer in its context (see Host::setTextMeasurer). nullptr resolves
@@ -88,15 +88,16 @@ private:
     void notifyRenderRemoved(Node* node);
 
     // --- Diagnostics ---
-    // Route a caught user-callback exception to the host's sink via the existing
-    // host_ back-reference. No-op when host-less (reconciler-only unit tests).
+    // Route a caught user-callback exception to the scheduler's sink via the
+    // existing host_ back-reference. No-op when host-less (reconciler-only unit
+    // tests).
     void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
 
     // --- State ---
     std::unique_ptr<Node> renderRoot_;
     NodeRemovedCallback onNodeRemoved_;
     AutoFocusCallback onAutoFocus_;
-    Host* host_ = nullptr;
+    DirtyScheduler* host_ = nullptr;
     YGConfigRef config_ = nullptr;
 };
 

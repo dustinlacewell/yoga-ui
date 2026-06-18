@@ -12,14 +12,14 @@
 namespace yui {
 
 // Forward declarations
-class Host;
+class DirtyScheduler;
 template <typename T>
 class Store;
 
 // Context provided to component functions during render
 class ComponentContext {
 public:
-    ComponentContext(Fiber* fiber, Host* host);
+    ComponentContext(Fiber* fiber, DirtyScheduler* host);
     ~ComponentContext();
 
     // useState hook - returns current value and setter function
@@ -52,7 +52,7 @@ private:
     bool checkHookTag(size_t index, HookTag::Kind kind, std::type_index type);
 
     Fiber* fiber_;
-    Host* host_;
+    DirtyScheduler* host_;
     // Two distinct index spaces, both reset to 0 per render (fresh context):
     //   hookIndex_ — the POSITIONAL/tag counter. Advanced by EVERY hook (state,
     //     ref, field, effect) so checkHookTag/hookTags see one slot per hook call,

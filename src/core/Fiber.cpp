@@ -1,6 +1,6 @@
 #include <yui/core/Fiber.hpp>
 
-#include <yui/core/Host.hpp>
+#include <yui/core/DirtyScheduler.hpp>
 
 #include <exception>
 
@@ -13,7 +13,7 @@ namespace {
 // neither abort the rest of the loop nor escape a destructor (which would
 // terminate). Route to the owning component fiber's host sink when available;
 // only component fibers carry cleanups, and they always have host set.
-void runOneCleanup(std::function<void()>& cleanup, Host* host) noexcept {
+void runOneCleanup(std::function<void()>& cleanup, DirtyScheduler* host) noexcept {
     try {
         cleanup();
     } catch (const std::exception& e) {

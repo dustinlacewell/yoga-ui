@@ -1,5 +1,7 @@
 #include <yui/core/ComponentContext.hpp>
 
+#include <yui/core/DirtyScheduler.hpp>
+
 #include <cstdio>
 #include <exception>
 #include <string>
@@ -8,7 +10,7 @@ namespace yui {
 
 // --- ComponentContext ---
 
-ComponentContext::ComponentContext(Fiber* fiber, Host* host) : fiber_(fiber), host_(host), hookIndex_(0) {}
+ComponentContext::ComponentContext(Fiber* fiber, DirtyScheduler* host) : fiber_(fiber), host_(host), hookIndex_(0) {}
 
 namespace {
 const char* kindName(HookTag::Kind k) {

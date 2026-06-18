@@ -132,7 +132,9 @@ private:
     // proceed (the set still applies) rather than defer — the actionable signal is
     // the warning; deferral would hide a genuine logic error behind silence.
     void diagnoseSetDuringRender() noexcept {
-        Host* host = currentRenderFiber ? currentRenderFiber->host : currentRenderHost;
+        // A fiber carries a DirtyScheduler*; a top-level host is a Host* that
+        // upcasts to one. Either way we only need the diagnostic sink.
+        DirtyScheduler* host = currentRenderFiber ? currentRenderFiber->host : currentRenderHost;
         if (!host) return;  // not rendering on this thread — normal set()
         if (setDuringRenderReported_.exchange(true)) return;  // already warned once
         host->reportError(

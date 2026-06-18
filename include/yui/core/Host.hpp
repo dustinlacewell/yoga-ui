@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DirtyScheduler.hpp"
 #include "ErrorHandler.hpp"
 #include "EventHandler.hpp"
 #include "Fiber.hpp"
@@ -97,7 +98,12 @@ private:
 // The actual re-render is applied on the host thread at the next update().
 // Concretely: a worker/audio/network thread may call Store::set(); the change
 // becomes visible on screen when the host thread next calls update().
-class Host {
+//
+// Host realises DirtyScheduler — the narrow back-channel core uses for dirty
+// scheduling, the diagnostic sink, and render-root handoff. Core holds a
+// DirtyScheduler* (not a Host*), so the inheritance is what lets setHost(this)
+// upcast and keeps core depending only on the interface, breaking the cycle.
+class Host : public DirtyScheduler {
 public:
     Host() {
         std::lock_guard lock(detail::liveHostsMutex);
@@ -188,7 +194,7 @@ public:
     // diagnostic to stderr; in release, swallow. Marked noexcept — it runs from
     // contexts that are already recovering from (or unwinding) a failed callback,
     // including destructors, and must never add a second exception.
-    void reportError(std::string_view where, const std::exception* eOrNull) noexcept {
+    void reportError(std::string_view where, const std::exception* eOrNull) noexcept override {
         if (errorHandler_) {
             try {
                 errorHandler_(where, eOrNull);
@@ -206,11 +212,11 @@ public:
 
     // Mark for re-render on next update. Sanctioned to run cross-thread (from
     // Store::set on a worker thread); the atomic store is the synchronisation.
-    void markDirty() { dirty_.store(true, std::memory_order_relaxed); }
+    void markDirty() override { dirty_.store(true, std::memory_order_relaxed); }
 
     // Mark that at least one component needs re-rendering. Also reachable
     // cross-thread via Store::set -> Fiber::markDirty -> here.
-    void markComponentDirty() { componentsDirty_.store(true, std::memory_order_relaxed); }
+    void markComponentDirty() override { componentsDirty_.store(true, std::memory_order_relaxed); }
 
     bool isDirty() const { return dirty_.load(std::memory_order_relaxed); }
     bool needsUpdate() const {
@@ -336,7 +342,7 @@ public:
     // type changes between frames and the old root is torn down and rebuilt
     // (see Reconciler::remountRoot). The host owns renderRoot_ after the initial
     // takeRenderRoot(), so it must swap in the freshly-built root here.
-    void replaceRenderRoot(std::unique_ptr<Node> newRoot) { renderRoot_ = std::move(newRoot); }
+    void replaceRenderRoot(std::unique_ptr<Node> newRoot) override { renderRoot_ = std::move(newRoot); }
 
     // Event handling - returns true if event was consumed.
     //
