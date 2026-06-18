@@ -3,6 +3,7 @@
 #include "Fiber.hpp"
 #include "Host.hpp"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -92,40 +93,85 @@ public:
     // The sole sanctioned cross-thread entry point: callable from any thread.
     // Marks subscribers dirty (atomic host flags + mutex-guarded host liveness);
     // the re-render itself runs on the host thread at the next Host::update().
+    //
+    // The lock guards ONLY the value mutation. notify() runs UNLOCKED: it marks
+    // subscribers dirty via atomics, and re-rendering is deferred to the host
+    // thread's next update() — none of it needs value_ held. Crucially this keeps
+    // the lock off any user code reachable from a set(): a set() whose effect
+    // re-renders a component that itself calls use()/peek()/set() on this same
+    // store would self-deadlock on a non-recursive mutex if the lock spanned
+    // notify(). Narrow critical section, not a recursive_mutex.
     void set(T value) {
-        std::lock_guard lock(mutex_);
-        value_ = std::move(value);
+        diagnoseSetDuringRender();
+        {
+            std::lock_guard lock(mutex_);
+            value_ = std::move(value);
+        }
         notify();
     }
 
     // Mutate in place - triggers re-render of subscribers.
-    // Same threading contract as set(T): callable from any thread.
+    // Same threading contract as set(T): callable from any thread. The mutator
+    // runs under the lock (it touches value_); notify() runs after the lock is
+    // released so the mutator's resulting re-render can re-enter the store safely.
     void set(const std::function<void(T&)>& mutator) {
-        std::lock_guard lock(mutex_);
-        mutator(value_);
+        diagnoseSetDuringRender();
+        {
+            std::lock_guard lock(mutex_);
+            mutator(value_);
+        }
         notify();
     }
 
 private:
+    // A set() inside a component body (or top-level render) re-dirties the very
+    // fiber/host being rendered, so the next frame renders again and sets again:
+    // an unconditional set-in-render is a per-frame re-render livelock. Detect it
+    // via the render-context thread_locals the reconciler installs, and route ONE
+    // deduped diagnostic through the host's existing error sink. We diagnose and
+    // proceed (the set still applies) rather than defer — the actionable signal is
+    // the warning; deferral would hide a genuine logic error behind silence.
+    void diagnoseSetDuringRender() noexcept {
+        Host* host = currentRenderFiber ? currentRenderFiber->host : currentRenderHost;
+        if (!host) return;  // not rendering on this thread — normal set()
+        if (setDuringRenderReported_.exchange(true)) return;  // already warned once
+        host->reportError(
+            "Store::set() called during render (likely unconditional set in a "
+            "component body) — this will re-render every frame",
+            nullptr);
+    }
+
     void notify() {
-        // Called with mutex_ held
-        for (auto* fiber : fiberSubscribers_) {
+        // Run UNLOCKED. Snapshot the subscriber sets under a brief lock, then
+        // mark dirty on the copies: markDirty() only flips atomic flags and never
+        // re-enters this store, but taking a copy keeps the iteration safe against
+        // a concurrent use()/set() mutating the live sets, and lets us clear the
+        // live sets atomically with the snapshot (consume-once semantics).
+        std::unordered_set<Fiber*> fibers;
+        std::unordered_set<Host*> hosts;
+        {
+            std::lock_guard lock(mutex_);
+            fibers.swap(fiberSubscribers_);
+            hosts.swap(hostSubscribers_);
+        }
+
+        for (auto* fiber : fibers) {
             fiber->markDirty();
         }
-        fiberSubscribers_.clear();
-
-        for (auto* host : hostSubscribers_) {
+        for (auto* host : hosts) {
             if (isHostLive(host)) {
                 host->markDirty();
             }
         }
-        hostSubscribers_.clear();
     }
 
     T value_;
     mutable std::mutex mutex_;
     mutable std::unordered_set<Fiber*> fiberSubscribers_;
     mutable std::unordered_set<Host*> hostSubscribers_;
+    // One-shot latch for the set-during-render diagnostic: fires once per Store so
+    // a livelocking unconditional-set-in-render warns a single time, not per frame.
+    std::atomic<bool> setDuringRenderReported_{false};
     // Liveness token shared with outstanding fiber-cleanup lambdas; cleared in
     // the destructor so they no-op rather than dereference a freed Store.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);

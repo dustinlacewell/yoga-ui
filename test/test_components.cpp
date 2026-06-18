@@ -2,6 +2,10 @@
 
 #include "doctest.h"
 
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1213,4 +1217,123 @@ TEST_CASE("Threading - cross-thread Store::set smoke test (no crash, change appl
 
     auto* rootBox = static_cast<BoxNode*>(host.root());
     CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "123");
+}
+
+// Run `body` on a worker and fail (rather than hang the whole suite) if it does
+// not finish within `timeout`. A deadlocked Store::set() would otherwise wedge
+// the test process forever; this turns "hung" into "failed" with a clean report.
+// On timeout the worker is detached and left wedged — acceptable for a CI failure
+// signal (the process exits non-zero); a passing run always joins cleanly.
+static bool runsWithin(std::chrono::milliseconds timeout, const std::function<void()>& body) {
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread worker([done, body] {
+        body();
+        done->store(true);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!done->load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (done->load()) {
+        worker.join();
+        return true;
+    }
+    worker.detach();  // wedged — leak the thread; the suite still reports failure
+    return false;
+}
+
+TEST_CASE("Store - reentrant set() from a re-rendered subscriber does not deadlock") {
+    // FIX #9 regression. Store::set() must NOT hold its mutex across the re-render
+    // it triggers: notify() only flags subscribers dirty (deferred), and the value
+    // mutation is the sole locked region. A component subscribed to a store that,
+    // when re-rendered by that store, calls set()/peek()/use() on the SAME store
+    // would self-deadlock if set() serialised user code under a non-recursive lock.
+    //
+    // The set inside render is GUARDED (fires once) so this exercises reentrancy
+    // without the per-frame livelock of an unconditional set — see the livelock
+    // test below for the unconditional case.
+    bool finished = runsWithin(std::chrono::seconds(5), [] {
+        TestHost host;
+        Store<int> counter(0);
+        bool bumped = false;
+        int renderCount = 0;
+
+        auto Comp = [&](ComponentContext& ctx) {
+            renderCount++;
+            int n = counter.use();             // subscribe + read under no Store lock
+            if (n == 0 && !bumped) {
+                bumped = true;
+                counter.peek();                // reentrant read — locks mutex_ again
+                counter.set(n + 1);            // reentrant write — re-enters set()
+            }
+            return Text(std::to_string(n));
+        };
+
+        host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+        host.update(200, 200);                 // initial render: bumps counter to 1
+        host.update(200, 200);                 // applies the deferred re-render
+        host.update(200, 200);                 // steady state (guard stops further sets)
+
+        auto* box = static_cast<BoxNode*>(host.root());
+        CHECK(static_cast<TextNode*>(box->children[0].get())->props.text == "1");
+        CHECK(renderCount >= 2);
+    });
+    REQUIRE(finished);  // false == the operation hung (deadlock regression)
+}
+
+TEST_CASE("Store - unconditional set() during render is diagnosed once (livelock guard)") {
+    // FIX #10 regression. A component whose body calls set() unconditionally re-
+    // dirties its own fiber every frame -> per-frame re-render livelock. set()
+    // detects the active render context (currentRenderFiber / currentRenderHost the
+    // reconciler installs) and routes ONE deduped diagnostic through the host's
+    // error sink. We diagnose-and-proceed: the set still applies; the warning is the
+    // actionable signal. The latch is per-Store, so the diagnostic fires exactly
+    // once across many frames rather than once per frame.
+    TestHost host;
+    Store<int> counter(0);
+
+    int diagnostics = 0;
+    std::string lastWhere;
+    host.setErrorHandler([&](std::string_view where, const std::exception*) {
+        diagnostics++;
+        lastWhere = std::string(where);
+    });
+
+    auto Comp = [&](ComponentContext& ctx) {
+        int n = counter.use();
+        counter.set(n + 1);  // UNCONDITIONAL set in render: the livelock pattern
+        return Text(std::to_string(n));
+    };
+
+    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+    // Several frames, each of which renders the component and hits the in-render set.
+    for (int i = 0; i < 5; ++i) {
+        host.update(200, 200);
+    }
+
+    CHECK(diagnostics == 1);  // deduped to a single report, not one per frame
+    CHECK(lastWhere.find("during render") != std::string::npos);
+}
+
+TEST_CASE("Store - set() outside render emits no spurious diagnostic") {
+    // The in-render detection must not false-positive on a normal set() made
+    // outside any render (the common case: an event handler or worker thread).
+    TestHost host;
+    Store<int> counter(0);
+
+    int diagnostics = 0;
+    host.setErrorHandler([&](std::string_view, const std::exception*) { diagnostics++; });
+
+    host.setRender(std::function<VNode()>([&]() {
+        int n = counter.use();
+        return Text(std::to_string(n));
+    }));
+
+    host.update(200, 200);
+    counter.set(42);            // outside render — must NOT diagnose
+    host.update(200, 200);
+
+    CHECK(diagnostics == 0);
 }
