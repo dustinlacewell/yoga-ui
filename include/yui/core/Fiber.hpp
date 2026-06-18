@@ -3,6 +3,7 @@
 #include "VNode.hpp"
 
 #include <any>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -29,6 +30,34 @@ struct SubscriptionRecord {
     const void* store = nullptr;            // Store identity (for old-vs-new dedupe)
     std::function<void()> resubscribe;      // re-add fiber to the store's set
     std::function<void()> unsubscribe;      // remove fiber from the store's set
+};
+
+// A move-enabled atomic<bool>. std::atomic has deleted copy/move, which would
+// implicitly delete Fiber's move assignment — but remountRoot relies on
+// `*fiber = std::move(*fresh)` (host thread, single-threaded at that point).
+// The value, not the atomic object, is what must travel; move transfers it with
+// relaxed ordering (consistent with every other access) and leaves the source
+// cleared. load/store mirror std::atomic so call sites read identically.
+struct MovableAtomicBool {
+    std::atomic<bool> value;
+
+    MovableAtomicBool(bool v = false) : value(v) {}
+    MovableAtomicBool(MovableAtomicBool&& other) noexcept
+        : value(other.value.exchange(false, std::memory_order_relaxed)) {}
+    MovableAtomicBool& operator=(MovableAtomicBool&& other) noexcept {
+        value.store(other.value.exchange(false, std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+        return *this;
+    }
+    MovableAtomicBool(const MovableAtomicBool&) = delete;
+    MovableAtomicBool& operator=(const MovableAtomicBool&) = delete;
+
+    bool load(std::memory_order order = std::memory_order_seq_cst) const {
+        return value.load(order);
+    }
+    void store(bool v, std::memory_order order = std::memory_order_seq_cst) {
+        value.store(v, order);
+    }
 };
 
 struct Fiber {
@@ -60,7 +89,10 @@ struct Fiber {
     std::vector<std::function<void()>> effectCleanups;
     std::vector<std::function<std::function<void()>()>> pendingEffects;
     Host* host = nullptr;
-    bool dirty = false;
+    // Cross-thread: written by a worker via Store::set() -> markDirty() under
+    // Store::mutex_, but read/cleared on the host thread in the Reconciler without
+    // that mutex. Atomic for the same reason as Host::dirty_/componentsDirty_.
+    MovableAtomicBool dirty{false};
 
 #ifndef NDEBUG
     size_t expectedHookCount = 0;

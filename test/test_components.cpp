@@ -4,6 +4,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 using namespace yui;
 
@@ -1140,4 +1141,76 @@ TEST_CASE("UpdateStatus - reentrant update() from a callback is ignored, not cra
     // Latch is fully released afterward: a fresh, top-level update() is accepted.
     auto after = host.update(200, 200);
     CHECK(after.status == UpdateStatus::Ok);
+}
+
+TEST_CASE("Threading - Store::set marks atomic dirty flag, re-render on host thread") {
+    // Single-threaded sanity for the atomic dirty flags. The host-subscriber path
+    // (top-level use()) flips Host::dirty_; the fiber-subscriber path flips
+    // Host::componentsDirty_. After making both atomic, both must still mark the
+    // host dirty so the next update() on the host thread re-renders. This guards
+    // the atomic change against breaking the normal (single-thread) path.
+    TestHost host;
+    Store<int> counter(0);
+
+    int topRenderCount = 0;
+    host.setRender(std::function<VNode()>([&]() {
+        topRenderCount++;
+        int n = counter.use();  // top-level use() -> subscribes the whole host
+        return Box({Text(std::to_string(n))});
+    }));
+
+    host.update(200, 200);
+    CHECK(topRenderCount == 1);
+    CHECK(host.needsUpdate() == false);
+
+    // set() flips the atomic dirty_ via the host-subscriber path.
+    counter.set(7);
+    CHECK(host.isDirty() == true);       // atomic dirty_ observed set
+    CHECK(host.needsUpdate() == true);
+
+    auto result = host.update(200, 200);
+    CHECK(result.needsRepaint);
+    CHECK(topRenderCount == 2);
+    CHECK(host.needsUpdate() == false);  // cleared by update()
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "7");
+}
+
+TEST_CASE("Threading - cross-thread Store::set smoke test (no crash, change applied)") {
+    // SMOKE TEST ONLY. Exercises the sanctioned cross-thread contract: a worker
+    // thread calls Store::set() while the host thread later calls update(). The
+    // atomic dirty flags make the flag write/read race-free; update() applies the
+    // change on the host thread.
+    //
+    // LIMITATION: this CANNOT prove race-freedom. A real data-race detector (TSan)
+    // is required for that, and TSan is unavailable on MinGW (the toolchain here).
+    // The threads are serialised (worker joined before update()), so this verifies
+    // the contract's *semantics* (off-thread set is visible at the next update,
+    // no crash), not the absence of a race under true concurrency.
+    TestHost host;
+    Store<int> counter(0);
+
+    int renderCount = 0;
+    host.setRender(std::function<VNode()>([&]() {
+        renderCount++;
+        int n = counter.use();
+        return Box({Text(std::to_string(n))});
+    }));
+
+    host.update(200, 200);
+    REQUIRE(renderCount == 1);
+    REQUIRE(host.needsUpdate() == false);
+
+    // Off-thread write, then join before touching the host (single sanctioned op).
+    std::thread worker([&] { counter.set(123); });
+    worker.join();
+
+    // The dirty flag was marked from the worker thread; the host thread applies it.
+    CHECK(host.needsUpdate() == true);
+    CHECK_NOTHROW(host.update(200, 200));
+    CHECK(renderCount == 2);
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "123");
 }

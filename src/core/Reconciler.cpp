@@ -457,7 +457,7 @@ bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
 
     bool anyReconciled = false;
 
-    if (fiber->isComponent() && fiber->dirty) {
+    if (fiber->isComponent() && fiber->dirty.load(std::memory_order_relaxed)) {
         // Re-render this component (which reconciles its entire subtree),
         // so we don't walk its children — they're handled by rerenderComponent.
         rerenderComponent(fiber);
@@ -573,7 +573,7 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
     }
 
     // dirty is cleared here (after success), not before, so a failed pass leaves it set.
-    fiber->dirty = false;
+    fiber->dirty.store(false, std::memory_order_relaxed);
 
     // Run pending effects
     fiber->runPendingEffects();

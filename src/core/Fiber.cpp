@@ -52,7 +52,7 @@ void Fiber::willUnmount() noexcept {
 }
 
 void Fiber::markDirty() {
-    dirty = true;
+    dirty.store(true, std::memory_order_relaxed);
     if (host) {
         host->markComponentDirty();
     }

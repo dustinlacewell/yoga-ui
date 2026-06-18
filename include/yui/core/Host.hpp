@@ -7,6 +7,7 @@
 #include "Reconciler.hpp"
 #include "VNode.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <exception>
 #include <functional>
@@ -79,6 +80,23 @@ private:
 // Base class for yui host implementations.
 // Provides core reconciliation, layout, and event handling.
 // Subclasses implement platform-specific rendering and event forwarding.
+//
+// THREADING CONTRACT
+// ------------------
+// yui is single-threaded. The Host, event dispatch, reconciliation, and
+// rendering must all be driven from ONE thread (typically the UI/main thread):
+// update(), setRender(), every handle*() entry point, root()/replaceRenderRoot(),
+// and the construction/destruction of the VNode tree your render function builds.
+// Calling any of these concurrently from another thread is a data race (UB).
+//
+// The ONLY sanctioned cross-thread operation is Store::set() (see Store.hpp).
+// A Store::set() from another thread marks the relevant dirty flags safely:
+// the Host flags it touches (dirty_, componentsDirty_) are std::atomic, and
+// host liveness is checked under a mutex (see detail::liveHosts / isHostLive).
+// set() does NOT itself reconcile or render — it only flips the dirty flags.
+// The actual re-render is applied on the host thread at the next update().
+// Concretely: a worker/audio/network thread may call Store::set(); the change
+// becomes visible on screen when the host thread next calls update().
 class Host {
 public:
     Host() {
@@ -186,14 +204,19 @@ public:
 #endif
     }
 
-    // Mark for re-render on next update
-    void markDirty() { dirty_ = true; }
+    // Mark for re-render on next update. Sanctioned to run cross-thread (from
+    // Store::set on a worker thread); the atomic store is the synchronisation.
+    void markDirty() { dirty_.store(true, std::memory_order_relaxed); }
 
-    // Mark that at least one component needs re-rendering
-    void markComponentDirty() { componentsDirty_ = true; }
+    // Mark that at least one component needs re-rendering. Also reachable
+    // cross-thread via Store::set -> Fiber::markDirty -> here.
+    void markComponentDirty() { componentsDirty_.store(true, std::memory_order_relaxed); }
 
-    bool isDirty() const { return dirty_; }
-    bool needsUpdate() const { return dirty_ || componentsDirty_; }
+    bool isDirty() const { return dirty_.load(std::memory_order_relaxed); }
+    bool needsUpdate() const {
+        return dirty_.load(std::memory_order_relaxed) ||
+               componentsDirty_.load(std::memory_order_relaxed);
+    }
 
     // Call each frame to update animations, reconcile if dirty, and layout.
     //
@@ -243,20 +266,20 @@ public:
             if (width != lastWidth_ || height != lastHeight_) {
                 lastWidth_ = width;
                 lastHeight_ = height;
-                dirty_ = true;
+                dirty_.store(true, std::memory_order_relaxed);
             }
 
             // Process dirty components - walk FIBER tree
             bool componentsReconciled = false;
-            if (componentsDirty_ && fiberRoot_) {
-                componentsDirty_ = false;
+            if (componentsDirty_.load(std::memory_order_relaxed) && fiberRoot_) {
+                componentsDirty_.store(false, std::memory_order_relaxed);
                 componentsReconciled = reconciler_.reconcileDirtyComponents(fiberRoot_.get());
             }
 
             // Full re-render only for structural changes
             bool fullReconcile = false;
-            if (dirty_) {
-                dirty_ = false;
+            if (dirty_.load(std::memory_order_relaxed)) {
+                dirty_.store(false, std::memory_order_relaxed);
                 fullReconcile = true;
 
                 VNode vnode;
@@ -352,7 +375,7 @@ public:
                 return false;
             bool consumed = eventHandler_.handleScroll(renderRoot_.get(), x, y, dx, dy);
             if (consumed)
-                dirty_ = true;
+                markDirty();
             return consumed;
         });
     }
@@ -371,7 +394,7 @@ public:
                 return false;
             bool consumed = eventHandler_.handleKeyDown(renderRoot_.get(), keyCode, keyMod, repeat);
             if (consumed)
-                dirty_ = true;
+                markDirty();
             return consumed;
         });
     }
@@ -382,7 +405,7 @@ public:
                 return false;
             bool consumed = eventHandler_.handleKeyUp(renderRoot_.get(), keyCode, keyMod);
             if (consumed)
-                dirty_ = true;
+                markDirty();
             return consumed;
         });
     }
@@ -472,8 +495,17 @@ protected:
 
     float lastWidth_ = 0;
     float lastHeight_ = 0;
-    bool dirty_ = true;
-    bool componentsDirty_ = false;
+
+    // Dirty flags. These are the ONE piece of Host state written cross-thread:
+    // Store::set() (the sole sanctioned off-thread entry, see the class-level
+    // threading contract) flips them via markDirty()/markComponentDirty(). They
+    // are atomic so that off-thread write and the host-thread read in update()
+    // are not a data race. They are independent flags, not a lock, so relaxed
+    // ordering suffices — set() only needs the flag to eventually be observed by
+    // the host thread, which it is at the next update(); no other state is
+    // published through them.
+    std::atomic<bool> dirty_{true};
+    std::atomic<bool> componentsDirty_{false};
 
     // Reentrancy latch for update(). True while an update() is in flight; a nested
     // call observes it and bails (see update()). Managed by an RAII guard so it is

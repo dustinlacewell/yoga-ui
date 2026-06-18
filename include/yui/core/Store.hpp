@@ -10,7 +10,21 @@
 
 namespace yui {
 
-// Reactive store - call use() in render to subscribe, set() to notify
+// Reactive store - call use() in render to subscribe, set() to notify.
+//
+// THREADING CONTRACT
+// ------------------
+// yui is single-threaded (see Host's threading contract). use() and peek() must
+// run on the host thread — use() reads thread_local render context and touches
+// the subscriber sets, so calling it off-thread is meaningless and unsafe.
+//
+// set() is the ONE sanctioned cross-thread entry point in the whole library.
+// You may call Store::set() from any thread (worker, audio, network callback).
+// set() only flags the host/fibers dirty: the Host dirty flags it marks are
+// atomic, and host liveness is checked under a mutex. set() does NOT reconcile
+// or render on the calling thread — the re-render is applied on the host thread
+// at its next update(). So a cross-thread set() is safe and its effect becomes
+// visible on screen the next time the host thread runs update().
 template <typename T>
 class Store {
 public:
@@ -74,14 +88,18 @@ public:
         return value_;
     }
 
-    // Write - triggers re-render of subscribers
+    // Write - triggers re-render of subscribers.
+    // The sole sanctioned cross-thread entry point: callable from any thread.
+    // Marks subscribers dirty (atomic host flags + mutex-guarded host liveness);
+    // the re-render itself runs on the host thread at the next Host::update().
     void set(T value) {
         std::lock_guard lock(mutex_);
         value_ = std::move(value);
         notify();
     }
 
-    // Mutate in place - triggers re-render of subscribers
+    // Mutate in place - triggers re-render of subscribers.
+    // Same threading contract as set(T): callable from any thread.
     void set(const std::function<void(T&)>& mutator) {
         std::lock_guard lock(mutex_);
         mutator(value_);

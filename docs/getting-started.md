@@ -28,8 +28,8 @@ This guide will walk you through everything you need to build your first yui app
 ### 1. Clone the Repository
 
 ```bash
-git clone --recursive https://github.com/user/yui.git
-cd yui
+git clone --recursive https://github.com/dustinlacewell/yoga-ui.git
+cd yoga-ui
 ```
 
 The `--recursive` flag is important — it pulls in the Yoga layout engine and NanoVG submodules.
@@ -359,12 +359,19 @@ host.setRender(std::function<VNode()>([&]() {
 }));
 ```
 
-**Modify state from anywhere:**
+**Modify state:**
 ```cpp
 counter.set(42);                              // Replace value
 counter.set([](int& n) { n++; });            // Mutate in place
 todos.set([](auto& t) { t.push_back(...); }); // Works with vectors
 ```
+
+> **Threading:** yui is single-threaded — `Host::update()`, event handling, and
+> building VNodes all run on one thread (the UI/main thread). `Store::set()` is
+> the *only* operation you may call from another thread (e.g. an audio, network,
+> or worker thread): it just marks subscribers dirty, and the re-render is
+> applied on the host thread at the next `update()`. Do not call `use()`,
+> `peek()`, or any `Host` method off the host thread.
 
 **Best practices:**
 - Prefer component-level `use()` for selective re-rendering
@@ -594,7 +601,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     yui
-    GIT_REPOSITORY https://github.com/user/yui.git
+    GIT_REPOSITORY https://github.com/dustinlacewell/yoga-ui.git
     GIT_TAG        v0.1.0
     GIT_SHALLOW    TRUE
 )
@@ -606,7 +613,7 @@ target_link_libraries(your_app PRIVATE yui::yui)
 ### Option 2: Git Submodule
 
 ```bash
-git submodule add https://github.com/user/yui.git deps/yui
+git submodule add https://github.com/dustinlacewell/yoga-ui.git deps/yui
 git submodule update --init --recursive
 ```
 
@@ -618,8 +625,8 @@ target_link_libraries(your_app PRIVATE yui)
 ### Option 3: System Install
 
 ```bash
-git clone --recursive https://github.com/user/yui.git
-cd yui
+git clone --recursive https://github.com/dustinlacewell/yoga-ui.git
+cd yoga-ui
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 sudo cmake --install build
