@@ -135,7 +135,15 @@ bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcep
     return dispatchEvent(target, event);
 }
 
-Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float offsetY) {
+Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float offsetY, int depth) {
+    // Depth guard: a pathologically deep tree would otherwise overflow the native
+    // stack here. Stop descending (treat as no deeper hit) and diagnose once. The
+    // caller still gets a valid hit for everything down to maxTreeDepth_.
+    if (depth >= maxTreeDepth_) {
+        reportError("hitTest: max tree depth exceeded — tree too deep to hit-test fully", nullptr);
+        return nullptr;
+    }
+
     float nodeX = offsetX + node->layout.left;
     float nodeY = offsetY + node->layout.top;
 
@@ -155,7 +163,7 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
 
     // Check children in reverse order (front to back)
     for (auto it = node->children.rbegin(); it != node->children.rend(); ++it) {
-        Node* hit = hitTest(it->get(), x, y, childOffsetX, childOffsetY);
+        Node* hit = hitTest(it->get(), x, y, childOffsetX, childOffsetY, depth + 1);
         if (hit)
             return hit;
     }
@@ -228,9 +236,17 @@ bool EventHandler::hasClickHandler(Node* root, float x, float y, MouseButton but
     return false;
 }
 
-bool EventHandler::dispatchEvent(Node* node, Event& event) {
+bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     if (!node)
         return false;
+
+    // Depth guard on the bubble walk: an over-deep ancestor chain would otherwise
+    // overflow the native stack. Stop bubbling (treat as not-consumed-further) and
+    // diagnose once. Handlers up to maxTreeDepth_ levels still fire normally.
+    if (depth >= maxTreeDepth_) {
+        reportError("dispatchEvent: max tree depth exceeded — event bubbling truncated", nullptr);
+        return event.consumed;
+    }
 
     // Get event handlers from props based on node type
     std::function<void()>* onClick = nullptr;
@@ -324,7 +340,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event) {
 
     // If not consumed, bubble to parent
     if (!event.consumed && node->parent) {
-        return dispatchEvent(node->parent, event);
+        return dispatchEvent(node->parent, event, depth + 1);
     }
 
     return event.consumed;
@@ -569,16 +585,24 @@ bool EventHandler::hasKeyHandler(Node* node, KeyPhase phase) {
 // is selected for both events, while a node registering only one is still
 // reachable for that event (previously onKeyUp-only nodes were never targeted,
 // because targeting always inspected onKeyDown).
-Node* EventHandler::findKeyTarget(Node* node, KeyPhase phase) {
+Node* EventHandler::findKeyTarget(Node* node, KeyPhase phase, int depth) {
     if (!node)
         return nullptr;
+
+    // Depth guard on the DFS: an over-deep subtree would otherwise overflow the
+    // native stack. Stop searching this subtree (no target found here) and diagnose
+    // once. Everything down to maxTreeDepth_ is still searched.
+    if (depth >= maxTreeDepth_) {
+        reportError("findKeyTarget: max tree depth exceeded — key-target search truncated", nullptr);
+        return nullptr;
+    }
 
     if (hasKeyHandler(node, phase))
         return node;
 
     // Search children
     for (auto& child : node->children) {
-        Node* found = findKeyTarget(child.get(), phase);
+        Node* found = findKeyTarget(child.get(), phase, depth + 1);
         if (found)
             return found;
     }

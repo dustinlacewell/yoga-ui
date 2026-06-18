@@ -11,6 +11,18 @@
 
 namespace yui {
 
+// Upper bound on tree depth for the recursive structural walks (event dispatch,
+// hit testing, key-target search). These descend/bubble one native stack frame
+// per tree level; a pathologically deep, data-driven tree could otherwise
+// overflow the stack — a crash reachable from the public input API. 1024 is far
+// beyond any realistic UI nesting yet a small fraction of the few-thousand-frame
+// budget a native stack affords these tiny functions, so it diagnoses the
+// degenerate case via the error sink long before the stack is at risk. The
+// reconciler's VNode walk is NOT guarded here (aborting mid-reconcile would leave
+// the tree partially built); its depth bound is documented as a precondition on
+// the render API (see Host::setRender).
+constexpr int kMaxTreeDepth = 1024;
+
 // Computed layout result from Yoga
 struct LayoutResult {
     float left = 0;

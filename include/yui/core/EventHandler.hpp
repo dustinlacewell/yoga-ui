@@ -50,6 +50,14 @@ public:
     // Programmatically focus an input node (used by autoFocus)
     void focusInput(InputNode* node);
 
+    // Override the depth at which the recursive event-path walks (hit-test,
+    // dispatch bubble, key-target search) stop and diagnose instead of recursing
+    // further. Defaults to kMaxTreeDepth. Exists so tests can exercise the guard
+    // with a shallow tree (building a kMaxTreeDepth-deep tree overflows the
+    // unguarded mount/layout/teardown recursion on a 1 MB stack); production never
+    // changes it.
+    void setMaxTreeDepth(int depth) { maxTreeDepth_ = depth; }
+
     // Check if node or ancestors have a click handler for the given button
     bool hasClickHandler(Node* root, float x, float y, MouseButton button = MouseButton::Left);
 
@@ -64,15 +72,20 @@ public:
         }
     }
 
-    // Hit test: find deepest node containing point
-    Node* hitTest(Node* node, float x, float y, float offsetX = 0, float offsetY = 0);
+    // Hit test: find deepest node containing point. `depth` bounds the descent
+    // against maxTreeDepth_ (kMaxTreeDepth by default): a tree deeper than that
+    // stops descending (treated as no deeper hit) and emits one diagnostic, rather
+    // than overflowing the stack.
+    Node* hitTest(Node* node, float x, float y, float offsetX = 0, float offsetY = 0, int depth = 0);
 
 private:
     // Check if point is inside node bounds
     bool containsPoint(Node* node, float x, float y, float offsetX, float offsetY);
 
-    // Dispatch event to node and ancestors (bubbling)
-    bool dispatchEvent(Node* node, Event& event);
+    // Dispatch event to node and ancestors (bubbling). `depth` bounds the bubble
+    // walk against maxTreeDepth_ (see hitTest): an over-deep ancestor chain stops
+    // bubbling and emits one diagnostic instead of overflowing the stack.
+    bool dispatchEvent(Node* node, Event& event, int depth = 0);
 
     // Fire hover callbacks
     void updateHover(Node* newHovered);
@@ -111,7 +124,10 @@ private:
     static bool hasKeyHandler(Node* node, KeyPhase phase);
 
     // Find the first pre-order node carrying the handler for `phase` (DFS).
-    Node* findKeyTarget(Node* node, KeyPhase phase);
+    // `depth` bounds the descent against maxTreeDepth_ (see hitTest): an over-deep
+    // subtree stops being searched and emits one diagnostic instead of overflowing
+    // the stack.
+    Node* findKeyTarget(Node* node, KeyPhase phase, int depth = 0);
 
     // Route a caught user-callback exception to the installed sink (no-op if none
     // installed; the Host always installs one that applies the default policy).
@@ -125,6 +141,10 @@ private:
     }
 
     ErrorHandler errorHandler_;
+    // Depth ceiling for the recursive event-path walks. kMaxTreeDepth in
+    // production; lowered by tests via setMaxTreeDepth to drive the guard with a
+    // shallow tree.
+    int maxTreeDepth_ = kMaxTreeDepth;
     Node* hoveredNode_ = nullptr;
     // mutable: liveFocusedInput() lazily clears a stale focus from const
     // getFocusedInput(). focusedInputAlive_ observes the focused node's

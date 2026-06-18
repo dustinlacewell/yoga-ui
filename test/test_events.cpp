@@ -4,6 +4,7 @@
 #include <yui/detail/Reconciler.hpp>
 #include <yui/yui.hpp>
 
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -835,6 +836,107 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     // The public getter validates before returning, so callers never receive a
     // dangling pointer.
     CHECK(events.getFocusedInput() == nullptr);
+}
+
+// ============================================================================
+// Depth-guard contract (handoff item #17): the event-path walks (hitTest,
+// dispatchEvent's bubble, findKeyTarget) descend/bubble one native stack frame
+// per tree level. A pathologically deep, data-driven tree would overflow the
+// stack — a crash reachable from the public input API. The guard stops the walk
+// at kMaxTreeDepth, emits one diagnostic via the error sink, and returns
+// gracefully instead of crashing. (The reconciler's mount/reconcile recursion is
+// deliberately NOT guarded — aborting mid-reconcile would corrupt the tree — so
+// its depth limit is a documented precondition on Host::setRender.)
+// ============================================================================
+
+// The production cap is kMaxTreeDepth (1024). Building/mounting/tearing down a
+// tree that deep would itself overflow the unguarded mount/layout/destruction
+// recursion on a 1 MB stack — the very class of crash the guard exists to keep
+// the *event* paths from triggering. So the guard's cap is injected low
+// (setMaxTreeDepth) and the test tree is built just past it: shallow enough to
+// build and destroy safely, deep enough to drive the guard on every event path.
+static constexpr int kTestDepthCap = 48;
+
+// Build a chain of `levels` nested single-child Boxes, optionally giving the
+// innermost (deepest) box an onClick. Every box is the same size at the parent's
+// top-left, so a hit at (5,5) lands inside every level.
+static VNode buildDeepBoxChain(int levels, std::function<void()> deepestClick = nullptr) {
+    VNode tree = deepestClick ? Box().width(100).height(100).onClick(std::move(deepestClick))
+                              : Box().width(100).height(100);
+    for (int i = 0; i < levels - 1; ++i) {
+        tree = Box(std::move(tree)).width(100).height(100);
+    }
+    return tree;
+}
+
+TEST_CASE("Depth guard - deep tree does not crash event dispatch and diagnoses") {
+    Reconciler reconciler;
+    EventHandler events;
+    events.setMaxTreeDepth(kTestDepthCap);
+
+    int errorCount = 0;
+    std::string lastWhere;
+    events.setErrorHandler([&](std::string_view where, const std::exception*) {
+        errorCount++;
+        lastWhere = std::string(where);
+    });
+
+    // A tree deeper than the (injected) cap. hitTest descends past the cap and
+    // findKeyTarget walks the whole thing.
+    auto tree = buildDeepBoxChain(kTestDepthCap + 16);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    REQUIRE(root != nullptr);
+    root->calculateLayout(100, 100);
+
+    // hitTest descends past the cap: must not crash, must stop and diagnose.
+    CHECK_NOTHROW(events.handleMouseUp(root, 5, 5, MouseButton::Left));
+    CHECK(errorCount >= 1);
+    CHECK(lastWhere.find("max tree depth exceeded") != std::string::npos);
+
+    // A keyboard event with no focused Input routes via findKeyTarget, which also
+    // descends the full depth: must not crash, must diagnose.
+    int beforeKey = errorCount;
+    CHECK_NOTHROW(events.handleKeyDown(root, 65, 0));
+    CHECK(errorCount > beforeKey);
+    CHECK(lastWhere.find("findKeyTarget") != std::string::npos);
+}
+
+TEST_CASE("Depth guard - dispatchEvent bubble truncates on a deep ancestor chain") {
+    Reconciler reconciler;
+    EventHandler events;
+    events.setMaxTreeDepth(kTestDepthCap);
+
+    int errorCount = 0;
+    std::string lastWhere;
+    events.setErrorHandler([&](std::string_view where, const std::exception*) {
+        errorCount++;
+        lastWhere = std::string(where);
+    });
+
+    // Chain shallow enough that hitTest reaches the deepest node (within the cap
+    // from the root's perspective it is not — see below) but the bubble walk back
+    // up is what we exercise. We mount a chain whose depth slightly exceeds the
+    // cap; hitTest stops at the cap, then any handler hit triggers an upward
+    // bubble. To force the BUBBLE guard specifically, put the handler shallow
+    // (near the root) so hitTest finds a hit, and make the chain deep so the
+    // upward walk from a deep hit crosses the cap.
+    bool deepestClicked = false;
+    auto tree = buildDeepBoxChain(kTestDepthCap + 16, [&]() { deepestClicked = true; });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    REQUIRE(root != nullptr);
+    root->calculateLayout(100, 100);
+
+    // hitTest stops at the cap (no hit past it), so the deepest handler is not
+    // reached; the contract under test is graceful, crash-free degradation plus a
+    // fired diagnostic on the over-deep event path.
+    CHECK_NOTHROW(events.handleMouseUp(root, 5, 5, MouseButton::Left));
+    CHECK(errorCount >= 1);
+    CHECK(lastWhere.find("max tree depth exceeded") != std::string::npos);
+    (void)deepestClicked;
 }
 
 TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing onClick") {

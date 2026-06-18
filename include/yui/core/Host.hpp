@@ -140,7 +140,17 @@ public:
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
 
-    // Set the render function (VNode factory)
+    // Set the render function (VNode factory).
+    //
+    // DEPTH PRECONDITION: the returned VNode tree must not nest deeper than
+    // ~kMaxTreeDepth (1024) levels. Reconciliation (mount/reconcile) recurses one
+    // native stack frame per level and is deliberately NOT depth-guarded — aborting
+    // mid-reconcile would leave the fiber/render trees partially built and
+    // inconsistent, which is worse than a clean failure. The event-path walks
+    // (hit-test, dispatch, key routing) ARE guarded and degrade gracefully, so the
+    // practical ceiling is set by reconciliation. Realistic UIs nest a few dozen
+    // levels deep; a tree exceeding the limit indicates unbounded data-driven
+    // nesting that should be flattened or windowed at the source.
     void setRender(std::function<VNode()> renderFn) {
         render_ = std::move(renderFn);
         markDirty();
