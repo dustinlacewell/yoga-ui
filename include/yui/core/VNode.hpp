@@ -12,6 +12,19 @@ namespace yui {
 
 enum class PrimitiveType { Box, Text, Input, Scroll, Canvas };
 
+// PrimitiveType must mirror the alternative order of PropsVariant so that
+// VNode::type() can derive the primitive from props.index() (single source of
+// truth). If PropsVariant is reordered, update PrimitiveType to match.
+template<PrimitiveType T, typename Props>
+inline constexpr bool primitive_matches_v =
+    std::is_same_v<std::variant_alternative_t<static_cast<size_t>(T), PropsVariant>, Props>;
+
+static_assert(primitive_matches_v<PrimitiveType::Box, BoxProps>);
+static_assert(primitive_matches_v<PrimitiveType::Text, TextProps>);
+static_assert(primitive_matches_v<PrimitiveType::Input, InputProps>);
+static_assert(primitive_matches_v<PrimitiveType::Scroll, ScrollProps>);
+static_assert(primitive_matches_v<PrimitiveType::Canvas, CanvasProps>);
+
 // Forward declarations
 struct VNode;
 class ComponentContext;
@@ -67,20 +80,25 @@ struct Component {
 // Child can be either a VNode (immediate) or a Component (deferred)
 using Child = std::variant<VNode, Component>;
 
+// VNode is a plain data record. Its primitive type is derived from props (the
+// single source of truth), never stored independently. The fluent setter API
+// lives on the per-primitive builder types below; VNode itself is constructed
+// only by the factory functions and the builders' conversion operators.
 struct VNode {
     static constexpr int64_t NO_INT_KEY = INT64_MIN;
 
-    PrimitiveType type;
     std::string key;
     int64_t intKey = NO_INT_KEY;
     PropsVariant props;
     std::vector<Child> children;
     bool isEmpty = false;
 
-    // Empty node (skipped by reconciler)
+    // Primitive type derived from the active props alternative.
+    PrimitiveType type() const { return static_cast<PrimitiveType>(props.index()); }
+
+    // Empty node (skipped by reconciler). Defaults to a Box (props.index() == 0).
     static VNode empty() {
         VNode n;
-        n.type = PrimitiveType::Box;
         n.isEmpty = true;
         return n;
     }
@@ -89,380 +107,337 @@ struct VNode {
     bool hasKey() const { return intKey != NO_INT_KEY || !key.empty(); }
     bool hasIntKey() const { return intKey != NO_INT_KEY; }
     bool hasStringKey() const { return !key.empty(); }
+};
 
-    // Key for reconciliation (string)
-    VNode& setKey(std::string k) {
-        key = std::move(k);
-        return *this;
+// --- Builder API ---
+//
+// Each primitive has a dedicated builder that owns a VNode and exposes only the
+// setters valid for that primitive. Universal setters (layout, events, key,
+// children) live on the CRTP BuilderBase and return Derived& so chaining keeps
+// the concrete builder type. Primitive-specific setters access their props
+// alternative directly and safely — the builder knows its type, so a
+// wrong-primitive setter call (e.g. Text(...).value(...)) is a compile error.
+
+template<class Derived>
+class BuilderBase {
+public:
+    // --- Keys ---
+    Derived& setKey(std::string k) {
+        node_.key = std::move(k);
+        return self();
+    }
+    Derived& setKey(int64_t k) {
+        node_.intKey = k;
+        return self();
     }
 
-    // Key for reconciliation (integer - more efficient)
-    VNode& setKey(int64_t k) {
-        intKey = k;
-        return *this;
+    // --- Children ---
+    Derived& setChildren(std::vector<Child> c) {
+        node_.children = std::move(c);
+        return self();
     }
 
     // --- Layout props (work on any primitive) ---
-    VNode& width(float v) {
-        layoutProps().width = v;
-        return *this;
+    Derived& width(float v) { return layout([&](LayoutProps& p) { p.width = v; }); }
+    Derived& height(float v) { return layout([&](LayoutProps& p) { p.height = v; }); }
+    Derived& widthPercent(float v) { return layout([&](LayoutProps& p) { p.widthPercent = v; }); }
+    Derived& heightPercent(float v) { return layout([&](LayoutProps& p) { p.heightPercent = v; }); }
+    Derived& minWidth(float v) { return layout([&](LayoutProps& p) { p.minWidth = v; }); }
+    Derived& minHeight(float v) { return layout([&](LayoutProps& p) { p.minHeight = v; }); }
+    Derived& maxWidth(float v) { return layout([&](LayoutProps& p) { p.maxWidth = v; }); }
+    Derived& maxHeight(float v) { return layout([&](LayoutProps& p) { p.maxHeight = v; }); }
+
+    Derived& flexGrow(float v) { return layout([&](LayoutProps& p) { p.flexGrow = v; }); }
+    Derived& flexShrink(float v) { return layout([&](LayoutProps& p) { p.flexShrink = v; }); }
+    Derived& flexBasis(float v) { return layout([&](LayoutProps& p) { p.flexBasis = v; }); }
+    Derived& flexDirection(FlexDirection v) {
+        return layout([&](LayoutProps& p) { p.flexDirection = v; });
     }
-    VNode& height(float v) {
-        layoutProps().height = v;
-        return *this;
+    Derived& flexWrap(FlexWrap v) { return layout([&](LayoutProps& p) { p.flexWrap = v; }); }
+    Derived& justifyContent(JustifyContent v) {
+        return layout([&](LayoutProps& p) { p.justifyContent = v; });
     }
-    VNode& widthPercent(float v) {
-        layoutProps().widthPercent = v;
-        return *this;
+    Derived& alignItems(AlignItems v) { return layout([&](LayoutProps& p) { p.alignItems = v; }); }
+    Derived& alignContent(AlignContent v) {
+        return layout([&](LayoutProps& p) { p.alignContent = v; });
     }
-    VNode& heightPercent(float v) {
-        layoutProps().heightPercent = v;
-        return *this;
+    Derived& alignSelf(AlignSelf v) { return layout([&](LayoutProps& p) { p.alignSelf = v; }); }
+    Derived& positionType(PositionType v) {
+        return layout([&](LayoutProps& p) { p.positionType = v; });
     }
-    VNode& minWidth(float v) {
-        layoutProps().minWidth = v;
-        return *this;
-    }
-    VNode& minHeight(float v) {
-        layoutProps().minHeight = v;
-        return *this;
-    }
-    VNode& maxWidth(float v) {
-        layoutProps().maxWidth = v;
-        return *this;
-    }
-    VNode& maxHeight(float v) {
-        layoutProps().maxHeight = v;
-        return *this;
+    Derived& display(Display v) { return layout([&](LayoutProps& p) { p.display = v; }); }
+
+    Derived& padding(float v) { return layout([&](LayoutProps& p) { p.padding = v; }); }
+    Derived& paddingTop(float v) { return layout([&](LayoutProps& p) { p.paddingTop = v; }); }
+    Derived& paddingRight(float v) { return layout([&](LayoutProps& p) { p.paddingRight = v; }); }
+    Derived& paddingBottom(float v) { return layout([&](LayoutProps& p) { p.paddingBottom = v; }); }
+    Derived& paddingLeft(float v) { return layout([&](LayoutProps& p) { p.paddingLeft = v; }); }
+
+    Derived& margin(float v) { return layout([&](LayoutProps& p) { p.margin = v; }); }
+    Derived& marginTop(float v) { return layout([&](LayoutProps& p) { p.marginTop = v; }); }
+    Derived& marginRight(float v) { return layout([&](LayoutProps& p) { p.marginRight = v; }); }
+    Derived& marginBottom(float v) { return layout([&](LayoutProps& p) { p.marginBottom = v; }); }
+    Derived& marginLeft(float v) { return layout([&](LayoutProps& p) { p.marginLeft = v; }); }
+
+    Derived& gap(float v) { return layout([&](LayoutProps& p) { p.gap = v; }); }
+    Derived& rowGap(float v) { return layout([&](LayoutProps& p) { p.rowGap = v; }); }
+    Derived& columnGap(float v) { return layout([&](LayoutProps& p) { p.columnGap = v; }); }
+
+    Derived& positionLeft(float v) { return layout([&](LayoutProps& p) { p.positionLeft = v; }); }
+    Derived& positionTop(float v) { return layout([&](LayoutProps& p) { p.positionTop = v; }); }
+    Derived& positionRight(float v) { return layout([&](LayoutProps& p) { p.positionRight = v; }); }
+    Derived& positionBottom(float v) {
+        return layout([&](LayoutProps& p) { p.positionBottom = v; });
     }
 
-    VNode& flexGrow(float v) {
-        layoutProps().flexGrow = v;
-        return *this;
-    }
-    VNode& flexShrink(float v) {
-        layoutProps().flexShrink = v;
-        return *this;
-    }
-    VNode& flexBasis(float v) {
-        layoutProps().flexBasis = v;
-        return *this;
-    }
-    VNode& flexDirection(FlexDirection v) {
-        layoutProps().flexDirection = v;
-        return *this;
-    }
-    VNode& flexWrap(FlexWrap v) {
-        layoutProps().flexWrap = v;
-        return *this;
-    }
-    VNode& justifyContent(JustifyContent v) {
-        layoutProps().justifyContent = v;
-        return *this;
-    }
-    VNode& alignItems(AlignItems v) {
-        layoutProps().alignItems = v;
-        return *this;
-    }
-    VNode& alignContent(AlignContent v) {
-        layoutProps().alignContent = v;
-        return *this;
-    }
-    VNode& alignSelf(AlignSelf v) {
-        layoutProps().alignSelf = v;
-        return *this;
-    }
-    VNode& positionType(PositionType v) {
-        layoutProps().positionType = v;
-        return *this;
-    }
-    VNode& display(Display v) {
-        layoutProps().display = v;
-        return *this;
-    }
-
-    VNode& padding(float v) {
-        layoutProps().padding = v;
-        return *this;
-    }
-    VNode& paddingTop(float v) {
-        layoutProps().paddingTop = v;
-        return *this;
-    }
-    VNode& paddingRight(float v) {
-        layoutProps().paddingRight = v;
-        return *this;
-    }
-    VNode& paddingBottom(float v) {
-        layoutProps().paddingBottom = v;
-        return *this;
-    }
-    VNode& paddingLeft(float v) {
-        layoutProps().paddingLeft = v;
-        return *this;
-    }
-
-    VNode& margin(float v) {
-        layoutProps().margin = v;
-        return *this;
-    }
-    VNode& marginTop(float v) {
-        layoutProps().marginTop = v;
-        return *this;
-    }
-    VNode& marginRight(float v) {
-        layoutProps().marginRight = v;
-        return *this;
-    }
-    VNode& marginBottom(float v) {
-        layoutProps().marginBottom = v;
-        return *this;
-    }
-    VNode& marginLeft(float v) {
-        layoutProps().marginLeft = v;
-        return *this;
-    }
-
-    VNode& gap(float v) {
-        layoutProps().gap = v;
-        return *this;
-    }
-    VNode& rowGap(float v) {
-        layoutProps().rowGap = v;
-        return *this;
-    }
-    VNode& columnGap(float v) {
-        layoutProps().columnGap = v;
-        return *this;
-    }
-
-    // Absolute positioning
-    VNode& positionLeft(float v) {
-        layoutProps().positionLeft = v;
-        return *this;
-    }
-    VNode& positionTop(float v) {
-        layoutProps().positionTop = v;
-        return *this;
-    }
-    VNode& positionRight(float v) {
-        layoutProps().positionRight = v;
-        return *this;
-    }
-    VNode& positionBottom(float v) {
-        layoutProps().positionBottom = v;
-        return *this;
-    }
-
-    VNode& aspectRatio(float v) {
-        layoutProps().aspectRatio = v;
-        return *this;
-    }
+    Derived& aspectRatio(float v) { return layout([&](LayoutProps& p) { p.aspectRatio = v; }); }
 
     // --- Event props (work on any primitive) ---
-    VNode& onClick(std::function<void()> fn) {
-        eventProps().onClick = std::move(fn);
-        return *this;
+    Derived& onClick(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onClick = std::move(fn); });
     }
-    VNode& onRightClick(std::function<void()> fn) {
-        eventProps().onRightClick = std::move(fn);
-        return *this;
+    Derived& onRightClick(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onRightClick = std::move(fn); });
     }
-    VNode& onMouseDown(std::function<void()> fn) {
-        eventProps().onMouseDown = std::move(fn);
-        return *this;
+    Derived& onMouseDown(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onMouseDown = std::move(fn); });
     }
-    VNode& onHover(std::function<void(bool)> fn) {
-        eventProps().onHover = std::move(fn);
-        return *this;
+    Derived& onHover(std::function<void(bool)> fn) {
+        return event([&](EventProps& p) { p.onHover = std::move(fn); });
     }
-    VNode& onFocus(std::function<void(bool)> fn) {
-        eventProps().onFocus = std::move(fn);
-        return *this;
+    Derived& onFocus(std::function<void(bool)> fn) {
+        return event([&](EventProps& p) { p.onFocus = std::move(fn); });
     }
-    VNode& onScroll(std::function<void(float, float)> fn) {
-        eventProps().onScroll = std::move(fn);
-        return *this;
+    Derived& onScroll(std::function<void(float, float)> fn) {
+        return event([&](EventProps& p) { p.onScroll = std::move(fn); });
     }
-    VNode& onKeyDown(std::function<void(int, uint16_t)> fn) {
-        eventProps().onKeyDown = std::move(fn);
-        return *this;
+    Derived& onKeyDown(std::function<void(int, uint16_t)> fn) {
+        return event([&](EventProps& p) { p.onKeyDown = std::move(fn); });
     }
-    VNode& onKeyUp(std::function<void(int, uint16_t)> fn) {
-        eventProps().onKeyUp = std::move(fn);
-        return *this;
+    Derived& onKeyUp(std::function<void(int, uint16_t)> fn) {
+        return event([&](EventProps& p) { p.onKeyUp = std::move(fn); });
     }
 
-    // --- Visual style props (work on Box and Input) ---
-    VNode& backgroundColor(uint32_t v);
-    VNode& borderRadius(float v);
-    VNode& borderColor(uint32_t v);
-    VNode& borderWidth(float v);
+    // --- Conversion seam: builders compose into the VNode/Child trees ---
+    operator VNode() const& { return node_; }
+    operator VNode() && { return std::move(node_); }
+    operator Child() const& { return Child{node_}; }
+    operator Child() && { return Child{std::move(node_)}; }
 
-    // --- Text-specific ---
-    VNode& text(std::string v) {
-        textProps().text = std::move(v);
-        return *this;
-    }
-    VNode& fontSize(float v);  // Works on Text and Input
-    VNode& color(uint32_t v);  // Works on Text and Input
+protected:
+    VNode node_;
 
-    // --- Input-specific ---
-    VNode& value(std::string v) {
-        inputProps().value = std::move(v);
+    Derived& self() { return static_cast<Derived&>(*this); }
+
+    // Universal accessors: every props alternative inherits LayoutProps/EventProps.
+    template<typename F>
+    Derived& layout(F&& f) {
+        std::visit([&](auto& p) { f(static_cast<LayoutProps&>(p)); }, node_.props);
+        return self();
+    }
+    template<typename F>
+    Derived& event(F&& f) {
+        std::visit([&](auto& p) { f(static_cast<EventProps&>(p)); }, node_.props);
+        return self();
+    }
+};
+
+class BoxBuilder : public BuilderBase<BoxBuilder> {
+public:
+    BoxBuilder() { node_.props = BoxProps{}; }
+
+    BoxBuilder& backgroundColor(uint32_t v) { return p([&](BoxProps& b) { b.backgroundColor = v; }); }
+    BoxBuilder& borderRadius(float v) { return p([&](BoxProps& b) { b.borderRadius = v; }); }
+    BoxBuilder& borderColor(uint32_t v) { return p([&](BoxProps& b) { b.borderColor = v; }); }
+    BoxBuilder& borderWidth(float v) { return p([&](BoxProps& b) { b.borderWidth = v; }); }
+    BoxBuilder& hoverStyle(BoxStyle s) { return p([&](BoxProps& b) { b.hoverStyle = std::move(s); }); }
+    BoxBuilder& focusStyle(BoxStyle s) { return p([&](BoxProps& b) { b.focusStyle = std::move(s); }); }
+
+private:
+    template<typename F>
+    BoxBuilder& p(F&& f) {
+        f(std::get<BoxProps>(node_.props));
         return *this;
     }
-    VNode& placeholder(std::string v) {
-        inputProps().placeholder = std::move(v);
-        return *this;
-    }
-    VNode& password(bool v) {
-        inputProps().password = v;
-        return *this;
-    }
-    VNode& onChange(std::function<void(const std::string&)> fn) {
-        inputProps().onChange = std::move(fn);
-        return *this;
-    }
-    VNode& onSubmit(std::function<void()> fn) {
-        inputProps().onSubmit = std::move(fn);
-        return *this;
-    }
-    VNode& autoFocus(bool v = true) {
-        inputProps().autoFocus = v;
-        return *this;
+};
+
+class TextBuilder : public BuilderBase<TextBuilder> {
+public:
+    explicit TextBuilder(std::string content) {
+        TextProps t;
+        t.text = std::move(content);
+        node_.props = std::move(t);
     }
 
-    // --- State-based style overrides ---
-    VNode& hoverStyle(BoxStyle style);
-    VNode& hoverStyle(TextStyle style);
-    VNode& hoverStyle(InputStyle style);
-    VNode& focusStyle(BoxStyle style);
-    VNode& focusStyle(TextStyle style);
-    VNode& focusStyle(InputStyle style);
-
-    // --- Children (for chaining after Box()) ---
-    VNode& setChildren(std::vector<Child> c) {
-        children = std::move(c);
-        return *this;
+    TextBuilder& text(std::string v) { return p([&](TextProps& t) { t.text = std::move(v); }); }
+    TextBuilder& fontSize(float v) { return p([&](TextProps& t) { t.fontSize = v; }); }
+    TextBuilder& color(uint32_t v) { return p([&](TextProps& t) { t.color = v; }); }
+    TextBuilder& hoverStyle(TextStyle s) {
+        return p([&](TextProps& t) { t.hoverStyle = std::move(s); });
+    }
+    TextBuilder& focusStyle(TextStyle s) {
+        return p([&](TextProps& t) { t.focusStyle = std::move(s); });
     }
 
 private:
-    // Accessors that work across variant types (all inherit LayoutProps/EventProps)
-    LayoutProps& layoutProps() {
-        return std::visit([](auto& p) -> LayoutProps& { return p; }, props);
+    template<typename F>
+    TextBuilder& p(F&& f) {
+        f(std::get<TextProps>(node_.props));
+        return *this;
     }
-    EventProps& eventProps() {
-        return std::visit([](auto& p) -> EventProps& { return p; }, props);
+};
+
+class InputBuilder : public BuilderBase<InputBuilder> {
+public:
+    InputBuilder() { node_.props = InputProps{}; }
+
+    InputBuilder& value(std::string v) { return p([&](InputProps& i) { i.value = std::move(v); }); }
+    InputBuilder& placeholder(std::string v) {
+        return p([&](InputProps& i) { i.placeholder = std::move(v); });
+    }
+    InputBuilder& password(bool v) { return p([&](InputProps& i) { i.password = v; }); }
+    InputBuilder& fontSize(float v) { return p([&](InputProps& i) { i.fontSize = v; }); }
+    InputBuilder& color(uint32_t v) { return p([&](InputProps& i) { i.color = v; }); }
+    InputBuilder& backgroundColor(uint32_t v) {
+        return p([&](InputProps& i) { i.backgroundColor = v; });
+    }
+    InputBuilder& borderColor(uint32_t v) { return p([&](InputProps& i) { i.borderColor = v; }); }
+    InputBuilder& borderWidth(float v) { return p([&](InputProps& i) { i.borderWidth = v; }); }
+    InputBuilder& borderRadius(float v) { return p([&](InputProps& i) { i.borderRadius = v; }); }
+    InputBuilder& onChange(std::function<void(const std::string&)> fn) {
+        return p([&](InputProps& i) { i.onChange = std::move(fn); });
+    }
+    InputBuilder& onSubmit(std::function<void()> fn) {
+        return p([&](InputProps& i) { i.onSubmit = std::move(fn); });
+    }
+    InputBuilder& autoFocus(bool v = true) { return p([&](InputProps& i) { i.autoFocus = v; }); }
+    InputBuilder& hoverStyle(InputStyle s) {
+        return p([&](InputProps& i) { i.hoverStyle = std::move(s); });
+    }
+    InputBuilder& focusStyle(InputStyle s) {
+        return p([&](InputProps& i) { i.focusStyle = std::move(s); });
     }
 
-    // Type-specific accessors (assert correct type)
-    BoxProps& boxProps() { return std::get<BoxProps>(props); }
-    TextProps& textProps() { return std::get<TextProps>(props); }
-    InputProps& inputProps() { return std::get<InputProps>(props); }
-    ScrollProps& scrollProps() { return std::get<ScrollProps>(props); }
-    CanvasProps& canvasProps() { return std::get<CanvasProps>(props); }
+private:
+    template<typename F>
+    InputBuilder& p(F&& f) {
+        f(std::get<InputProps>(node_.props));
+        return *this;
+    }
+};
+
+class ScrollBuilder : public BuilderBase<ScrollBuilder> {
+public:
+    ScrollBuilder() { node_.props = ScrollProps{}; }
+
+    ScrollBuilder& backgroundColor(uint32_t v) {
+        return p([&](ScrollProps& s) { s.backgroundColor = v; });
+    }
+    ScrollBuilder& borderRadius(float v) { return p([&](ScrollProps& s) { s.borderRadius = v; }); }
+    ScrollBuilder& borderColor(uint32_t v) { return p([&](ScrollProps& s) { s.borderColor = v; }); }
+    ScrollBuilder& borderWidth(float v) { return p([&](ScrollProps& s) { s.borderWidth = v; }); }
+    ScrollBuilder& hoverStyle(BoxStyle s) {
+        return p([&](ScrollProps& sp) { sp.hoverStyle = std::move(s); });
+    }
+    ScrollBuilder& focusStyle(BoxStyle s) {
+        return p([&](ScrollProps& sp) { sp.focusStyle = std::move(s); });
+    }
+
+private:
+    template<typename F>
+    ScrollBuilder& p(F&& f) {
+        f(std::get<ScrollProps>(node_.props));
+        return *this;
+    }
+};
+
+class CanvasBuilder : public BuilderBase<CanvasBuilder> {
+public:
+    explicit CanvasBuilder(CanvasDrawFn draw) {
+        CanvasProps c;
+        c.draw = std::move(draw);
+        node_.props = std::move(c);
+    }
+    // Canvas has no primitive-specific setters beyond construction.
 };
 
 // --- Factory functions ---
 
 // Box with children (accepts both VNode and Component via Child variant)
-inline VNode Box(std::vector<Child> children) {
-    VNode n;
-    n.type = PrimitiveType::Box;
-    n.props = BoxProps{};
-    n.children = std::move(children);
-    return n;
+inline BoxBuilder Box(std::vector<Child> children) {
+    BoxBuilder b;
+    b.setChildren(std::move(children));
+    return b;
 }
 
-
 // Box with single child (VNode)
-inline VNode Box(VNode child) {
+inline BoxBuilder Box(VNode child) {
     return Box(std::vector<Child>{std::move(child)});
 }
 
 // Box with single child (Component)
-inline VNode Box(Component child) {
+inline BoxBuilder Box(Component child) {
     return Box(std::vector<Child>{std::move(child)});
 }
 
 // Empty box
-inline VNode Box() {
-    return Box(std::vector<Child>{});
+inline BoxBuilder Box() {
+    return BoxBuilder{};
 }
 
 // Text
-inline VNode Text(std::string content) {
-    VNode n;
-    n.type = PrimitiveType::Text;
-    TextProps p;
-    p.text = std::move(content);
-    n.props = std::move(p);
-    return n;
+inline TextBuilder Text(std::string content) {
+    return TextBuilder{std::move(content)};
 }
 
 // Input (controlled component)
-inline VNode Input() {
-    VNode n;
-    n.type = PrimitiveType::Input;
-    n.props = InputProps{};
-    return n;
+inline InputBuilder Input() {
+    return InputBuilder{};
 }
 
 // Scroll: scrollable container with clipping
 // Child content can exceed container bounds; overflow is clipped and scrollable
-inline VNode Scroll(VNode child) {
-    VNode n;
-    n.type = PrimitiveType::Scroll;
-    n.props = ScrollProps{};
-    n.children.push_back(Child{std::move(child)});
-    return n;
+inline ScrollBuilder Scroll(VNode child) {
+    ScrollBuilder b;
+    b.setChildren(std::vector<Child>{std::move(child)});
+    return b;
 }
 
-inline VNode Scroll(Component child) {
-    VNode n;
-    n.type = PrimitiveType::Scroll;
-    n.props = ScrollProps{};
-    n.children.push_back(Child{std::move(child)});
-    return n;
+inline ScrollBuilder Scroll(Component child) {
+    ScrollBuilder b;
+    b.setChildren(std::vector<Child>{std::move(child)});
+    return b;
 }
 
-inline VNode Scroll(std::vector<Child> children) {
-    VNode n;
-    n.type = PrimitiveType::Scroll;
-    n.props = ScrollProps{};
-    n.children = std::move(children);
-    return n;
+inline ScrollBuilder Scroll(std::vector<Child> children) {
+    ScrollBuilder b;
+    b.setChildren(std::move(children));
+    return b;
 }
 
 // Canvas: custom drawing primitive
 // The draw function receives (void* ctx, float width, float height).
 // ctx is renderer-specific (e.g., NVGcontext* for NvgRenderer).
 // Draw relative to (0,0) - the renderer handles positioning.
-inline VNode Canvas(CanvasDrawFn draw) {
-    VNode n;
-    n.type = PrimitiveType::Canvas;
-    CanvasProps p;
-    p.draw = std::move(draw);
-    n.props = std::move(p);
-    return n;
+inline CanvasBuilder Canvas(CanvasDrawFn draw) {
+    return CanvasBuilder{std::move(draw)};
 }
 
 // --- Helpers ---
 
-inline VNode Row(std::vector<Child> children) {
+inline BoxBuilder Row(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Row);
 }
 
-inline VNode Column(std::vector<Child> children) {
+inline BoxBuilder Column(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Column);
 }
 
-inline VNode Spacer() {
+inline BoxBuilder Spacer() {
     return Box().flexGrow(1);
 }
 
-inline VNode Gap(float size) {
+inline BoxBuilder Gap(float size) {
     return Box().width(size).height(size);
 }
 
@@ -477,62 +452,47 @@ inline VNode If(bool condition, VNode ifTrue, VNode ifFalse) {
     return condition ? std::move(ifTrue) : std::move(ifFalse);
 }
 
-// Keyed list helper - works with both VNode and Component render functions
+// Assign the per-item key onto a Child (VNode or Component) in place.
+template <typename T, typename KeyFn>
+inline void applyListKey(Child& child, KeyFn& keyFn, const T& item) {
+    std::visit(
+        [&](auto& node) {
+            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
+                node.key = keyFn(item);
+            } else {
+                node.intKey = static_cast<int64_t>(keyFn(item));
+            }
+        },
+        child);
+}
+
+// Collect keyed children from a render function. The render function may return
+// a VNode, a Component, or any per-primitive builder (which converts to either),
+// so results are normalized into the Child variant before keying.
 template <typename T, typename KeyFn, typename RenderFn>
-VNode List(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
+inline std::vector<Child> collectListChildren(const std::vector<T>& items, KeyFn& keyFn,
+                                              RenderFn& renderFn) {
     std::vector<Child> children;
     children.reserve(items.size());
     for (const auto& item : items) {
-        auto result = renderFn(item);
-        using ResultType = decltype(result);
-
-        if constexpr (std::is_same_v<ResultType, VNode>) {
-            // VNode: set key directly
-            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-                result.key = keyFn(item);
-            } else {
-                result.intKey = static_cast<int64_t>(keyFn(item));
-            }
-            children.push_back(std::move(result));
-        } else if constexpr (std::is_same_v<ResultType, Component>) {
-            // Component: set key on component
-            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-                result.key = keyFn(item);
-            } else {
-                result.intKey = static_cast<int64_t>(keyFn(item));
-            }
-            children.push_back(std::move(result));
-        }
+        Child child = renderFn(item);
+        applyListKey(child, keyFn, item);
+        children.push_back(std::move(child));
     }
-    return Box(std::move(children)).flexDirection(FlexDirection::Column);
+    return children;
+}
+
+// Keyed list helper - works with VNode, Component, and builder render functions
+template <typename T, typename KeyFn, typename RenderFn>
+VNode List(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
+    return Box(collectListChildren(items, keyFn, renderFn))
+        .flexDirection(FlexDirection::Column);
 }
 
 // Horizontal list variant
 template <typename T, typename KeyFn, typename RenderFn>
 VNode HList(const std::vector<T>& items, KeyFn keyFn, RenderFn renderFn) {
-    std::vector<Child> children;
-    children.reserve(items.size());
-    for (const auto& item : items) {
-        auto result = renderFn(item);
-        using ResultType = decltype(result);
-
-        if constexpr (std::is_same_v<ResultType, VNode>) {
-            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-                result.key = keyFn(item);
-            } else {
-                result.intKey = static_cast<int64_t>(keyFn(item));
-            }
-            children.push_back(std::move(result));
-        } else if constexpr (std::is_same_v<ResultType, Component>) {
-            if constexpr (std::is_same_v<std::invoke_result_t<KeyFn, const T&>, std::string>) {
-                result.key = keyFn(item);
-            } else {
-                result.intKey = static_cast<int64_t>(keyFn(item));
-            }
-            children.push_back(std::move(result));
-        }
-    }
-    return Box(std::move(children)).flexDirection(FlexDirection::Row);
+    return Box(collectListChildren(items, keyFn, renderFn)).flexDirection(FlexDirection::Row);
 }
 
 }  // namespace yui

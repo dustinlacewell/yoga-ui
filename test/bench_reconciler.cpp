@@ -604,7 +604,7 @@ void benchmarkMountBreakdown() {
         VNode vnodeTree = QuadTreeVNode(depth);
 
         std::function<std::unique_ptr<Node>(const VNode&)> mountFromVNode = [&](const VNode& vnode) -> std::unique_ptr<Node> {
-            auto node = createNode(vnode.type, nullptr);
+            auto node = createNode(vnode.type(), nullptr);
             node->updateProps(vnode.props);
 
             size_t yogaIndex = 0;

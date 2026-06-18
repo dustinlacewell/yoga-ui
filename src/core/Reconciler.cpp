@@ -74,7 +74,7 @@ struct FiberLookup {
             return fiber.isComponent();
         } else {
             if (!fiber.isHost() || !fiber.renderNode) return false;
-            return fiber.renderNode->type() == std::get<VNode>(child).type;
+            return fiber.renderNode->type() == std::get<VNode>(child).type();
         }
     }
 
@@ -120,7 +120,7 @@ std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
 
     // The root is always a host node. Mount it without a render parent
     // (the render root is stored in renderRoot_).
-    auto rootNode = createNode(vnode.type, config_);
+    auto rootNode = createNode(vnode.type(), config_);
     rootNode->updateProps(vnode.props);
     rootNode->key = vnode.key;
     rootNode->intKey = vnode.intKey;
@@ -161,7 +161,7 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     fiber->sourcePosition = sourcePos;
 
     // Create render node
-    auto node = createNode(vnode.type, config_);
+    auto node = createNode(vnode.type(), config_);
     node->updateProps(vnode.props);
     node->key = vnode.key;
     node->intKey = vnode.intKey;
@@ -169,7 +169,7 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
 
     // Check for autoFocus before moving ownership
     bool wantsAutoFocus = false;
-    if (vnode.type == PrimitiveType::Input) {
+    if (vnode.type() == PrimitiveType::Input) {
         const auto& inputProps = std::get<InputProps>(vnode.props);
         wantsAutoFocus = inputProps.autoFocus.value_or(false);
     }
@@ -274,7 +274,7 @@ void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
     // returning a different root each frame). updateProps would std::get<> the
     // wrong props variant and throw, so remount instead — mirroring the child
     // path / rerenderComponent, which remount on type mismatch.
-    if (fiber->renderNode->type() != vnode.type) {
+    if (fiber->renderNode->type() != vnode.type()) {
         remountRoot(fiber, vnode);
         return;
     }
@@ -588,7 +588,7 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
     } else if (!fiber->children.empty()) {
         auto& existingChild = fiber->children[0];
         if (existingChild->isHost() && existingChild->renderNode &&
-            existingChild->renderNode->type() == result.type) {
+            existingChild->renderNode->type() == result.type()) {
             reconcileHost(existingChild.get(), result);
         } else {
             unmountFiber(existingChild.get(), renderParent);

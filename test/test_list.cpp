@@ -14,7 +14,7 @@ TEST_CASE("List generates keyed children from strings") {
     auto list = List(
         items, [](const std::string& s) { return s; }, [](const std::string& s) { return Text(s); });
 
-    CHECK(list.type == PrimitiveType::Box);
+    CHECK(list.type() == PrimitiveType::Box);
     CHECK(list.children.size() == 3);
     CHECK(asVNode(list.children[0]).key == "a");
     CHECK(asVNode(list.children[1]).key == "b");

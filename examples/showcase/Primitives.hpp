@@ -88,8 +88,8 @@ inline VNode IconButton(const std::string& icon, std::function<void()> onClick) 
 // Inputs
 // ============================================================================
 
-inline VNode TextInput(const std::string& value, std::function<void(const std::string&)> onChange,
-                       const std::string& placeholder = "", bool password = false) {
+inline InputBuilder TextInput(const std::string& value, std::function<void(const std::string&)> onChange,
+                              const std::string& placeholder = "", bool password = false) {
     const auto& t = theme();
     return Input()
         .value(value)

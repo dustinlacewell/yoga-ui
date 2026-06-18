@@ -395,7 +395,7 @@ TEST_CASE("Component - returning empty VNode") {
     TestHost host;
     Store<bool> showContent(true);
 
-    auto ConditionalComponent = [&](ComponentContext& ctx) {
+    auto ConditionalComponent = [&](ComponentContext& ctx) -> VNode {
         if (showContent.use()) {
             return Box().width(100).height(100);
         }
@@ -425,7 +425,7 @@ TEST_CASE("Component - changing child type") {
     TestHost host;
     Store<bool> showBox(true);
 
-    auto SwitchingComponent = [&](ComponentContext& ctx) {
+    auto SwitchingComponent = [&](ComponentContext& ctx) -> VNode {
         if (showBox.use()) {
             return Box().width(100).height(100);
         }
