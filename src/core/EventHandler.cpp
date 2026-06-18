@@ -93,9 +93,11 @@ bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, floa
 
 bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) noexcept {
     // Focused Input wins; otherwise route to the first pre-order onKeyDown handler.
+    // liveFocusedInput() validates the liveness token so a reconciliation that
+    // freed the focused input routes to the tree instead of a dangling pointer.
     Node* target;
-    if (focusedInput_) {
-        target = static_cast<Node*>(focusedInput_);
+    if (InputNode* focused = liveFocusedInput()) {
+        target = static_cast<Node*>(focused);
     } else {
         target = findKeyTarget(root, KeyPhase::Down);
         if (!target) target = root;
@@ -114,9 +116,10 @@ bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool 
 
 bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept {
     // Focused Input wins; otherwise route to the first pre-order onKeyUp handler.
+    // liveFocusedInput() validates the liveness token (see handleKeyDown).
     Node* target;
-    if (focusedInput_) {
-        target = static_cast<Node*>(focusedInput_);
+    if (InputNode* focused = liveFocusedInput()) {
+        target = static_cast<Node*>(focused);
     } else {
         target = findKeyTarget(root, KeyPhase::Up);
         if (!target) target = root;
@@ -430,7 +433,9 @@ void EventHandler::updateFocus(Node* clicked) {
         node = node->parent;
     }
 
-    if (newFocus == focusedInput_)
+    // Validate first: drops a stale focusedInput_ so the equality test below
+    // can't be fooled by a freed pointer aliasing a freshly-allocated node.
+    if (newFocus == liveFocusedInput())
         return;
 
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
@@ -447,7 +452,7 @@ void EventHandler::updateFocus(Node* clicked) {
         }
     }
 
-    focusedInput_ = newFocus;
+    setFocusedInput(newFocus);
 
     // Set focused flag and fire onFocus(true) on new
     if (focusedInput_) {
@@ -459,7 +464,9 @@ void EventHandler::updateFocus(Node* clicked) {
 }
 
 void EventHandler::focusInput(InputNode* node) {
-    if (node == focusedInput_)
+    // Validate first (see updateFocus): a stale focusedInput_ must not alias
+    // the incoming node and short-circuit a legitimate focus change.
+    if (node == liveFocusedInput())
         return;
 
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
@@ -473,7 +480,7 @@ void EventHandler::focusInput(InputNode* node) {
         }
     }
 
-    focusedInput_ = node;
+    setFocusedInput(node);
 
     // Focus new
     if (focusedInput_) {
@@ -485,45 +492,50 @@ void EventHandler::focusInput(InputNode* node) {
 }
 
 void EventHandler::handleTextInput(const std::string& text) noexcept {
-    if (!focusedInput_)
+    // Validate the focused input's liveness token before any deref: a
+    // reconciliation may have freed it without an onNodeRemoved for this node.
+    InputNode* focused = liveFocusedInput();
+    if (!focused)
         return;
 
     // Optimistic advance for immediate feedback. The display state commits first;
     // only the onChange notification is isolated, so a throwing handler preserves
     // the on-screen feedback (per the decided contract) instead of rolling it back.
-    focusedInput_->displayText += text;
+    focused->displayText += text;
 
-    if (focusedInput_->props.onChange) {
+    if (focused->props.onChange) {
         fireCallback(
-            "onChange", [&] { focusedInput_->props.onChange(focusedInput_->displayText); },
+            "onChange", [&] { focused->props.onChange(focused->displayText); },
             [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
 }
 
 void EventHandler::handleBackspace() noexcept {
-    if (!focusedInput_)
+    InputNode* focused = liveFocusedInput();
+    if (!focused)
         return;
 
-    if (!focusedInput_->displayText.empty()) {
+    if (!focused->displayText.empty()) {
         // Same optimistic-advance contract as handleTextInput: commit the edit,
         // isolate only the onChange notification.
-        focusedInput_->displayText.pop_back();
+        focused->displayText.pop_back();
 
-        if (focusedInput_->props.onChange) {
+        if (focused->props.onChange) {
             fireCallback(
-                "onChange", [&] { focusedInput_->props.onChange(focusedInput_->displayText); },
+                "onChange", [&] { focused->props.onChange(focused->displayText); },
                 [this](std::string_view w, const std::exception* e) { reportError(w, e); });
         }
     }
 }
 
 void EventHandler::handleSubmit() noexcept {
-    if (!focusedInput_)
+    InputNode* focused = liveFocusedInput();
+    if (!focused)
         return;
 
-    if (focusedInput_->props.onSubmit) {
+    if (focused->props.onSubmit) {
         fireCallback(
-            "onSubmit", [&] { focusedInput_->props.onSubmit(); },
+            "onSubmit", [&] { focused->props.onSubmit(); },
             [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
 }

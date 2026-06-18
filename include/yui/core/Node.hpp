@@ -54,6 +54,14 @@ public:
     bool hovered = false;
     bool focused = false;
 
+    // Liveness token shared with holders that outlive this node — notably the
+    // EventHandler's focusedInput_, which keeps a raw InputNode* that a
+    // reconciliation may free out from under it. Cleared in ~Node so those
+    // holders observe a dead token and treat the pointer as gone instead of
+    // dereferencing freed memory. Mirrors the Fiber/Store/Host alive_ idiom:
+    // observe via a weak_ptr copy, verify liveness before touching the node.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
     // Apply layout props to yoga node
     void applyLayoutProps(const LayoutProps& props);
 

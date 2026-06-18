@@ -772,6 +772,71 @@ TEST_CASE("Exception - throwing onHover keeps hover state consistent") {
     CHECK(errorCount == 2);
 }
 
+TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconciled away") {
+    // Regression for the focused-input UAF (handoff item #11). EventHandler holds
+    // a raw InputNode* (focusedInput_). A reconciliation can free that node out
+    // from under it; the onNodeRemoved mitigation only fires when the callback is
+    // wired and reaches that exact node. Here the bare Reconciler has no
+    // node-removed callback (the escape path), so without the liveness token the
+    // freed input would be dereferenced on the next keystroke (use-after-free).
+    Reconciler reconciler;
+    EventHandler events;
+
+    // Root Box with a focusable Input child.
+    auto tree = Box({
+                        Input().width(80).height(20).setKey("field"),
+                    })
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+
+    // Focus the input and observe its liveness token (mirrors how the B3 test
+    // observes the fiber's alive token to pin the death point).
+    events.focusInput(input);
+    CHECK(events.getFocusedInput() == input);
+    std::shared_ptr<bool> inputAlive = input->alive;
+    CHECK(*inputAlive == true);
+
+    // Typing routes to the live input.
+    events.handleTextInput("a");
+    CHECK(input->displayText == "a");
+
+    // Reconcile the Input away: replacing it with a Box of a different primitive
+    // type forces removal, which destroys the old InputNode (frees its memory).
+    // No node-removed callback is wired, so focusedInput_ is NOT cleared by the
+    // partial mitigation — exactly the dangling-pointer scenario.
+    auto next = Box({
+                        Box().width(80).height(20).setKey("field"),
+                    })
+                    .width(100)
+                    .height(100);
+    reconciler.reconcile(fiber.get(), next);
+
+    // The InputNode is genuinely freed: ~Node cleared its liveness token. This is
+    // the precondition the stale focusedInput_ must detect. (A sanitizer would
+    // flag the pre-fix freed access; this assertion locks in the death point.)
+    CHECK(*inputAlive == false);
+
+    // Every focused-input deref must now validate the token first: no crash, and
+    // focus is treated as cleared. Pre-fix each of these dereferenced freed
+    // memory (focusedInput_->displayText / ->props).
+    CHECK_NOTHROW(events.handleTextInput("b"));
+    CHECK_NOTHROW(events.handleBackspace());
+    CHECK_NOTHROW(events.handleSubmit());
+    CHECK_NOTHROW(events.handleKeyDown(reconciler.renderRoot(), 65, 0));
+    CHECK_NOTHROW(events.handleKeyUp(reconciler.renderRoot(), 65, 0));
+
+    // The public getter validates before returning, so callers never receive a
+    // dangling pointer.
+    CHECK(events.getFocusedInput() == nullptr);
+}
+
 TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing onClick") {
     int errorCount = 0;
 

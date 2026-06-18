@@ -5,6 +5,7 @@
 #include "Node.hpp"
 
 #include <exception>
+#include <memory>
 #include <utility>
 
 namespace yui {
@@ -38,8 +39,13 @@ public:
     // Get the currently hovered node (for cursor changes, etc.)
     Node* getHoveredNode() const { return hoveredNode_; }
 
-    // Get the focused input node (for text input routing)
-    InputNode* getFocusedInput() const { return focusedInput_; }
+    // Get the focused input node (for text input routing). Validates the
+    // liveness token first: if the focused InputNode was freed by a
+    // reconciliation, this clears the stale pointer and returns nullptr so a
+    // caller never receives a dangling pointer.
+    InputNode* getFocusedInput() const {
+        return liveFocusedInput();
+    }
 
     // Programmatically focus an input node (used by autoFocus)
     void focusInput(InputNode* node);
@@ -54,7 +60,7 @@ public:
             hoveredNode_ = nullptr;
         }
         if (focusedInput_ == node) {
-            focusedInput_ = nullptr;
+            setFocusedInput(nullptr);
         }
     }
 
@@ -73,6 +79,30 @@ private:
 
     // Update focus when clicking
     void updateFocus(Node* clicked);
+
+    // Set the focused input and capture its liveness token in lockstep. The
+    // sole writer of focusedInput_ — keeps the raw pointer and the weak token
+    // observing the same node so a later validate can detect a freed input.
+    void setFocusedInput(InputNode* node) {
+        focusedInput_ = node;
+        focusedInputAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    }
+
+    // Return focusedInput_ only if its node is still alive; otherwise clear the
+    // stale pointer and return nullptr. Every deref of the focused input routes
+    // through here so a reconciliation that freed the node (without an
+    // onNodeRemoved for it) can never produce a use-after-free.
+    InputNode* liveFocusedInput() const {
+        if (!focusedInput_)
+            return nullptr;
+        auto alive = focusedInputAlive_.lock();
+        if (!alive || !*alive) {
+            focusedInput_ = nullptr;
+            focusedInputAlive_.reset();
+            return nullptr;
+        }
+        return focusedInput_;
+    }
 
     // Which keyboard handler a routing search is looking for.
     enum class KeyPhase { Down, Up };
@@ -96,7 +126,11 @@ private:
 
     ErrorHandler errorHandler_;
     Node* hoveredNode_ = nullptr;
-    InputNode* focusedInput_ = nullptr;
+    // mutable: liveFocusedInput() lazily clears a stale focus from const
+    // getFocusedInput(). focusedInputAlive_ observes the focused node's
+    // liveness token (Node::alive) without owning it.
+    mutable InputNode* focusedInput_ = nullptr;
+    mutable std::weak_ptr<bool> focusedInputAlive_;
 };
 
 }  // namespace yui

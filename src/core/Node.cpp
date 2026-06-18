@@ -14,6 +14,7 @@ Node::Node(YGConfigRef config) {
 }
 
 Node::~Node() {
+    *alive = false;  // signal holders (e.g. EventHandler::focusedInput_) we are gone
     if (yogaNode) {
         YGNodeFree(yogaNode);
     }
