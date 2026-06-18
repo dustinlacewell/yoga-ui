@@ -66,6 +66,42 @@ TEST_CASE("Reconciler reuses node with same key") {
     CHECK(root->children[1].get() == nodeA);
 }
 
+TEST_CASE("Reconciler handles duplicate sibling keys without crashing") {
+    Reconciler reconciler;
+
+    // Mount distinct sibling keys.
+    auto tree1 = Column({
+        Text("A").setKey("dup"),
+        Text("B").setKey("other"),
+    });
+    auto fiber = reconciler.mount(tree1);
+    auto* root = reconciler.renderRoot();
+    REQUIRE(root != nullptr);
+    CHECK(root->children.size() == 2);
+
+    // Re-render where TWO siblings share the same key. The first claims the
+    // existing "dup" fiber; without the !reused guard the second would re-claim
+    // the now-moved-out fiber and dereference a null slot in find().
+    auto tree2 = Column({
+        Text("X").setKey("dup"),
+        Text("Y").setKey("dup"),
+    });
+    reconciler.reconcile(fiber.get(), tree2);
+
+    // No crash, and a sane two-child tree: one reused fiber + one fresh fiber.
+    REQUIRE(root->children.size() == 2);
+    CHECK(root->children[0]->type() == PrimitiveType::Text);
+    CHECK(root->children[1]->type() == PrimitiveType::Text);
+    CHECK(root->children[0].get() != root->children[1].get());
+
+    auto* text0 = dynamic_cast<TextNode*>(root->children[0].get());
+    auto* text1 = dynamic_cast<TextNode*>(root->children[1].get());
+    REQUIRE(text0 != nullptr);
+    REQUIRE(text1 != nullptr);
+    CHECK(text0->props.text == "X");
+    CHECK(text1->props.text == "Y");
+}
+
 TEST_CASE("Reconciler removes unmatched nodes") {
     Reconciler reconciler;
 

@@ -83,14 +83,16 @@ struct FiberLookup {
         // Try int key first
         if (hasIntKey(child)) {
             auto it = byIntKey.find(getIntKey(child));
-            if (it != byIntKey.end() && typeMatches(child, *fibers[it->second])) {
+            if (it != byIntKey.end() && !reused[it->second] &&
+                typeMatches(child, *fibers[it->second])) {
                 return it->second;
             }
         }
         // Fall back to string key
         else if (hasStringKey(child)) {
             auto it = byStringKey.find(getStringKey(child));
-            if (it != byStringKey.end() && typeMatches(child, *fibers[it->second])) {
+            if (it != byStringKey.end() && !reused[it->second] &&
+                typeMatches(child, *fibers[it->second])) {
                 return it->second;
             }
         }
