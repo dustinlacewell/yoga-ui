@@ -92,12 +92,12 @@ bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, floa
 }
 
 bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) noexcept {
-    // Keyboard events go to focused node, or first node with a key handler
+    // Focused Input wins; otherwise route to the first pre-order onKeyDown handler.
     Node* target;
     if (focusedInput_) {
         target = static_cast<Node*>(focusedInput_);
     } else {
-        target = findKeyTarget(root);
+        target = findKeyTarget(root, KeyPhase::Down);
         if (!target) target = root;
     }
     if (!target)
@@ -113,12 +113,12 @@ bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool 
 }
 
 bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept {
-    // Keyboard events go to focused node, or first node with a key handler
+    // Focused Input wins; otherwise route to the first pre-order onKeyUp handler.
     Node* target;
     if (focusedInput_) {
         target = static_cast<Node*>(focusedInput_);
     } else {
-        target = findKeyTarget(root);
+        target = findKeyTarget(root, KeyPhase::Up);
         if (!target) target = root;
     }
     if (!target)
@@ -528,38 +528,45 @@ void EventHandler::handleSubmit() noexcept {
     }
 }
 
-Node* EventHandler::findKeyTarget(Node* node) {
+// Does `node` carry the handler matching the requested key phase?
+// (KeyDown searches onKeyDown; KeyUp searches onKeyUp — so a node that registers
+// only one of the two is reachable for the matching event and ignored for the other.)
+bool EventHandler::hasKeyHandler(Node* node, KeyPhase phase) {
+    auto pick = [phase](const EventProps& p) -> bool {
+        return phase == KeyPhase::Down ? !!p.onKeyDown : !!p.onKeyUp;
+    };
+    switch (node->type()) {
+    case PrimitiveType::Box:
+        return pick(static_cast<BoxNode*>(node)->props);
+    case PrimitiveType::Text:
+        return pick(static_cast<TextNode*>(node)->props);
+    case PrimitiveType::Input:
+        return pick(static_cast<InputNode*>(node)->props);
+    case PrimitiveType::Scroll:
+        return pick(static_cast<ScrollNode*>(node)->props);
+    case PrimitiveType::Canvas:
+        return pick(static_cast<CanvasNode*>(node)->props);
+    default:
+        return false;
+    }
+}
+
+// Keyboard routing contract: keyboard events go to the focused Input if any;
+// otherwise to the first pre-order node handling that event type. The phase
+// parameter keeps KeyDown and KeyUp coherent — a node registering both handlers
+// is selected for both events, while a node registering only one is still
+// reachable for that event (previously onKeyUp-only nodes were never targeted,
+// because targeting always inspected onKeyDown).
+Node* EventHandler::findKeyTarget(Node* node, KeyPhase phase) {
     if (!node)
         return nullptr;
 
-    // Check if this node has a keyboard handler
-    bool hasHandler = false;
-    switch (node->type()) {
-    case PrimitiveType::Box:
-        hasHandler = !!static_cast<BoxNode*>(node)->props.onKeyDown;
-        break;
-    case PrimitiveType::Text:
-        hasHandler = !!static_cast<TextNode*>(node)->props.onKeyDown;
-        break;
-    case PrimitiveType::Input:
-        hasHandler = !!static_cast<InputNode*>(node)->props.onKeyDown;
-        break;
-    case PrimitiveType::Scroll:
-        hasHandler = !!static_cast<ScrollNode*>(node)->props.onKeyDown;
-        break;
-    case PrimitiveType::Canvas:
-        hasHandler = !!static_cast<CanvasNode*>(node)->props.onKeyDown;
-        break;
-    default:
-        break;
-    }
-
-    if (hasHandler)
+    if (hasKeyHandler(node, phase))
         return node;
 
     // Search children
     for (auto& child : node->children) {
-        Node* found = findKeyTarget(child.get());
+        Node* found = findKeyTarget(child.get(), phase);
         if (found)
             return found;
     }

@@ -74,8 +74,14 @@ private:
     // Update focus when clicking
     void updateFocus(Node* clicked);
 
-    // Find first node with a keyboard handler (DFS)
-    Node* findKeyTarget(Node* node);
+    // Which keyboard handler a routing search is looking for.
+    enum class KeyPhase { Down, Up };
+
+    // Does `node` carry the handler matching `phase`?
+    static bool hasKeyHandler(Node* node, KeyPhase phase);
+
+    // Find the first pre-order node carrying the handler for `phase` (DFS).
+    Node* findKeyTarget(Node* node, KeyPhase phase);
 
     // Route a caught user-callback exception to the installed sink (no-op if none
     // installed; the Host always installs one that applies the default policy).

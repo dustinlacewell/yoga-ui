@@ -615,6 +615,84 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
 }
 
 // ============================================================================
+// Keyboard routing contract: with no focused Input, key events route to the
+// first pre-order node handling that event type. KeyDown and KeyUp must stay
+// coherent — a node registering only onKeyUp must still receive KeyUp, and a
+// node registering both must receive both.
+// ============================================================================
+
+TEST_CASE("Key - onKeyUp-only node receives KeyUp") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    bool keyUpFired = false;
+    int gotCode = 0;
+    auto tree = Box().width(100).height(100).onKeyUp([&](int code, uint16_t) {
+        keyUpFired = true;
+        gotCode = code;
+    });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // No focused Input; the only key handler is onKeyUp. Previously targeting
+    // inspected onKeyDown only, so this node was never reachable for KeyUp.
+    events.handleKeyUp(root, 65, 0);
+    CHECK(keyUpFired);
+    CHECK(gotCode == 65);
+}
+
+TEST_CASE("Key - node with both handlers receives KeyDown and KeyUp") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    bool downFired = false;
+    bool upFired = false;
+    auto tree = Box()
+                    .width(100)
+                    .height(100)
+                    .onKeyDown([&](int, uint16_t) { downFired = true; })
+                    .onKeyUp([&](int, uint16_t) { upFired = true; });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleKeyDown(root, 32, 0);
+    events.handleKeyUp(root, 32, 0);
+    CHECK(downFired);
+    CHECK(upFired);
+}
+
+TEST_CASE("Key - KeyUp skips an onKeyDown-only node and reaches the onKeyUp node") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    // Pre-order-first node handles only onKeyDown; a later sibling handles only
+    // onKeyUp. KeyUp must skip the first and land on the second.
+    bool downNodeGotUp = false;
+    bool upNodeGotUp = false;
+    auto tree = Box({
+                        Box().width(50).height(50).setKey("downOnly").onKeyDown(
+                            [&](int, uint16_t) {}),
+                        Box().width(50).height(50).setKey("upOnly").onKeyUp(
+                            [&](int, uint16_t) { upNodeGotUp = true; }),
+                    })
+                    .width(100)
+                    .height(100);
+    // (downNodeGotUp can never become true: downOnly has no onKeyUp.)
+    (void)downNodeGotUp;
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleKeyUp(root, 13, 0);
+    CHECK(upNodeGotUp);
+}
+
+// ============================================================================
 // Exception-safety contract (B2 commit 2): a throwing event handler is isolated,
 // routed to the sink, never aborts the dispatch walk, and never desyncs hover /
 // focus bookkeeping.

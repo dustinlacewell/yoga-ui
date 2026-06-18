@@ -25,6 +25,7 @@ enum class UpdateStatus {
     NoRenderFn,    // no render function set (setRender never called)
     EmptyRender,   // render function returned VNode::empty()
     ZeroViewport,  // width <= 0 || height <= 0
+    Reentrant,     // called from within an in-flight update() (ignored, see below)
 };
 
 // Result of Host::update() - tells caller what happened
@@ -202,14 +203,35 @@ public:
     // them to the sink; the noexcept is the backstop for the unexpected (a yui
     // bug) — a throw through it is a clean terminate at the yui edge rather than
     // silent corruption of host state.
+    //
+    // NOT reentrant: an update() walks the fiber/render trees holding raw pointers
+    // into them, so a nested update() (e.g. a user onClick/onChange/effect that
+    // calls host.update()) would mutate the very trees the outer walk is reading —
+    // use-after-free / corruption. A reentrant call is therefore ignored and
+    // diagnosed (UpdateStatus::Reentrant), and the in-flight update completes
+    // normally. Do not call update() from within a yui event/effect callback;
+    // mark the host dirty instead and let the next frame's update() pick it up.
     UpdateResult update(float width, float height, float dt = 1.f / 60.f) noexcept {
         UpdateResult result;
+        if (inUpdate_)
+            return earlyReturn(result, UpdateStatus::Reentrant,
+                               "Host::update: reentrant call ignored");
         if (!render_)
             return earlyReturn(result, UpdateStatus::NoRenderFn,
                                "Host::update: no render function set");
         if (width <= 0 || height <= 0)
             return earlyReturn(result, UpdateStatus::ZeroViewport,
                                "Host::update: viewport has non-positive dimensions");
+
+        // RAII reentrancy latch: set on entry past the guard, cleared on every
+        // exit path — early-returns below, the render-callback rethrow, and any
+        // unexpected throw caught by the outer try. A manual reset before each
+        // return would be fragile across those paths.
+        struct InUpdateGuard {
+            bool& flag;
+            explicit InUpdateGuard(bool& f) : flag(f) { flag = true; }
+            ~InUpdateGuard() { flag = false; }
+        } inUpdateGuard(inUpdate_);
 
         try {
             // Update animations every frame
@@ -452,6 +474,11 @@ protected:
     float lastHeight_ = 0;
     bool dirty_ = true;
     bool componentsDirty_ = false;
+
+    // Reentrancy latch for update(). True while an update() is in flight; a nested
+    // call observes it and bails (see update()). Managed by an RAII guard so it is
+    // cleared on every exit path, including the render-callback rethrow.
+    bool inUpdate_ = false;
 
     // Last early-return status reported through the sink. update() only emits a
     // diagnostic when the status changes, so a persistent misconfiguration is

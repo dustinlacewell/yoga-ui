@@ -1090,3 +1090,54 @@ TEST_CASE("UpdateStatus - normal update reports Ok with no diagnostic") {
     CHECK(r.needsRepaint == true);
     CHECK(errorCount == 0);
 }
+
+TEST_CASE("UpdateStatus - reentrant update() from a callback is ignored, not crashed") {
+    // update() walks the fiber/render trees holding raw pointers; a nested update()
+    // (here from inside the click handler that fires during the outer update's event
+    // dispatch path is simulated by calling update() from the render fn) would mutate
+    // the very trees the outer walk reads. The reentrancy latch must turn the inner
+    // call into a diagnosed no-op while the outer update completes normally.
+    TestHost host;
+
+    int errorCount = 0;
+    std::string where;
+    host.setErrorHandler([&](std::string_view w, const std::exception*) {
+        errorCount++;
+        where = std::string(w);
+    });
+
+    // The render fn re-enters update() once, capturing the inner result. The inner
+    // call happens while the outer update() is mid-flight (render_ is being invoked),
+    // so it is the genuine reentrant case the latch guards against.
+    UpdateResult innerResult;
+    bool reentered = false;
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        if (!reentered) {
+            reentered = true;
+            innerResult = host.update(200, 200);  // reentrant — must be ignored
+        }
+        return Box().width(100).height(50);
+    }));
+
+    // Outer update completes normally despite the nested call.
+    auto outer = host.update(200, 200);
+    CHECK(reentered);
+
+    // Inner call was rejected: Reentrant status, all-false result, one diagnostic.
+    CHECK(innerResult.status == UpdateStatus::Reentrant);
+    CHECK(innerResult.needsRepaint == false);
+    CHECK(innerResult.layoutChanged == false);
+    CHECK(innerResult.animating == false);
+    CHECK(errorCount == 1);
+    CHECK(where == "Host::update: reentrant call ignored");
+
+    // Outer update ran to completion and produced a real tree — no crash/corruption.
+    CHECK(outer.status == UpdateStatus::Ok);
+    CHECK(outer.needsRepaint == true);
+    REQUIRE(host.root() != nullptr);
+    CHECK(host.root()->type() == PrimitiveType::Box);
+
+    // Latch is fully released afterward: a fresh, top-level update() is accepted.
+    auto after = host.update(200, 200);
+    CHECK(after.status == UpdateStatus::Ok);
+}
