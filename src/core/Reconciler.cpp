@@ -253,11 +253,46 @@ void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
     // Must be a host fiber
     if (!fiber->isHost() || !fiber->renderNode) return;
 
+    // Root primitive type changed between frames (the public render API allows
+    // returning a different root each frame). updateProps would std::get<> the
+    // wrong props variant and throw, so remount instead — mirroring the child
+    // path / rerenderComponent, which remount on type mismatch.
+    if (fiber->renderNode->type() != vnode.type) {
+        remountRoot(fiber, vnode);
+        return;
+    }
+
     // Update props on the render node
     fiber->renderNode->updateProps(vnode.props);
 
     // Reconcile children
     reconcileChildren(fiber, vnode.children, fiber->renderNode);
+}
+
+void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
+    // Tear down the old root subtree's lifecycle (effects/subscriptions) and
+    // notify the host that its render nodes are gone. The root render node has
+    // no render parent, so we drop it via ownership rather than removeRenderNode.
+    notifyRenderRemoved(fiber->renderNode);
+    fiber->willUnmount();
+    renderRoot_.reset();
+
+    // Rebuild a fresh root fiber + render root from the new VNode, then move its
+    // state into the existing root fiber so the host's fiberRoot_ pointer (and
+    // any parent links into it) stay valid — no dangling, no leaks.
+    auto fresh = mount(vnode);
+    *fiber = std::move(*fresh);
+    for (auto& child : fiber->children) {
+        child->parent = fiber;
+    }
+
+    // Hand the newly-built render root to the host. After the first frame the
+    // host owns renderRoot_ (via takeRenderRoot()), so without this it would keep
+    // pointing at the freed old root. Reuses the existing host_ back-reference
+    // rather than adding another reconciler callback.
+    if (host_) {
+        host_->replaceRenderRoot(std::move(renderRoot_));
+    }
 }
 
 void Reconciler::reconcileHost(Fiber* fiber, const VNode& vnode) {

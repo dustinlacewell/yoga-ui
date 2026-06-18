@@ -175,6 +175,12 @@ public:
     // Access render root for rendering
     Node* root() const { return renderRoot_.get(); }
 
+    // Adopt a new render root. Called by the reconciler when the root primitive
+    // type changes between frames and the old root is torn down and rebuilt
+    // (see Reconciler::remountRoot). The host owns renderRoot_ after the initial
+    // takeRenderRoot(), so it must swap in the freshly-built root here.
+    void replaceRenderRoot(std::unique_ptr<Node> newRoot) { renderRoot_ = std::move(newRoot); }
+
     // Event handling - returns true if event was consumed
     bool handleMouseDown(float x, float y, MouseButton btn) {
         if (!renderRoot_)

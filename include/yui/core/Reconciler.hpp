@@ -51,6 +51,10 @@ private:
                                       Node* renderParent, size_t& renderIndex);
 
     // --- Reconciliation ---
+    // Tear down the existing root fiber/render node and rebuild from a new VNode
+    // whose root primitive type differs from the current one. Mirrors the
+    // remount-on-type-mismatch performed by the child path / rerenderComponent.
+    void remountRoot(Fiber* fiber, const VNode& vnode);
     void reconcileHost(Fiber* fiber, const VNode& vnode);
     void reconcileComponent(Fiber* fiber, const Component& comp);
     void reconcileChildren(Fiber* parentFiber, const std::vector<Child>& children,

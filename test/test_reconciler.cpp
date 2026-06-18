@@ -176,6 +176,87 @@ TEST_CASE("Reconciler handles type change") {
     CHECK(root->children[0]->key == "item");
 }
 
+TEST_CASE("Reconciler handles ROOT type change without crashing") {
+    Reconciler reconciler;
+
+    // Root starts as a Box with children.
+    auto tree1 = Box({
+        Text("inner").setKey("inner"),
+    });
+    auto fiber = reconciler.mount(tree1);
+    auto* root = reconciler.renderRoot();
+    REQUIRE(root != nullptr);
+    CHECK(root->type() == PrimitiveType::Box);
+
+    // Render function returns a different root primitive next frame. Before the
+    // fix this called updateProps with the wrong props variant and threw
+    // std::bad_variant_access; now it remounts.
+    auto tree2 = Text("x");
+    reconciler.reconcile(fiber.get(), tree2);
+
+    auto* newRoot = reconciler.renderRoot();
+    REQUIRE(newRoot != nullptr);
+    CHECK(newRoot->type() == PrimitiveType::Text);
+    CHECK(fiber->renderNode == newRoot);
+    CHECK(fiber->isHost());
+
+    auto* textRoot = dynamic_cast<TextNode*>(newRoot);
+    REQUIRE(textRoot != nullptr);
+    CHECK(textRoot->props.text == "x");
+}
+
+TEST_CASE("Reconciler handles ROOT type change and back, rebuilding children") {
+    Reconciler reconciler;
+
+    // NOTE: Column/Row are Box variants, so they share PrimitiveType::Box. To
+    // exercise an actual ROOT type change we swap between distinct primitives:
+    // Box <-> Scroll (both accept children).
+    auto tree1 = Box({
+        Text("A").setKey("a"),
+        Text("B").setKey("b"),
+    });
+    auto fiber = reconciler.mount(tree1);
+    CHECK(reconciler.renderRoot()->type() == PrimitiveType::Box);
+    CHECK(reconciler.renderRoot()->children.size() == 2);
+
+    // Box -> Scroll (different root type): remount.
+    auto tree2 = Scroll(std::vector<Child>{
+        Text("C").setKey("c"),
+    });
+    reconciler.reconcile(fiber.get(), tree2);
+    auto* scrollRoot = reconciler.renderRoot();
+    REQUIRE(scrollRoot != nullptr);
+    CHECK(scrollRoot->type() == PrimitiveType::Scroll);
+    REQUIRE(scrollRoot->children.size() == 1);
+    CHECK(scrollRoot->children[0]->type() == PrimitiveType::Text);
+    CHECK(scrollRoot->children[0]->key == "c");
+    CHECK(scrollRoot->children[0]->parent == scrollRoot);
+    CHECK(fiber->renderNode == scrollRoot);
+
+    // Scroll -> Box again: remount once more, fiber pointer stays valid.
+    auto tree3 = Box({
+        Text("D").setKey("d"),
+        Text("E").setKey("e"),
+    });
+    reconciler.reconcile(fiber.get(), tree3);
+    auto* boxRoot = reconciler.renderRoot();
+    REQUIRE(boxRoot != nullptr);
+    CHECK(boxRoot->type() == PrimitiveType::Box);
+    CHECK(boxRoot->children.size() == 2);
+    CHECK(fiber->renderNode == boxRoot);
+    CHECK(fiber->children.size() == 2);
+
+    // Same-type reconcile after a remount still works (props update path).
+    auto tree4 = Box({
+        Text("D2").setKey("d"),
+        Text("E2").setKey("e"),
+    });
+    reconciler.reconcile(fiber.get(), tree4);
+    auto* textD = dynamic_cast<TextNode*>(reconciler.renderRoot()->children[0].get());
+    REQUIRE(textD != nullptr);
+    CHECK(textD->props.text == "D2");
+}
+
 TEST_CASE("Reconciler preserves position matching with empty nodes") {
     Reconciler reconciler;
 

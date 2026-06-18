@@ -4,6 +4,7 @@
 #include "Host.hpp"
 
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <unordered_set>
 
@@ -15,6 +16,15 @@ class Store {
 public:
     explicit Store(T value = T{}) : value_(std::move(value)) {}
 
+    // A fiber's subscription cleanup (stored in the fiber) may outlive this
+    // Store — e.g. a Store declared after the Host is destroyed first, then
+    // ~Host runs the fiber cleanups. The cleanup captures a liveness token so it
+    // becomes a no-op once the Store is gone, instead of touching freed members.
+    ~Store() {
+        std::lock_guard lock(mutex_);
+        *alive_ = false;
+    }
+
     // Read + subscribe (use in render)
     // If inside a component, subscribes the fiber (selective re-render)
     // Otherwise subscribes the host (full re-render)
@@ -25,7 +35,9 @@ public:
             auto [it, inserted] = fiberSubscribers_.insert(currentRenderFiber);
             if (inserted) {
                 Fiber* fiber = currentRenderFiber;
-                fiber->subscriptionCleanups.push_back([this, fiber] {
+                auto alive = alive_;
+                fiber->subscriptionCleanups.push_back([this, fiber, alive] {
+                    if (!*alive) return;  // Store already destroyed — nothing to unsubscribe
                     std::lock_guard lock(mutex_);
                     fiberSubscribers_.erase(fiber);
                 });
@@ -77,6 +89,9 @@ private:
     mutable std::mutex mutex_;
     mutable std::unordered_set<Fiber*> fiberSubscribers_;
     mutable std::unordered_set<Host*> hostSubscribers_;
+    // Liveness token shared with outstanding fiber-cleanup lambdas; cleared in
+    // the destructor so they no-op rather than dereference a freed Store.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 }  // namespace yui
