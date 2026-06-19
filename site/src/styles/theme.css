@@ -1,0 +1,210 @@
+/*
+ * yui site design tokens.
+ * Palette is derived from the NanoVG showcase: deep slate canvas, panel cards
+ * with hairline borders, and the blue / green / orange accent trio.
+ */
+:root {
+  /* Surfaces — darkest at the page floor, lighter as elements rise. */
+  --bg: #14141f;
+  --bg-elevated: #1a1a2e;
+  --panel: #1d1d30;
+  --panel-2: #23233a;
+  --border: #2e2e48;
+  --border-strong: #3a3a5c;
+
+  /* Faint grid texture on the page canvas (echoes the Pong field). */
+  --grid-line: rgba(120, 130, 200, 0.05);
+  --grid-size: 32px;
+
+  /* Text */
+  --fg: #e8e8f0;
+  --fg-muted: #a8a8c0;
+  --fg-dim: #6c6c88;
+
+  /* Accents */
+  --accent: #3366ff; /* primary blue */
+  --accent-hover: #4477ff;
+  --green: #44aa44;
+  --green-bright: #4ade80;
+  --orange: #e08020;
+  --red: #dd4444;
+
+  /* Code */
+  --code-bg: #0e0e18;
+  --code-border: #26263c;
+
+  /* Type */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code",
+    "Fira Code", Consolas, "Liberation Mono", monospace;
+
+  /* Layout */
+  --max-w: 1100px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --nav-h: 60px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--nav-h) + 16px);
+}
+
+html,
+body {
+  /* Safety net against horizontal blowout from wide children (code blocks,
+     decorative glows). Individual scroll containers (pre, tables) handle
+     their own overflow; the page itself never scrolls sideways. */
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Soft fixed grid behind all content — gives the dark canvas depth and sets
+   it apart from the solid card/code surfaces. Fixed so it never tiles-seams
+   on long pages; masked to fade toward the bottom so footers stay calm. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+  -webkit-mask-image: radial-gradient(
+    120% 90% at 50% 0%,
+    #000 35%,
+    transparent 90%
+  );
+  mask-image: radial-gradient(120% 90% at 50% 0%, #000 35%, transparent 90%);
+}
+
+a {
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.2;
+  font-weight: 700;
+  color: #fff;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Inline + block code share the mono face; Shiki styles block code. */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+:not(pre) > code {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 0.12em 0.4em;
+  color: #d6d6f0;
+}
+
+pre {
+  background: var(--code-bg) !important;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-sm);
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+
+::selection {
+  background: rgba(51, 102, 255, 0.35);
+}
+
+/* Shared button shapes used across landing + docs. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 15px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    transform 0.05s ease;
+  text-decoration: none;
+}
+.btn:hover {
+  text-decoration: none;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+.btn-ghost {
+  background: var(--panel);
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.btn-ghost:hover {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+
+.container {
+  width: 100%;
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+@media (max-width: 560px) {
+  .container {
+    padding: 0 18px;
+  }
+}

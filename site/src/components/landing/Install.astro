@@ -1,0 +1,128 @@
+---
+import { Code } from "astro:components";
+import { url } from "../../lib/site";
+
+const fetchContent = `include(FetchContent)
+
+FetchContent_Declare(
+    yui
+    GIT_REPOSITORY https://github.com/dustinlacewell/yoga-ui.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(yui)
+
+target_link_libraries(your_app PRIVATE yui::yui)`;
+
+const clone = `git clone --recursive https://github.com/dustinlacewell/yoga-ui.git
+cd yoga-ui
+cmake -B build
+cmake --build build --target hello_world
+./build/bin/hello_world`;
+---
+
+<section class="install container" id="install">
+  <div class="section-head">
+    <h2>Get started in a minute</h2>
+    <p>Add yui to your CMake project, or clone and run an example.</p>
+  </div>
+
+  <div class="install-grid">
+    <div class="install-col">
+      <h3 class="install-label">
+        <span class="num">1</span> Add it to CMake
+      </h3>
+      <Code code={fetchContent} lang="cmake" theme="github-dark" />
+      <p class="hint">
+        FetchContent pulls yui and its Yoga / NanoVG submodules automatically.
+      </p>
+    </div>
+
+    <div class="install-col">
+      <h3 class="install-label">
+        <span class="num">2</span> Or clone &amp; run
+      </h3>
+      <Code code={clone} lang="bash" theme="github-dark" />
+      <p class="hint">
+        The <code>--recursive</code> flag pulls the layout-engine submodule. Requires
+        a C++20 compiler and CMake 3.16+.
+      </p>
+    </div>
+  </div>
+
+  <div class="install-cta">
+    <a class="btn btn-primary" href={url("/docs/getting-started")}>
+      Read the Getting Started guide →
+    </a>
+  </div>
+</section>
+
+<style>
+  .install {
+    padding: 56px 24px 8px;
+  }
+  .section-head {
+    text-align: center;
+    max-width: 36em;
+    margin: 0 auto 40px;
+  }
+  .section-head h2 {
+    font-size: clamp(26px, 3.5vw, 34px);
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+  .section-head p {
+    color: var(--fg-muted);
+    font-size: 17px;
+    margin: 0;
+  }
+  .install-grid {
+    display: grid;
+    /* minmax(0,…) lets tracks shrink below the code blocks' content width so
+       each <pre> scrolls itself instead of widening the page. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+  }
+  .install-col {
+    min-width: 0;
+  }
+  .install-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    margin: 0 0 14px;
+  }
+  .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    flex: none;
+  }
+  .install-col :global(pre) {
+    margin: 0;
+    max-width: 100%;
+  }
+  .hint {
+    color: var(--fg-dim);
+    font-size: 13.5px;
+    margin: 12px 2px 0;
+  }
+  .install-cta {
+    text-align: center;
+    margin-top: 40px;
+  }
+  @media (max-width: 880px) {
+    .install-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

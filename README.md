@@ -38,8 +38,8 @@ yui::VNode Counter() {
 ## Install
 
 ```bash
-git clone --recursive https://github.com/user/yui.git
-cd yui
+git clone --recursive https://github.com/dustinlacewell/yoga-ui.git
+cd yoga-ui
 ```
 
 ### CMake (recommended)

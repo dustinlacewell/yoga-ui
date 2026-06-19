@@ -1,0 +1,77 @@
+---
+import { DOCS_NAV, navIndex } from "../../lib/docs-nav";
+import { url } from "../../lib/site";
+
+interface Props {
+  current: string;
+}
+const { current } = Astro.props;
+const i = navIndex(current);
+const prev = i > 0 ? DOCS_NAV[i - 1] : null;
+const next = i >= 0 && i < DOCS_NAV.length - 1 ? DOCS_NAV[i + 1] : null;
+---
+
+<nav class="pager">
+  {
+    prev ? (
+      <a class="pager-link prev" href={url(`/docs/${prev.slug}`)}>
+        <span class="dir">← Previous</span>
+        <span class="t">{prev.title}</span>
+      </a>
+    ) : (
+      <span />
+    )
+  }
+  {
+    next ? (
+      <a class="pager-link next" href={url(`/docs/${next.slug}`)}>
+        <span class="dir">Next →</span>
+        <span class="t">{next.title}</span>
+      </a>
+    ) : (
+      <span />
+    )
+  }
+</nav>
+
+<style>
+  .pager {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+  .pager-link {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+    text-decoration: none;
+    min-width: 0;
+    max-width: 48%;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .pager-link:hover {
+    border-color: var(--accent);
+    background: var(--panel-2);
+    text-decoration: none;
+  }
+  .pager-link.next {
+    text-align: right;
+    margin-left: auto;
+  }
+  .dir {
+    font-size: 12.5px;
+    color: var(--fg-dim);
+  }
+  .t {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+</style>

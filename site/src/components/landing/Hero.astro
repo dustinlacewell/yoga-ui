@@ -1,0 +1,241 @@
+---
+import { Code } from "astro:components";
+import { SITE, url } from "../../lib/site";
+
+const counterExample = `#include <yui/yui.hpp>
+using namespace yui;
+
+Store<int> count(0);
+
+VNode Counter() {
+    int n = count.use();
+
+    return Column({
+        Text("Count: " + std::to_string(n))
+            .fontSize(24).color(0xFFFFFFFF),
+
+        Box(Text("+"))
+            .padding(12)
+            .backgroundColor(0xFF3366FF)
+            .borderRadius(6)
+            .onClick([] {
+                count.set([](int& n) { n++; });
+            }),
+    })
+    .gap(16)
+    .alignItems(AlignItems::Center);
+}`;
+---
+
+<section class="hero">
+  <div class="hero-grid container">
+    <div class="hero-copy">
+      <div class="eyebrow">
+        <span class="badge">C++20</span>
+      </div>
+
+      <h1>
+        Declarative <span class="grad nowrap">Flexbox&nbsp;UI</span>
+        <span class="nowrap">for&nbsp;modern&nbsp;C++</span>
+      </h1>
+
+      <p class="lede">
+        A React-like component model with reactive state and selective
+        re-rendering — built on the Yoga layout engine. If you know React,
+        Flutter, or SwiftUI, you already know yui.
+      </p>
+
+      <div class="hero-cta">
+        <a class="btn btn-primary" href={url("/docs/getting-started")}>
+          Get Started
+        </a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+            ></path>
+          </svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+
+    <div class="hero-code">
+      <div class="code-frame">
+        <div class="code-titlebar">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+          <span class="code-filename">Counter.cpp</span>
+        </div>
+        <Code code={counterExample} lang="cpp" theme="github-dark" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    padding: 72px 0 56px;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: -40% 0 auto 0;
+    height: 600px;
+    background: radial-gradient(
+        60% 80% at 25% 0%,
+        rgba(51, 102, 255, 0.18),
+        transparent 70%
+      ),
+      radial-gradient(50% 70% at 90% 10%, rgba(74, 222, 128, 0.1), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .hero-grid {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    /* minmax(0, 1fr) lets each track shrink below its content width so the
+       code block's <pre> scrolls itself instead of widening the page. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 48px;
+    align-items: center;
+  }
+  .hero-copy,
+  .hero-code {
+    min-width: 0;
+  }
+  .eyebrow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(51, 102, 255, 0.16);
+    color: #9bb6ff;
+    border: 1px solid rgba(51, 102, 255, 0.3);
+  }
+  .badge-ghost {
+    background: var(--panel);
+    color: var(--fg-muted);
+    border-color: var(--border-strong);
+  }
+  h1 {
+    font-size: clamp(28px, 5vw, 52px);
+    letter-spacing: -0.025em;
+    margin: 0 0 20px;
+  }
+  /* Keep multi-word phrases together; let lines break only between phrases. */
+  .nowrap {
+    white-space: nowrap;
+  }
+  h1 .grad {
+    display: inline;
+  }
+  .grad {
+    background: linear-gradient(120deg, #5b8bff, #4ade80);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .lede {
+    font-size: 18px;
+    color: var(--fg-muted);
+    max-width: 30em;
+    margin: 0 0 30px;
+  }
+  .hero-cta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .code-frame {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
+    background: var(--code-bg);
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* The <pre> is the horizontal scroll boundary; the frame must not grow to
+     fit its content (which would widen the whole hero on narrow screens). */
+  .code-frame :global(pre) {
+    max-width: 100%;
+  }
+  .code-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .dot.red {
+    background: #ff5f57;
+  }
+  .dot.yellow {
+    background: #febc2e;
+  }
+  .dot.green {
+    background: #28c840;
+  }
+  .code-filename {
+    margin-left: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .code-frame :global(pre) {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 18px 20px;
+  }
+
+  @media (max-width: 880px) {
+    .hero-grid {
+      grid-template-columns: 1fr;
+      gap: 36px;
+    }
+    .hero {
+      padding: 48px 0 32px;
+    }
+    /* Centered hero reads balanced when the columns stack. */
+    .hero-copy {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    /* Stack the headline phrases onto their own lines so nothing clips and
+       "Declarative" / "Flexbox UI" / "for modern C++" read as three beats. */
+    h1 .nowrap {
+      display: block;
+    }
+    .lede {
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .hero-cta {
+      justify-content: center;
+    }
+  }
+</style>

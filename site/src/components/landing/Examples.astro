@@ -1,0 +1,136 @@
+---
+import { SITE, url } from "../../lib/site";
+
+const examples = [
+  {
+    img: "/img/nvg_showcase.png",
+    title: "NanoVG showcase",
+    body: "Themeable component gallery — forms, lists, scroll, custom canvas — rendered with hardware-accelerated NanoVG.",
+    file: "examples/nvg_showcase.cpp",
+  },
+  {
+    img: "/img/sdl_showcase.png",
+    title: "SDL2 showcase",
+    body: "The same component tree on the SDL2 backend. One UI, two renderers — swap backends without touching your views.",
+    file: "examples/sdl_showcase.cpp",
+  },
+  {
+    img: "/img/pong.png",
+    title: "Pong",
+    body: "A full game built on the Canvas primitive — real-time drawing, keyboard input, and game state through Store.",
+    file: "examples/pong.cpp",
+  },
+];
+---
+
+<section class="examples" id="examples">
+  <div class="container">
+    <div class="section-head">
+      <h2>See it in action</h2>
+      <p>
+        Complete, runnable examples ship in the repo — build any of them with a
+        single CMake target.
+      </p>
+    </div>
+
+    <div class="gallery">
+      {
+        examples.map((e) => (
+          <a
+            class="shot"
+            href={`${SITE.repo}/blob/master/${e.file}`}
+            target="_blank"
+            rel="noopener"
+          >
+            <div class="shot-img">
+              <img src={url(e.img)} alt={e.title} loading="lazy" />
+            </div>
+            <div class="shot-meta">
+              <h3>{e.title}</h3>
+              <p>{e.body}</p>
+              <span class="file">{e.file}</span>
+            </div>
+          </a>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .examples {
+    padding: 56px 0 24px;
+  }
+  .section-head {
+    text-align: center;
+    max-width: 38em;
+    margin: 0 auto 40px;
+  }
+  .section-head h2 {
+    font-size: clamp(26px, 3.5vw, 34px);
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+  .section-head p {
+    color: var(--fg-muted);
+    font-size: 17px;
+    margin: 0;
+  }
+  .gallery {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .shot {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    text-decoration: none;
+    transition: border-color 0.18s ease, transform 0.18s ease;
+  }
+  .shot:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .shot-img {
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .shot-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top left;
+    display: block;
+  }
+  .shot-meta {
+    padding: 18px 20px 20px;
+  }
+  .shot-meta h3 {
+    font-size: 17px;
+    margin: 0 0 8px;
+    color: #fff;
+  }
+  .shot-meta p {
+    color: var(--fg-muted);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0 0 12px;
+  }
+  .file {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-hover);
+  }
+  @media (max-width: 880px) {
+    .gallery {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

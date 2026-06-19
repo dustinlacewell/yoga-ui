@@ -1,0 +1,124 @@
+---
+const features = [
+  {
+    title: "Declarative & reactive",
+    body: "Describe what the UI should look like; yui reconciles the rest. A Store change re-renders one component in a tree of thousands — the rest is untouched.",
+    accent: "blue",
+  },
+  {
+    title: "Real flexbox layout",
+    body: "Powered by Facebook's Yoga engine. If you know CSS flexbox — row, column, gap, flexGrow, justifyContent — you already know yui layout.",
+    accent: "green",
+  },
+  {
+    title: "Component model with hooks",
+    body: "useState, useRef, useEffect, useField. Local state, lifecycle effects, and two-way Store binding — the patterns you reach for, in C++20.",
+    accent: "orange",
+  },
+  {
+    title: "Fluent, chainable API",
+    body: ".padding(8).backgroundColor(0x1a1a1aFF).borderRadius(4).onClick(...). Layout, styling, and events compose into readable trees.",
+    accent: "blue",
+  },
+  {
+    title: "Dual-tree reconciler",
+    body: "A fiber tree tracks identity, hook state, and subscriptions; a flat render tree drives layout and hit-testing. Selective re-rendering, preserved state.",
+    accent: "green",
+  },
+  {
+    title: "Pluggable backends",
+    body: "Ship with SDL2 or NanoVG, or write your own renderer against the render tree. Custom drawing via the Canvas primitive when you need raw graphics.",
+    accent: "orange",
+  },
+];
+---
+
+<section class="features container" id="features">
+  <div class="section-head">
+    <h2>Everything you expect from a modern UI library</h2>
+    <p>Built for C++20, modeled on the frameworks you already know.</p>
+  </div>
+
+  <div class="grid">
+    {
+      features.map((f) => (
+        <article class={`card accent-${f.accent}`}>
+          <h3>{f.title}</h3>
+          <p>{f.body}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .features {
+    padding: 64px 24px 24px;
+  }
+  .section-head {
+    text-align: center;
+    max-width: 36em;
+    margin: 0 auto 44px;
+  }
+  .section-head h2 {
+    font-size: clamp(26px, 3.5vw, 34px);
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+  .section-head p {
+    color: var(--fg-muted);
+    font-size: 17px;
+    margin: 0;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.18s ease, transform 0.18s ease;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    opacity: 0.85;
+  }
+  .card.accent-blue::before {
+    background: var(--accent);
+  }
+  .card.accent-green::before {
+    background: var(--green-bright);
+  }
+  .card.accent-orange::before {
+    background: var(--orange);
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+  }
+  .card h3 {
+    font-size: 18px;
+    margin: 0 0 10px;
+  }
+  .card p {
+    color: var(--fg-muted);
+    font-size: 14.5px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  @media (max-width: 880px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

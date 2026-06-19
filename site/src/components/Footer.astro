@@ -1,0 +1,63 @@
+---
+import { SITE, url } from "../lib/site";
+---
+
+<footer class="footer">
+  <div class="footer-inner container">
+    <div class="footer-brand">
+      <span class="brand-mark">yui</span>
+      <span class="muted">{SITE.tagline}</span>
+    </div>
+    <nav class="footer-links">
+      <a href={url("/docs/getting-started")}>Getting Started</a>
+      <a href={url("/docs/architecture")}>Architecture</a>
+      <a href={SITE.repo} target="_blank" rel="noopener">GitHub</a>
+      <a href={`${SITE.repo}/blob/master/LICENSE`} target="_blank" rel="noopener"
+        >MIT License</a
+      >
+    </nav>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    border-top: 1px solid var(--border);
+    margin-top: 80px;
+    padding: 32px 0;
+    background: var(--bg-elevated);
+  }
+  .footer-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .footer-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand-mark {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--fg);
+  }
+  .muted {
+    color: var(--fg-dim);
+    font-size: 14px;
+  }
+  .footer-links {
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+  }
+  .footer-links a {
+    color: var(--fg-muted);
+    font-size: 14px;
+  }
+  .footer-links a:hover {
+    color: var(--fg);
+  }
+</style>

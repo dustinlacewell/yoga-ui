@@ -1,0 +1,26 @@
+---
+import { getCollection, render } from "astro:content";
+import Docs from "../../layouts/Docs.astro";
+import { DOCS_NAV } from "../../lib/docs-nav";
+
+export async function getStaticPaths() {
+  const entries = await getCollection("docs");
+  // Only emit routes for docs listed in the nav, in nav order.
+  return DOCS_NAV.map((nav) => {
+    const entry = entries.find((e) => e.id === nav.slug);
+    if (!entry) {
+      throw new Error(
+        `docs-nav references "${nav.slug}" but no docs/${nav.slug}.md was found.`
+      );
+    }
+    return { params: { slug: nav.slug }, props: { entry } };
+  });
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+---
+
+<Docs slug={entry.id}>
+  <Content />
+</Docs>

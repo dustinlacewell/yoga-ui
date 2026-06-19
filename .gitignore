@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-*/
 build-release/
 cmake-build-*/
 out/
@@ -18,3 +19,9 @@ CMakePresets.json
 
 .claude/
 llm/
+
+# Node / site tooling (the site/ source itself IS tracked)
+node_modules/
+**/node_modules/
+site/dist/
+site/.astro/
