@@ -181,55 +181,41 @@ bool EventHandler::containsPoint(Node* node, float x, float y, float offsetX, fl
     return x >= left && x < right && y >= top && y < bottom;
 }
 
+namespace {
+
+// Select the click handler for a given mouse button from a node's props.
+const std::function<void()>* clickHandlerFor(const EventProps& props, MouseButton button) {
+    switch (button) {
+    case MouseButton::Left:   return props.onClick ? &props.onClick : nullptr;
+    case MouseButton::Right:  return props.onRightClick ? &props.onRightClick : nullptr;
+    case MouseButton::Middle: return props.onMiddleClick ? &props.onMiddleClick : nullptr;
+    }
+    return nullptr;
+}
+
+// Click handler for the node's button, dispatched on the node's primitive type.
+const std::function<void()>* clickHandlerFor(Node* node, MouseButton button) {
+    switch (node->type()) {
+    case PrimitiveType::Box:    return clickHandlerFor(static_cast<BoxNode*>(node)->props, button);
+    case PrimitiveType::Text:   return clickHandlerFor(static_cast<TextNode*>(node)->props, button);
+    case PrimitiveType::Input:  return clickHandlerFor(static_cast<InputNode*>(node)->props, button);
+    case PrimitiveType::Scroll: return clickHandlerFor(static_cast<ScrollNode*>(node)->props, button);
+    case PrimitiveType::Canvas: return clickHandlerFor(static_cast<CanvasNode*>(node)->props, button);
+    }
+    return nullptr;
+}
+
+}  // namespace
+
 bool EventHandler::hasClickHandler(Node* root, float x, float y, MouseButton button) {
     Node* target = hitTest(root, x, y);
 
     // Walk up from target to root checking for handlers
     while (target) {
-        std::function<void()>* handler = nullptr;
-
-        switch (target->type()) {
-        case PrimitiveType::Box: {
-            auto* boxNode = static_cast<BoxNode*>(target);
-            handler = (button == MouseButton::Left)
-                          ? (boxNode->props.onClick ? &boxNode->props.onClick : nullptr)
-                          : (boxNode->props.onRightClick ? &boxNode->props.onRightClick : nullptr);
-            break;
-        }
-        case PrimitiveType::Text: {
-            auto* textNode = static_cast<TextNode*>(target);
-            handler = (button == MouseButton::Left)
-                          ? (textNode->props.onClick ? &textNode->props.onClick : nullptr)
-                          : (textNode->props.onRightClick ? &textNode->props.onRightClick : nullptr);
-            break;
-        }
-        case PrimitiveType::Input: {
-            auto* inputNode = static_cast<InputNode*>(target);
-            handler = (button == MouseButton::Left)
-                          ? (inputNode->props.onClick ? &inputNode->props.onClick : nullptr)
-                          : (inputNode->props.onRightClick ? &inputNode->props.onRightClick : nullptr);
-            break;
-        }
-        case PrimitiveType::Scroll: {
-            auto* scrollNode = static_cast<ScrollNode*>(target);
-            handler = (button == MouseButton::Left)
-                          ? (scrollNode->props.onClick ? &scrollNode->props.onClick : nullptr)
-                          : (scrollNode->props.onRightClick ? &scrollNode->props.onRightClick : nullptr);
-            break;
-        }
-        case PrimitiveType::Canvas: {
-            auto* canvasNode = static_cast<CanvasNode*>(target);
-            handler = (button == MouseButton::Left)
-                          ? (canvasNode->props.onClick ? &canvasNode->props.onClick : nullptr)
-                          : (canvasNode->props.onRightClick ? &canvasNode->props.onRightClick : nullptr);
-            break;
-        }
-        }
-
+        const auto* handler = clickHandlerFor(target, button);
         if (handler && *handler) {
             return true;
         }
-
         target = target->parent;
     }
 
@@ -251,6 +237,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     // Get event handlers from props based on node type
     std::function<void()>* onClick = nullptr;
     std::function<void()>* onRightClick = nullptr;
+    std::function<void()>* onMiddleClick = nullptr;
     std::function<void()>* onMouseDown = nullptr;
     std::function<void(float, float)>* onScroll = nullptr;
     std::function<void(int, uint16_t)>* onKeyDown = nullptr;
@@ -261,6 +248,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
         auto* n = static_cast<castType*>(node); \
         onClick = n->props.onClick ? &n->props.onClick : nullptr; \
         onRightClick = n->props.onRightClick ? &n->props.onRightClick : nullptr; \
+        onMiddleClick = n->props.onMiddleClick ? &n->props.onMiddleClick : nullptr; \
         onMouseDown = n->props.onMouseDown ? &n->props.onMouseDown : nullptr; \
         onScroll = n->props.onScroll ? &n->props.onScroll : nullptr; \
         onKeyDown = n->props.onKeyDown ? &n->props.onKeyDown : nullptr; \
@@ -297,6 +285,9 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
                 event.consume();
         } else if (event.button == MouseButton::Right && onRightClick && *onRightClick) {
             if (fireCallback("onRightClick", [&] { (*onRightClick)(); }, report))
+                event.consume();
+        } else if (event.button == MouseButton::Middle && onMiddleClick && *onMiddleClick) {
+            if (fireCallback("onMiddleClick", [&] { (*onMiddleClick)(); }, report))
                 event.consume();
         }
     }

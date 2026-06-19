@@ -272,7 +272,9 @@ static void mouseButtonCallback(GLFWwindow*, int button, int action, int) {
     double x, y;
     glfwGetCursorPos(glfwGetCurrentContext(), &x, &y);
 
-    MouseButton mb = (button == GLFW_MOUSE_BUTTON_RIGHT) ? MouseButton::Right : MouseButton::Left;
+    MouseButton mb = (button == GLFW_MOUSE_BUTTON_RIGHT)    ? MouseButton::Right
+                     : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? MouseButton::Middle
+                                                            : MouseButton::Left;
 
     if (action == GLFW_PRESS) {
         g_host->handleMouseDown(static_cast<float>(x), static_cast<float>(y), mb);

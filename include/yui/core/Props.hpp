@@ -72,6 +72,7 @@ struct LayoutProps {
 struct EventProps {
     std::function<void()> onClick;
     std::function<void()> onRightClick;
+    std::function<void()> onMiddleClick;
     std::function<void()> onMouseDown;                        // fires on PRESS (not release)
     std::function<void(bool)> onHover;
     std::function<void(bool)> onFocus;

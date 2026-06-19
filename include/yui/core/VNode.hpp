@@ -200,6 +200,9 @@ public:
     Derived& onRightClick(std::function<void()> fn) {
         return event([&](EventProps& p) { p.onRightClick = std::move(fn); });
     }
+    Derived& onMiddleClick(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onMiddleClick = std::move(fn); });
+    }
     Derived& onMouseDown(std::function<void()> fn) {
         return event([&](EventProps& p) { p.onMouseDown = std::move(fn); });
     }

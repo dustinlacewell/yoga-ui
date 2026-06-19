@@ -174,13 +174,17 @@ int main(int argc, char* argv[]) {
                 case SDL_MOUSEBUTTONDOWN:
                     host.handleMouseDown(
                         event.button.x, event.button.y,
-                        event.button.button == SDL_BUTTON_RIGHT ? MouseButton::Right : MouseButton::Left);
+                        event.button.button == SDL_BUTTON_RIGHT    ? MouseButton::Right
+                        : event.button.button == SDL_BUTTON_MIDDLE ? MouseButton::Middle
+                                                                   : MouseButton::Left);
                     break;
 
                 case SDL_MOUSEBUTTONUP:
                     host.handleMouseUp(
                         event.button.x, event.button.y,
-                        event.button.button == SDL_BUTTON_RIGHT ? MouseButton::Right : MouseButton::Left);
+                        event.button.button == SDL_BUTTON_RIGHT    ? MouseButton::Right
+                        : event.button.button == SDL_BUTTON_MIDDLE ? MouseButton::Middle
+                                                                   : MouseButton::Left);
                     break;
 
                 case SDL_MOUSEMOTION:

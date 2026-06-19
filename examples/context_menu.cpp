@@ -490,7 +490,9 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int)
         return;
     }
 
-    auto mb = (button == GLFW_MOUSE_BUTTON_RIGHT) ? MouseButton::Right : MouseButton::Left;
+    auto mb = (button == GLFW_MOUSE_BUTTON_RIGHT)    ? MouseButton::Right
+              : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? MouseButton::Middle
+                                                     : MouseButton::Left;
     if (action == GLFW_PRESS)
         g_host->handleMouseDown(fx, fy, mb);
     else if (action == GLFW_RELEASE)
