@@ -381,8 +381,9 @@ void TextNode::setupMeasureFunc() {
     YGNodeSetMeasureFunc(yogaNode, &TextNode::measureFunc);
 }
 
-YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float height,
-                             YGMeasureMode heightMode) {
+YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode,
+                             [[maybe_unused]] float height,
+                             [[maybe_unused]] YGMeasureMode heightMode) {
     auto* textNode = static_cast<TextNode*>(YGNodeGetContext(node));
     if (!textNode) {
         return {0, 0};

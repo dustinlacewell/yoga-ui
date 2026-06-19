@@ -4,7 +4,9 @@
 #include "../core/Node.hpp"
 
 #include <cstdint>
+#include <exception>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include <SDL.h>

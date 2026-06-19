@@ -14,7 +14,7 @@
 
 namespace yui {
 
-class DirtyScheduler;
+struct DirtyScheduler;
 
 class Reconciler {
 public:

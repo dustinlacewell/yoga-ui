@@ -15,7 +15,7 @@ namespace yui {
 
 // Forward declarations
 class Node;
-class DirtyScheduler;
+struct DirtyScheduler;
 
 // Per-hook-slot identity, recorded in call order on a component fiber (see
 // Fiber::hookTags). The rules-of-hooks contract is positional: the Nth hook call

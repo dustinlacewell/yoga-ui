@@ -364,53 +364,57 @@ public:
 
 // --- Factory functions ---
 
+// Factories build a fresh node and have no side effects, so discarding the
+// result (e.g. `Box().width(100);` as a statement) is always a mistake —
+// [[nodiscard]] turns it into a compile-time warning.
+
 // Box with children (accepts both VNode and Component via Child variant)
-inline BoxBuilder Box(std::vector<Child> children) {
+[[nodiscard]] inline BoxBuilder Box(std::vector<Child> children) {
     BoxBuilder b;
     b.setChildren(std::move(children));
     return b;
 }
 
 // Box with single child (VNode)
-inline BoxBuilder Box(VNode child) {
+[[nodiscard]] inline BoxBuilder Box(VNode child) {
     return Box(std::vector<Child>{std::move(child)});
 }
 
 // Box with single child (Component)
-inline BoxBuilder Box(Component child) {
+[[nodiscard]] inline BoxBuilder Box(Component child) {
     return Box(std::vector<Child>{std::move(child)});
 }
 
 // Empty box
-inline BoxBuilder Box() {
+[[nodiscard]] inline BoxBuilder Box() {
     return BoxBuilder{};
 }
 
 // Text
-inline TextBuilder Text(std::string content) {
+[[nodiscard]] inline TextBuilder Text(std::string content) {
     return TextBuilder{std::move(content)};
 }
 
 // Input (controlled component)
-inline InputBuilder Input() {
+[[nodiscard]] inline InputBuilder Input() {
     return InputBuilder{};
 }
 
 // Scroll: scrollable container with clipping
 // Child content can exceed container bounds; overflow is clipped and scrollable
-inline ScrollBuilder Scroll(VNode child) {
+[[nodiscard]] inline ScrollBuilder Scroll(VNode child) {
     ScrollBuilder b;
     b.setChildren(std::vector<Child>{std::move(child)});
     return b;
 }
 
-inline ScrollBuilder Scroll(Component child) {
+[[nodiscard]] inline ScrollBuilder Scroll(Component child) {
     ScrollBuilder b;
     b.setChildren(std::vector<Child>{std::move(child)});
     return b;
 }
 
-inline ScrollBuilder Scroll(std::vector<Child> children) {
+[[nodiscard]] inline ScrollBuilder Scroll(std::vector<Child> children) {
     ScrollBuilder b;
     b.setChildren(std::move(children));
     return b;
@@ -420,36 +424,36 @@ inline ScrollBuilder Scroll(std::vector<Child> children) {
 // The draw function receives (void* ctx, float width, float height).
 // ctx is renderer-specific (e.g., NVGcontext* for NvgRenderer).
 // Draw relative to (0,0) - the renderer handles positioning.
-inline CanvasBuilder Canvas(CanvasDrawFn draw) {
+[[nodiscard]] inline CanvasBuilder Canvas(CanvasDrawFn draw) {
     return CanvasBuilder{std::move(draw)};
 }
 
 // --- Helpers ---
 
-inline BoxBuilder Row(std::vector<Child> children) {
+[[nodiscard]] inline BoxBuilder Row(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Row);
 }
 
-inline BoxBuilder Column(std::vector<Child> children) {
+[[nodiscard]] inline BoxBuilder Column(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Column);
 }
 
-inline BoxBuilder Spacer() {
+[[nodiscard]] inline BoxBuilder Spacer() {
     return Box().flexGrow(1);
 }
 
-inline BoxBuilder Gap(float size) {
+[[nodiscard]] inline BoxBuilder Gap(float size) {
     return Box().width(size).height(size);
 }
 
 // Conditional rendering
-inline VNode When(bool condition, VNode node) {
+[[nodiscard]] inline VNode When(bool condition, VNode node) {
     if (condition)
         return node;
     return VNode::empty();
 }
 
-inline VNode If(bool condition, VNode ifTrue, VNode ifFalse) {
+[[nodiscard]] inline VNode If(bool condition, VNode ifTrue, VNode ifFalse) {
     return condition ? std::move(ifTrue) : std::move(ifFalse);
 }
 

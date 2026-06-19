@@ -10,7 +10,7 @@ namespace yui {
 
 // --- ComponentContext ---
 
-ComponentContext::ComponentContext(Fiber* fiber, DirtyScheduler* host) : fiber_(fiber), host_(host), hookIndex_(0) {}
+ComponentContext::ComponentContext(Fiber* fiber, DirtyScheduler* host) : fiber_(fiber), host_(host) {}
 
 namespace {
 const char* kindName(HookTag::Kind k) {
@@ -24,9 +24,9 @@ const char* kindName(HookTag::Kind k) {
 }
 }  // namespace
 
-// Append-or-check the call-order tag for the hook at `index`. This is the single
-// mechanism behind both FIX #7 (any_cast type guard) and FIX #8 (always-on rules-
-// of-hooks). On the first render a slot's tag is recorded; on every later render
+// Append-or-check the call-order tag for the hook at `index`. This single
+// mechanism backs both the any_cast type guard and the always-on rules-of-hooks
+// check. On the first render a slot's tag is recorded; on every later render
 // the incoming (kind,type) is compared against the recorded tag. A mismatch means
 // the Nth hook of this render is not the Nth hook of the first render — a reorder
 // or a conditional that swaps hooks at a stable index. Diagnosed through the host

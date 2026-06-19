@@ -13,7 +13,7 @@
 namespace yui {
 
 // Forward declarations
-class DirtyScheduler;
+struct DirtyScheduler;
 template <typename T>
 class Store;
 
