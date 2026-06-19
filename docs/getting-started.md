@@ -393,6 +393,9 @@ Box(Text("Click me"))
     .onRightClick([] {
         std::cout << "Right clicked!\n";
     })
+    .onMiddleClick([] {
+        std::cout << "Middle clicked!\n";
+    })
     .onHover([](bool hovered) {
         std::cout << (hovered ? "Mouse entered" : "Mouse left") << "\n";
     });

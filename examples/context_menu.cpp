@@ -8,6 +8,7 @@
 //     bottom edge, and LEFT when it would overflow the right edge
 //   - Submenus cascade right-of-parent, flipping left near the right edge
 //   - Right-click in any corner to watch the menu reposition to stay on-screen
+//   - Middle-click a leaf item to invoke it without closing the menu
 //
 // Placement is the same robust model as cascading_menu.cpp, but anchored at the
 // cursor instead of a menu bar: prefer the ideal spot, clamp into the window,
@@ -305,6 +306,12 @@ static VNode MenuItemRow(const MenuDef& item, int depth, const MenuState& ms) {
             s.open = false;
             s.activeItems.clear();
         });
+    })
+    // Middle-click invokes the action but leaves the menu open, so several
+    // items can be fired in a row (demonstrates onMiddleClick).
+    .onMiddleClick([label = item.label, kids = hasKids(item)]() {
+        if (kids) return;
+        g_state->set([label](MenuState& s) { s.lastAction = label + " (kept open)"; });
     });
 }
 
@@ -389,6 +396,8 @@ static Component App() {
                 Text("Try the corners and edges \xe2\x80\x94 the menu repositions to stay on-screen.")
                     .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
                 Text("Hover items with \xe2\x96\xb8 to cascade submenus.")
+                    .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
+                Text("Left-click invokes an item; middle-click invokes it but keeps the menu open.")
                     .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
                 Text("\"Move to Layer\" is taller than the window \xe2\x80\x94 it scrolls.")
                     .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),

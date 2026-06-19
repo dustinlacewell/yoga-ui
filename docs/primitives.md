@@ -127,6 +127,7 @@ All primitives support event handlers:
 Box({...})
     .onClick([&] { selectItem(); })
     .onRightClick([&] { showContextMenu(); })
+    .onMiddleClick([&] { openInBackground(); })
     .onHover([](bool hovered) { highlight(hovered); })
     .onFocus([](bool focused) { ... })
     .onScroll([](float dx, float dy) { handleScroll(dx, dy); });

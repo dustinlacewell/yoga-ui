@@ -22,7 +22,7 @@ All primitives support:
 - Yoga layout props (width, height, flex, padding, margin, gap, etc.)
 - Visual style props (backgroundColor, borderColor, etc.)
 - State-based style overrides (hoverStyle, focusStyle)
-- Event handlers (onClick, onRightClick, onHover, onFocus)
+- Event handlers (onClick, onRightClick, onMiddleClick, onHover, onFocus)
 - Keys for reconciliation (`.setKey("id")`)
 
 ### Layer 2: Components (You Write)
