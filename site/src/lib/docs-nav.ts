@@ -16,6 +16,7 @@ export const DOCS_NAV: DocEntry[] = [
   { slug: "components", title: "Components" },
   { slug: "architecture", title: "Architecture" },
   { slug: "extending", title: "Extending Primitives", label: "Extending" },
+  { slug: "integration-notes", title: "Integration Notes", label: "Integration" },
 ];
 
 export function navIndex(slug: string): number {
