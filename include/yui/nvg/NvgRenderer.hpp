@@ -3,6 +3,8 @@
 #include "../core/ErrorHandler.hpp"
 #include "../core/Node.hpp"
 
+#include <string>
+
 // Forward declare NanoVG context
 struct NVGcontext;
 

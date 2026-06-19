@@ -4,7 +4,9 @@
 #include "Props.hpp"
 #include "VNode.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <yoga/Yoga.h>

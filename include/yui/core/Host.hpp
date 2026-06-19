@@ -8,13 +8,16 @@
 #include "VNode.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <unordered_set>
+#include <utility>
 
 namespace yui {
 

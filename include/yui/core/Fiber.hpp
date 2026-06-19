@@ -4,8 +4,10 @@
 
 #include <any>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <typeindex>
 #include <vector>
 

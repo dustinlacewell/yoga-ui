@@ -4,8 +4,10 @@
 #include "Event.hpp"
 #include "Node.hpp"
 
+#include <cstdint>
 #include <exception>
 #include <memory>
+#include <string>
 #include <utility>
 
 namespace yui {

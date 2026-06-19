@@ -3,6 +3,7 @@
 #include "../core/ErrorHandler.hpp"
 #include "../core/Node.hpp"
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
