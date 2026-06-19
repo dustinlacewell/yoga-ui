@@ -187,7 +187,14 @@ public:
         YGConfigSetContext(config_.get(), measurer);
         if (measurer) {
             YGConfigRef cfg = config_.get();
-            measurer->attachHost(this, alive_, [cfg] { YGConfigSetContext(cfg, nullptr); });
+            // Run by ~ITextMeasurer (measurer-dies-first) while this host is still
+            // alive (gated by the liveness token in ~ITextMeasurer). Sever BOTH
+            // directions: null the yoga context AND our back-reference, so ~Host's
+            // detachHost guard sees null and never dereferences the freed measurer.
+            measurer->attachHost(this, alive_, [this, cfg] {
+                YGConfigSetContext(cfg, nullptr);
+                installedMeasurer_ = nullptr;
+            });
         }
     }
 
