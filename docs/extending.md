@@ -40,13 +40,16 @@ using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, 
 ```cpp
 inline VNode Canvas(CanvasDrawFn drawFn) {
     VNode n;
-    n.type = PrimitiveType::Canvas;
     CanvasProps p;
     p.draw = std::move(drawFn);
-    n.props = std::move(p);
+    n.props = std::move(p);  // VNode::type() derives from props.index()
     return n;
 }
 ```
+
+The primitive's position in `PropsVariant` *is* its `PrimitiveType` (a `static_assert`
+in `VNode.hpp` keeps the enum and the variant in the same order), so setting `props`
+is all that's needed — `n.type()` reports `Canvas` automatically.
 
 ### 4. Implement Node subclass (Node.hpp/cpp)
 

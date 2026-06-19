@@ -95,7 +95,7 @@ For MSYS2: `-DCMAKE_PREFIX_PATH=C:/msys64/mingw64`
 // Primitives
 Box()                    // container
 Text("Hello")            // label
-Input(&value)            // text field
+Input().value(value)     // text field (controlled)
 Scroll(content)          // scrollable
 Canvas(drawFn)           // custom draw
 
@@ -162,18 +162,38 @@ yui::VNode Counter() {
     }).gap(16).padding(20).alignItems(yui::AlignItems::Center);
 }
 
-int main() {
-    // SDL setup...
+// A Host owns the reconciler, fiber tree, and event handling. Subclass it to
+// pair a renderer with your render function; drive it once per frame.
+class CounterHost : public yui::Host {
+public:
+    CounterHost(SDL_Renderer* sdl, const std::string& fontPath)
+        : renderer_(sdl, fontPath, 16) {
+        setTextMeasurer(&renderer_);          // so Text sizes match what's painted
+        setRender([] { return Counter(); });  // a VNode factory (re-runs each render)
+    }
 
-    yui::sdl::SdlRenderer renderer(sdlRenderer, "font.ttf", 16);
-    yui::Reconciler reconciler;
+    void frame(int w, int h) {
+        update(w, h);            // reconcile + layout the dirty tree
+        renderer_.render(root()); // paint the current render tree
+    }
+
+private:
+    yui::sdl::SdlRenderer renderer_;
+};
+
+int main() {
+    // ... create SDL_Window + SDL_Renderer, load a font ...
+    CounterHost host(sdlRenderer, "font.ttf");
 
     while (running) {
-        // handle events, forward clicks to reconciler...
+        // forward input so clicks/hover reach the tree:
+        //   host.handleMouseDown(x, y, yui::MouseButton::Left);
+        //   host.handleMouseUp(x, y, yui::MouseButton::Left);
+        //   host.handleMouseMove(x, y);
 
-        auto root = reconciler.mount(Counter());
-        root->calculateLayout(windowWidth, windowHeight);
-        renderer.render(root);
+        int w, h;
+        SDL_GetWindowSize(window, &w, &h);
+        host.frame(w, h);  // update() then render() — no per-frame allocation leak
     }
 }
 ```

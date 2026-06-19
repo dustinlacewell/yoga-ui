@@ -249,7 +249,7 @@ class CounterHost : public Host {
 public:
     CounterHost(SDL_Renderer* r, const std::string& fontPath)
         : renderer_(r, fontPath, 16) {
-        renderer_.registerMeasureFunc();
+        setTextMeasurer(&renderer_);
         setRender(Counter());
     }
 
@@ -650,7 +650,7 @@ Best for: Simple apps, games with 2D graphics, cross-platform desktop apps.
 #include "yui/sdl/SdlRenderer.hpp"
 
 yui::sdl::SdlRenderer renderer(sdlRenderer, "path/to/font.ttf", 16);
-renderer.registerMeasureFunc();
+host.setTextMeasurer(&renderer);  // install on your Host so Text is measured
 ```
 
 **Dependencies:** SDL2, SDL2_ttf, SDL2_gfx
@@ -665,7 +665,7 @@ Best for: Polished UIs, smooth animations, high-DPI displays, hardware accelerat
 
 int fontId = nvgCreateFont(vg, "default", "path/to/font.ttf");
 yui::nvg::NvgRenderer renderer(vg, fontId);
-renderer.registerMeasureFunc();
+host.setTextMeasurer(&renderer);  // install on your Host so Text is measured
 ```
 
 **Dependencies:** GLFW3, GLEW, OpenGL
