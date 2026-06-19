@@ -25,6 +25,7 @@
 #define NANOVG_GL3_IMPLEMENTATION
 #include <nanovg_gl.h>
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -251,6 +252,9 @@ static const std::vector<MenuDef>& resolveItems(int openBar, const std::vector<s
     return resolveParent(openBar, activeItems, depth).children;
 }
 
+// Total natural height of a menu's rows (defined below; used by placement).
+static float menuContentHeight(const std::vector<MenuDef>& items);
+
 // Find index of item with given label
 static int findItemIndex(const std::vector<MenuDef>& items, const std::string& label) {
     for (int i = 0; i < static_cast<int>(items.size()); i++) {
@@ -260,24 +264,71 @@ static int findItemIndex(const std::vector<MenuDef>& items, const std::string& l
     return 0;
 }
 
-// Compute top-left position of menu at a given depth
-struct MenuPos { float x, y; };
+// Final on-screen placement of a panel: top-left corner plus the height it is
+// allowed to occupy. Position is clamped so the panel sits fully within the
+// window when it can; height shrinks (enabling scroll) only when the panel is
+// genuinely taller than the available window column.
+struct MenuPlacement { float x, y, height; };
 
-static MenuPos menuPosition(int openBar, const std::vector<std::string>& activeItems, int depth) {
-    if (depth == 0)
-        return {barItemX(openBar), c::BAR_HEIGHT};
+// Clamp v into [lo, hi]; if the range is empty (hi < lo) prefer lo.
+static float clampRange(float v, float lo, float hi) {
+    if (hi < lo) return lo;
+    return std::max(lo, std::min(v, hi));
+}
 
-    auto parent = menuPosition(openBar, activeItems, depth - 1);
+// Place a panel given its ideal anchor and natural content height.
+//   anchorX/anchorY   where the panel would sit with no edge constraints
+//   altX              fallback x to use if the panel won't fit at anchorX
+//                     (submenu flip-to-left); == anchorX for top dropdowns
+//   contentH          natural height of all rows
+//   fixedMaxH         optional hard cap on height (0 = none)
+static MenuPlacement placeMenu(float anchorX, float altX, float anchorY,
+                               float contentH, float fixedMaxH) {
+    // Vertical extent the window can offer below the menu bar.
+    const float topLimit = c::BAR_HEIGHT;
+    const float bottomLimit = g_winHeight - c::MENU_MARGIN_BOTTOM;
+    const float columnH = bottomLimit - topLimit;
+
+    float desiredH = contentH + c::MENU_PAD_Y * 2;
+    if (fixedMaxH > 0)
+        desiredH = std::min(desiredH, fixedMaxH + c::MENU_PAD_Y * 2);
+
+    // If the panel fits in the window column, keep full height and shift up so
+    // its bottom rests at the margin. Otherwise fill the column and scroll.
+    float height = std::min(desiredH, columnH);
+    float y = clampRange(anchorY, topLimit, bottomLimit - height);
+
+    // Horizontal: prefer anchorX, fall back to altX if anchorX overflows the
+    // right edge, then clamp the chosen position into the window.
+    float x = anchorX;
+    if (anchorX + c::MENU_WIDTH > g_winWidth)
+        x = altX;
+    x = clampRange(x, 0.0f, g_winWidth - c::MENU_WIDTH);
+
+    return {x, y, height};
+}
+
+// Resolve the ideal anchor + alt-x for the panel at a given depth, then place
+// it against the window. Recurses through ancestors to find the anchor.
+static MenuPlacement menuPlacement(int openBar, const std::vector<std::string>& activeItems,
+                                   int depth, float contentH, float fixedMaxH) {
+    if (depth == 0) {
+        float anchorX = barItemX(openBar);
+        return placeMenu(anchorX, anchorX, c::BAR_HEIGHT, contentH, fixedMaxH);
+    }
+
     const auto& parentItems = resolveItems(openBar, activeItems, depth - 1);
+    const MenuDef& parentDef = resolveParent(openBar, activeItems, depth - 1);
+    float parentContentH = menuContentHeight(parentItems);
+    auto parent = menuPlacement(openBar, activeItems, depth - 1, parentContentH, parentDef.maxHeight);
+
     int activeIdx = findItemIndex(parentItems, activeItems[depth - 1]);
-    float y = parent.y + c::MENU_PAD_Y + itemYOffset(parentItems, activeIdx);
+    float anchorY = parent.y + c::MENU_PAD_Y + itemYOffset(parentItems, activeIdx);
 
-    float x = parent.x + c::MENU_WIDTH;
-    // Flip to left if it would go off-screen
-    if (x + c::MENU_WIDTH > g_winWidth)
-        x = parent.x - c::MENU_WIDTH;
-
-    return {x, y};
+    // Submenu opens to the right of the parent; flip-left fallback is altX.
+    float anchorX = parent.x + c::MENU_WIDTH;
+    float altX = parent.x - c::MENU_WIDTH;
+    return placeMenu(anchorX, altX, anchorY, contentH, fixedMaxH);
 }
 
 // ─── Menu item row ──────────────────────────────────────────────────────────
@@ -331,7 +382,7 @@ static float menuContentHeight(const std::vector<MenuDef>& items) {
 }
 
 static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
-                       float x, float y, float fixedMaxH, const MenuState& ms) {
+                       const MenuPlacement& at, const MenuState& ms) {
     std::vector<Child> rows;
     for (const auto& item : items) {
         if (item.separator) {
@@ -341,20 +392,15 @@ static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
         }
     }
 
-    float contentH = menuContentHeight(items);
-    float windowMaxH = g_winHeight - y - c::MENU_MARGIN_BOTTOM;
-    float maxH = (fixedMaxH > 0) ? std::min(fixedMaxH, windowMaxH) : windowMaxH;
-    float panelH = std::min(contentH, maxH) + c::MENU_PAD_Y * 2;
-
     return Box({
         Scroll(
             Column(std::move(rows))
         ).flexGrow(1)
     })
     .positionType(PositionType::Absolute)
-    .positionLeft(x).positionTop(y)
+    .positionLeft(at.x).positionTop(at.y)
     .width(c::MENU_WIDTH)
-    .height(panelH)
+    .height(at.height)
     .backgroundColor(c::MENU_BG)
     .borderColor(c::BORDER)
     .borderWidth(1)
@@ -458,8 +504,9 @@ static Component App() {
 
         // Root dropdown (depth 0)
         const auto& rootDef = resolveParent(ms.openBar, ms.activeItems, 0);
-        auto pos = menuPosition(ms.openBar, ms.activeItems, 0);
-        layers.push_back(MenuPanel(rootDef.children, 0, pos.x, pos.y, rootDef.maxHeight, ms));
+        auto rootPlace = menuPlacement(ms.openBar, ms.activeItems, 0,
+                                       menuContentHeight(rootDef.children), rootDef.maxHeight);
+        layers.push_back(MenuPanel(rootDef.children, 0, rootPlace, ms));
 
         // Cascading submenus (depth 1, 2, ...)
         for (int d = 0; d < static_cast<int>(ms.activeItems.size()); d++) {
@@ -468,8 +515,9 @@ static Component App() {
             const auto& parentDef = resolveParent(ms.openBar, ms.activeItems, d + 1);
             if (parentDef.children.empty()) break;
 
-            auto subPos = menuPosition(ms.openBar, ms.activeItems, d + 1);
-            layers.push_back(MenuPanel(parentDef.children, d + 1, subPos.x, subPos.y, parentDef.maxHeight, ms));
+            auto subPlace = menuPlacement(ms.openBar, ms.activeItems, d + 1,
+                                          menuContentHeight(parentDef.children), parentDef.maxHeight);
+            layers.push_back(MenuPanel(parentDef.children, d + 1, subPlace, ms));
         }
 
         return Box(std::move(layers)).flexGrow(1);
