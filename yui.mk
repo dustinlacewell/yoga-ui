@@ -16,6 +16,7 @@ SOURCES += $(wildcard $(YUI_DIR)/deps/yoga/yoga/**/*.cpp)
 SOURCES += $(YUI_DIR)/src/core/Component.cpp
 SOURCES += $(YUI_DIR)/src/core/EventHandler.cpp
 SOURCES += $(YUI_DIR)/src/core/Fiber.cpp
+SOURCES += $(YUI_DIR)/src/core/Host.cpp
 SOURCES += $(YUI_DIR)/src/core/Node.cpp
 SOURCES += $(YUI_DIR)/src/core/Reconciler.cpp
 
