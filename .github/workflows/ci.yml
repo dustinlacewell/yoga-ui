@@ -40,9 +40,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'clang'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-15
-          echo "CC=clang-15" >> $GITHUB_ENV
-          echo "CXX=clang++-15" >> $GITHUB_ENV
+          # clang-18 pairs cleanly with the runner's libstdc++-14; older clang
+          # (e.g. 15) cannot parse GCC 14's <format>/<bits/unicode.h> headers.
+          sudo apt-get install -y clang-18
+          echo "CC=clang-18" >> $GITHUB_ENV
+          echo "CXX=clang++-18" >> $GITHUB_ENV
 
       - name: Configure (Unix)
         if: matrix.os != 'windows-latest'
