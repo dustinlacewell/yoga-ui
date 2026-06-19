@@ -511,6 +511,9 @@ install(DIRECTORY include/yui
     # 1.0 public ABI. This excludes include/yui/detail, include/yui/nvg/detail,
     # and include/yui/sdl/detail.
     PATTERN "detail" EXCLUDE
+    # version.hpp.in is a configure_file template (@PROJECT_VERSION@ placeholders);
+    # ship only the generated version.hpp (installed below), never the template.
+    PATTERN "*.in" EXCLUDE
 )
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/yui/version.hpp
