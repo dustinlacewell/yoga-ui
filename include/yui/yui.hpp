@@ -11,3 +11,6 @@
 #include <yui/core/Props.hpp>
 #include <yui/core/Store.hpp>
 #include <yui/core/VNode.hpp>
+
+// Layout utilities
+#include <yui/layout/Placement.hpp>

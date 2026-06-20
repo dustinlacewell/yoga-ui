@@ -19,6 +19,7 @@
 
 #include "yui/yui.hpp"
 #include "yui/nvg/nvg.hpp"
+#include "yui/layout/Placement.hpp"
 
 #include <GL/glew.h>
 #define GLFW_INCLUDE_NONE
@@ -27,7 +28,6 @@
 #define NANOVG_GL3_IMPLEMENTATION
 #include <nanovg_gl.h>
 
-#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -206,59 +206,40 @@ static int findItemIndex(const std::vector<MenuDef>& items, const std::string& l
 }
 
 // ─── Placement ──────────────────────────────────────────────────────────────
+//
+// All edge/corner/cascade geometry comes from the library helper
+// (yui/layout/Placement.hpp): placePanel for the cursor-anchored root,
+// placeSubmenu for cascading children. This example only walks the menu tree to
+// find each panel's anchor, then hands the geometry to the library.
+//
+// A real app with scrollable menus would anchor a submenu's Y to the parent
+// row's DRAWN position (e.g. the cursor Y on hover). This demo's panels are
+// placed straight from the model with no scroll offset, so the anchor is the
+// content-relative row top — simpler, and correct for the non-scrolling case.
 
-// Final on-screen placement of a panel: top-left corner plus the height it is
-// allowed to occupy. Position is clamped so the panel sits fully within the
-// window when it can; height shrinks (enabling scroll) only when the panel is
-// genuinely taller than the available window column.
-struct MenuPlacement { float x, y, height; };
+namespace lay = yui::layout;
 
-// Clamp v into [lo, hi]; if the range is empty (hi < lo) prefer lo.
-static float clampRange(float v, float lo, float hi) {
-    if (hi < lo) return lo;
-    return std::max(lo, std::min(v, hi));
+static lay::Viewport viewport() {
+    return {g_winWidth, g_winHeight, c::SCREEN_MARGIN};
 }
 
-// Place a panel given its ideal anchor and natural content height.
-//   anchorX/anchorY   where the panel would sit with no edge constraints
-//   altX              fallback x if the panel won't fit at anchorX
-//                     (cursor: open left of point; submenu: flip-to-left)
-//   contentH          natural height of all rows
-//   fixedMaxH         optional hard cap on height (0 = none)
-static MenuPlacement placeMenu(float anchorX, float altX, float anchorY,
-                               float contentH, float fixedMaxH) {
-    const float topLimit = c::SCREEN_MARGIN;
-    const float bottomLimit = g_winHeight - c::SCREEN_MARGIN;
-    const float columnH = bottomLimit - topLimit;
+// Natural panel content height including vertical padding.
+static float panelHeight(float contentH) { return contentH + c::MENU_PAD_Y * 2; }
 
-    float desiredH = contentH + c::MENU_PAD_Y * 2;
-    if (fixedMaxH > 0)
-        desiredH = std::min(desiredH, fixedMaxH + c::MENU_PAD_Y * 2);
+// Resolve the anchor for the panel at a given depth, then place it against the
+// window via the library. Recurses through ancestors to find the anchor.
+static lay::PlacedRect menuPlacement(const MenuState& ms, int depth,
+                                     float contentH, float fixedMaxH) {
+    float capH = fixedMaxH > 0 ? fixedMaxH + c::MENU_PAD_Y * 2 : 0;
 
-    // If the panel fits in the window column, keep full height and shift up so
-    // its bottom rests at the margin. Otherwise fill the column and scroll.
-    float height = std::min(desiredH, columnH);
-    float y = clampRange(anchorY, topLimit, bottomLimit - height);
-
-    // Horizontal: prefer anchorX, fall back to altX if anchorX overflows the
-    // right edge, then clamp the chosen position into the window.
-    float x = anchorX;
-    if (anchorX + c::MENU_WIDTH > g_winWidth - c::SCREEN_MARGIN)
-        x = altX;
-    x = clampRange(x, c::SCREEN_MARGIN, g_winWidth - c::MENU_WIDTH - c::SCREEN_MARGIN);
-
-    return {x, y, height};
-}
-
-// Resolve the ideal anchor + alt-x for the panel at a given depth, then place
-// it against the window. Recurses through ancestors to find the anchor.
-static MenuPlacement menuPlacement(const MenuState& ms, int depth,
-                                   float contentH, float fixedMaxH) {
     if (depth == 0) {
-        // Root opens at the cursor; if it would overflow right, open it so its
-        // right edge sits at the cursor instead (altX = cursor - width).
-        float altX = ms.anchorX - c::MENU_WIDTH;
-        return placeMenu(ms.anchorX, altX, ms.anchorY, contentH, fixedMaxH);
+        // Root opens at the cursor. If it would overflow the right edge, open it
+        // so its right edge sits at the cursor instead (flip the anchor X).
+        float anchorX = ms.anchorX;
+        if (anchorX + c::MENU_WIDTH > g_winWidth - c::SCREEN_MARGIN)
+            anchorX = ms.anchorX - c::MENU_WIDTH;
+        return lay::placePanel({anchorX, ms.anchorY},
+                               {c::MENU_WIDTH, panelHeight(contentH)}, viewport(), capH);
     }
 
     const auto& parentItems = resolveItems(ms.activeItems, depth - 1);
@@ -269,10 +250,12 @@ static MenuPlacement menuPlacement(const MenuState& ms, int depth,
     int activeIdx = findItemIndex(parentItems, ms.activeItems[depth - 1]);
     float anchorY = parent.y + c::MENU_PAD_Y + itemYOffset(parentItems, activeIdx);
 
-    // Submenu opens to the right of the parent; flip-left fallback is altX.
-    float anchorX = parent.x + c::MENU_WIDTH;
-    float altX = parent.x - c::MENU_WIDTH;
-    return placeMenu(anchorX, altX, anchorY, contentH, fixedMaxH);
+    // Submenu opens flush to the parent (side chosen by the library, never
+    // overlapping); Y anchors to the parent row and clamps onto the screen.
+    lay::Rect parentRect{parent.x, parent.y, c::MENU_WIDTH, parent.height};
+    return lay::placeSubmenu(parentRect, anchorY,
+                             {c::MENU_WIDTH, panelHeight(contentH)}, viewport(),
+                             lay::Side::Right, capH);
 }
 
 // ─── Menu item row ──────────────────────────────────────────────────────────
@@ -332,7 +315,7 @@ static float menuContentHeight(const std::vector<MenuDef>& items) {
 }
 
 static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
-                       const MenuPlacement& at, const MenuState& ms) {
+                       const lay::PlacedRect& at, const MenuState& ms) {
     std::vector<Child> rows;
     for (const auto& item : items) {
         if (item.separator) {

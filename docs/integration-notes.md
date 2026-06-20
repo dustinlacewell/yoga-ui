@@ -136,61 +136,71 @@ hit four separate bugs here (right-wall overflow, submenu overlap, tall-menu
 clamp, scroll mis-anchor), and the same class of bug was fixed twice in the
 library's own examples.
 
-The clamp/flip/shift logic currently lives in example code
-([context_menu.cpp](../examples/context_menu.cpp),
-[cascading_menu.cpp](../examples/cascading_menu.cpp)) — which means it is
-copy-paste, not reuse. **Planned: promote it to a small documented placement
-utility in the library.**
+This now ships as **[`yui/layout/Placement.hpp`](../include/yui/layout/Placement.hpp)**
+— pure free functions in `namespace yui::layout`, no render types, geometry in /
+position out. The consumer wires the result into `.positionLeft()` /
+`.positionTop()` on its own panel, keeping the `Box`, the `Scroll`, the backdrop,
+and all chrome entirely its own. A wrapper that owned the `Box` was explicitly
+rejected: every placement bug was a *geometry* bug, not a structure bug, and a
+wrapper would force consumers to adapt their settled panel structure while still
+reaching past it for cascade-specific bits. The examples
+([context_menu.cpp](../examples/context_menu.cpp)) consume this helper rather
+than hand-rolling the math.
 
-### Spec
-
-Pure free functions, no yui types — geometry in, position out. The consumer
-wires the result into `.positionLeft()` / `.positionTop()` themselves, keeping
-their own panel structure (the `Box`, the `Scroll`, the backdrop) entirely
-theirs. A wrapper that owned the `Box` was explicitly rejected: every placement
-bug was a *geometry* bug, not a structure bug, and a wrapper would force
-consumers to adapt their settled panel structure while still reaching past it for
-cascade-specific bits.
+### API
 
 ```cpp
-struct Rect { float x, y, w, h; };
-struct Vec  { float x, y; };
-enum class Side { Right, Left, Below, Above };
-struct PlaceOpts {
-    Side  preferSide = Side::Below;   // where to put the panel relative to anchor
-    float margin     = 8;             // keep this far from every window edge
-};
-struct PlacedRect { float x, y; };    // top-left to feed into positionLeft/Top
+namespace yui::layout {
+struct Rect     { float x, y, w, h; };          // a DRAWN on-screen rect
+struct Vec      { float x, y; };
+struct Viewport { float width, height, margin = 8; };
+enum class Side { Right, Left };
 
-// Decide side AND clamp in ONE pass (see "two passes that fight" below).
-PlacedRect placePanel(Rect window, Rect anchor, Vec panelSize, PlaceOpts opts);
+// Vertical "move, don't shrink": shift up at the bottom edge; scroll only when
+// taller than the window column.
+PlacedY   placePanelY(float anchorY, float contentH, Viewport, float fixedMaxH = 0);
+
+// A free-standing panel at a point (context menu / dropdown): clamp both axes.
+PlacedRect placePanel(Vec anchor, Vec panelSize, Viewport, float fixedMaxH = 0);
+
+// Cascading submenu off a parent panel: side-aware flush X (never overlapping)
+// + move-don't-shrink Y, in one call. The cascade one-liner.
+PlacedRect placeSubmenu(const Rect& parent, float anchorY, Vec panelSize,
+                        Viewport, Side prefer = Side::Right, float fixedMaxH = 0);
+
+// Just the side decision (flush X), if you place Y yourself.
+float chooseSideX(const Rect& parent, float panelW, Viewport, Side prefer = Side::Right);
+}
 ```
 
-The cascade case collapses to a one-liner: `anchor =` the parent item's **drawn
-rect**, `opts.preferSide = Side::Right`, and the function does
-flip-if-no-fit + clamp-onto-screen + shift-up-at-bottom internally.
+The cascade case collapses to one call: `parent =` the parent item's **drawn
+rect**, `prefer = Side::Right`, and `placeSubmenu` does
+flip-if-no-fit + flush-X + shift-up-at-bottom internally.
 
-### Three constraints, each earned the hard way
+### Three constraints, each earned the hard way — and how the API enforces them
 
-1. **Anchor must be a drawn-position rect, not a logical index/offset.** The
-   worst real bug was reconstructing the anchor from content-offset
+1. **Anchor is a drawn-position rect, not a logical index/offset.** The worst
+   real bug was reconstructing the anchor from content-offset
    (`placedPanelY + offsetY`) instead of the item's true rendered Y — so a
-   scrolled parent mis-anchored its submenu. Taking the parent item's **actual
-   rendered rect** (post-scroll, post-clamp) as input *forces* the consumer into
-   the correct value and makes that whole bug class unrepresentable. This single
-   API choice prevents the nastiest of the four failures.
+   scrolled parent mis-anchored its submenu. `placeSubmenu` takes the parent's
+   `Rect` (its **actual rendered** position) and the row's drawn `anchorY`, which
+   *forces* the consumer into the correct value and makes that bug class
+   unrepresentable. In a scrollable menu, anchor Y to the parent row's drawn
+   position (e.g. the cursor Y on hover), never to a content offset.
 
-2. **Side-selection and clamping must be ONE decision, not two passes.** The
-   nastiest bug was not a single wrong formula — it was a flip pass and a clamp
-   pass that each looked correct alone but **composed into an overlap near the
-   left edge**. The function deciding side *and* clamp together is the actual
-   fix. Whoever builds this must not reintroduce a two-pass structure internally;
-   the passes fight at the corners.
+2. **Side-selection and clamping are ONE decision, not two passes.** The nastiest
+   bug was not a single wrong formula — it was a flip pass and a clamp pass that
+   each looked correct alone but **composed into an overlap near the left edge**.
+   `chooseSideX` decides the side AND yields the final flush X in one step
+   (prefer the fitting side; if neither fits, the side with more room, flush —
+   never clamped forward over the parent). `placePanel` only backstops the
+   free-panel case onto the screen. The two are never split.
 
-3. **No yui-type coupling.** Pure functions over `(window rect, anchor rect,
-   panel size, opts)`. Testable in isolation, composable, and the consumer owns
-   the wiring into their layout. This is the layer integrators keep hand-rolling
-   and getting wrong — give them the tested function, not a framework.
+3. **No yui-type coupling.** Pure functions over plain `Rect` / `Vec` /
+   `Viewport`. Unit-tested in isolation
+   ([test_placement.cpp](../test/test_placement.cpp)), composable, and the
+   consumer owns the wiring into its layout. This is the layer integrators kept
+   hand-rolling and getting wrong — now a tested function, not a framework.
 
 ---
 
