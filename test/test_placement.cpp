@@ -6,9 +6,9 @@ using namespace yui::layout;
 
 namespace {
 
-// A 1000x700 window with an 8px margin — the usable column is [8, 692], i.e.
-// 684px tall; the usable X band for a 220px panel is [8, 772].
-Viewport vp() { return {1000.0f, 700.0f, 8.0f}; }
+// A 1000x700 window with a uniform 8px inset — the usable column is [8, 692],
+// i.e. 684px tall; the usable X band for a 220px panel is [8, 772].
+Viewport vp() { return Viewport::uniform(1000.0f, 700.0f, 8.0f); }
 
 constexpr float W = 220.0f;  // a typical menu width
 
@@ -141,4 +141,47 @@ TEST_CASE("placeSubmenu: cascades right and shifts up near the bottom") {
     CHECK(r.x == doctest::Approx(520));
     CHECK(r.y == doctest::Approx(492));
     CHECK(r.height == doctest::Approx(200));
+}
+
+// ─── Asymmetric per-edge insets ──────────────────────────────────────────────
+
+TEST_CASE("Viewport::uniform sets all four edges to the same inset") {
+    auto v = Viewport::uniform(800, 600, 12);
+    CHECK(v.top == 12);
+    CHECK(v.right == 12);
+    CHECK(v.bottom == 12);
+    CHECK(v.left == 12);
+}
+
+TEST_CASE("placePanelY: a large top inset (menu bar) floors the panel below it") {
+    // Reserve a 30px menu bar via the top inset; small bottom inset.
+    Viewport bar{1000, 700, 30, 8, 8, 8};
+    // A panel anchored above the bar is pushed down to the bar, not to 8.
+    auto p = placePanelY(0, 200, bar);
+    CHECK(p.y == doctest::Approx(30));   // floored at the top inset (bar height)
+    CHECK(p.height == doctest::Approx(200));
+}
+
+TEST_CASE("placePanelY: top and bottom insets are independent") {
+    // Big top inset, big bottom inset → the usable column shrinks from both ends.
+    Viewport v{1000, 700, 30, 8, 50, 8};
+    // Column = 700 - 30 - 50 = 620. A 700-tall panel fills it and pins to top=30.
+    auto p = placePanelY(0, 700, v);
+    CHECK(p.height == doctest::Approx(620));
+    CHECK(p.y == doctest::Approx(30));
+}
+
+TEST_CASE("chooseSideX: left and right insets are independent") {
+    // Asymmetric horizontal insets: wide left gutter, tight right.
+    Viewport v{1000, 700, 8, 4, 8, 60};  // top, right=4, bottom, left=60
+    // Parent right edge 820: 820+220=1040 > 1000-4=996 → right does NOT fit.
+    // Left edge 600-220=380 >= left inset 60 → left fits → 380.
+    Rect parent{600, 0, W, 100};
+    CHECK(chooseSideX(parent, W, v, Side::Right) == doctest::Approx(380));
+
+    // A parent whose left flip would violate the 60px left inset: leftX must be
+    // >= 60 to "fit". Parent left edge 250 → leftX = 30 < 60 → left does NOT fit.
+    // Right: 470+220=690 <= 996 → right fits → 470.
+    Rect parent2{250, 0, W, 100};
+    CHECK(chooseSideX(parent2, W, v, Side::Left) == doctest::Approx(470));
 }

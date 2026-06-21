@@ -220,7 +220,7 @@ static int findItemIndex(const std::vector<MenuDef>& items, const std::string& l
 namespace lay = yui::layout;
 
 static lay::Viewport viewport() {
-    return {g_winWidth, g_winHeight, c::SCREEN_MARGIN};
+    return lay::Viewport::uniform(g_winWidth, g_winHeight, c::SCREEN_MARGIN);
 }
 
 // Natural panel content height including vertical padding.

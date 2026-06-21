@@ -268,26 +268,21 @@ static int findItemIndex(const std::vector<MenuDef>& items, const std::string& l
 // cascading children. This example only walks the menu tree to find each panel's
 // anchor, then hands the geometry to the library.
 //
-// The menu bar reserves the top BAR_HEIGHT pixels, so a panel must never sit
-// above it. The library Viewport keeps panels an 8px margin from every edge; the
-// bar is taller than that, so we additionally floor the final Y at BAR_HEIGHT to
-// keep panels below the bar.
+// The menu bar reserves the top BAR_HEIGHT pixels, so panels must stay below it.
+// The library Viewport takes a per-edge inset, so the top inset IS the bar
+// height — placement clamps panels below the bar with no extra work. The bottom
+// inset keeps a small gap above the window's bottom edge.
 
 namespace lay = yui::layout;
 
 static lay::Viewport viewport() {
-    return {g_winWidth, g_winHeight, 8.0f};
+    return {g_winWidth, g_winHeight,
+            c::BAR_HEIGHT,  // top: reserve the menu bar
+            8, 20, 8};      // right, bottom, left
 }
 
 // Natural panel content height including vertical padding.
 static float panelHeight(float contentH) { return contentH + c::MENU_PAD_Y * 2; }
-
-// Keep a placed panel below the menu bar (the library clamps to the viewport
-// margin, which is smaller than the bar).
-static lay::PlacedRect belowBar(lay::PlacedRect p) {
-    if (p.y < c::BAR_HEIGHT) p.y = c::BAR_HEIGHT;
-    return p;
-}
 
 // Resolve the anchor for the panel at a given depth, then place it against the
 // window via the library. Recurses through ancestors to find the anchor.
@@ -298,8 +293,8 @@ static lay::PlacedRect menuPlacement(int openBar, const std::vector<std::string>
     if (depth == 0) {
         // A bar dropdown opens below its bar item.
         float anchorX = barItemX(openBar);
-        return belowBar(lay::placePanel({anchorX, c::BAR_HEIGHT},
-                                        {c::MENU_WIDTH, panelHeight(contentH)}, viewport(), capH));
+        return lay::placePanel({anchorX, c::BAR_HEIGHT},
+                               {c::MENU_WIDTH, panelHeight(contentH)}, viewport(), capH);
     }
 
     const auto& parentItems = resolveItems(openBar, activeItems, depth - 1);
@@ -313,9 +308,9 @@ static lay::PlacedRect menuPlacement(int openBar, const std::vector<std::string>
     // Submenu opens flush to the parent (side chosen by the library, never
     // overlapping); Y anchors to the parent row and clamps onto the screen.
     lay::Rect parentRect{parent.x, parent.y, c::MENU_WIDTH, parent.height};
-    return belowBar(lay::placeSubmenu(parentRect, anchorY,
-                                      {c::MENU_WIDTH, panelHeight(contentH)}, viewport(),
-                                      lay::Side::Right, capH));
+    return lay::placeSubmenu(parentRect, anchorY,
+                             {c::MENU_WIDTH, panelHeight(contentH)}, viewport(),
+                             lay::Side::Right, capH);
 }
 
 // ─── Menu item row ──────────────────────────────────────────────────────────

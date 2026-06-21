@@ -153,7 +153,11 @@ than hand-rolling the math.
 namespace yui::layout {
 struct Rect     { float x, y, w, h; };          // a DRAWN on-screen rect
 struct Vec      { float x, y; };
-struct Viewport { float width, height, margin = 8; };
+// Per-edge insets, so a host can reserve space asymmetrically (e.g. a menu bar:
+// top = BAR_HEIGHT, other edges small). Viewport::uniform(w, h, inset) for the
+// common same-on-every-side case.
+struct Viewport { float width, height, top = 8, right = 8, bottom = 8, left = 8;
+                  static Viewport uniform(float w, float h, float inset = 8); };
 enum class Side { Right, Left };
 
 // Vertical "move, don't shrink": shift up at the bottom edge; scroll only when

@@ -48,12 +48,24 @@ struct Vec {
     float x = 0, y = 0;
 };
 
-// The window/viewport the panel must stay inside, plus the margin to keep from
-// every edge. Construct once per placement pass and thread through.
+// The window/viewport the panel must stay inside, plus the inset to keep from
+// each edge. Construct once per placement pass and thread through.
+//
+// Edges are independent so a host can reserve space asymmetrically — e.g. a menu
+// bar that owns the top strip sets `top = BAR_HEIGHT` while the other edges stay
+// small. For the common "same inset on every side" case use Viewport::uniform.
 struct Viewport {
     float width = 0;
     float height = 0;
-    float margin = 8;  // keep panels this far from every edge
+    float top = 8;     // keep panels this far below the top edge
+    float right = 8;   // ...left of the right edge
+    float bottom = 8;  // ...above the bottom edge
+    float left = 8;    // ...right of the left edge
+
+    // Same inset on all four edges (the default for a plain window).
+    static Viewport uniform(float width, float height, float inset = 8) {
+        return {width, height, inset, inset, inset, inset};
+    }
 };
 
 // Which side of an anchor a cascading submenu prefers to open toward.
@@ -79,12 +91,12 @@ struct PlacedY {
 //   anchorY     the top the panel wants (e.g. a cursor Y, or a parent row's
 //               drawn top for a cascade)
 //   contentH    the panel's natural content height
-//   vp          the viewport (height + margin)
+//   vp          the viewport (height + top/bottom insets)
 //   fixedMaxH   optional hard cap on content height (e.g. an explicit maxHeight);
 //               0 means no cap
 //
 // The panel keeps full height and is shifted UP so its bottom rests at the
-// bottom margin, rather than being clamped below the anchor and scrolled. It
+// bottom inset, rather than being clamped below the anchor and scrolled. It
 // shrinks to the window column (and thus scrolls) ONLY when taller than the
 // whole column. This is the single source of the vertical math.
 inline PlacedY placePanelY(float anchorY, float contentH, const Viewport& vp,
@@ -92,8 +104,8 @@ inline PlacedY placePanelY(float anchorY, float contentH, const Viewport& vp,
     if (fixedMaxH > 0)
         contentH = std::min(contentH, fixedMaxH);
 
-    const float topLimit = vp.margin;
-    const float bottomLimit = vp.height - vp.margin;
+    const float topLimit = vp.top;
+    const float bottomLimit = vp.height - vp.bottom;
     const float columnH = bottomLimit - topLimit;
 
     float height = std::min(contentH, columnH);
@@ -107,7 +119,7 @@ inline PlacedY placePanelY(float anchorY, float contentH, const Viewport& vp,
 //
 //   parent      the parent panel's DRAWN rect (its real on-screen x/width)
 //   panelW      the submenu's width
-//   vp          the viewport (width + margin)
+//   vp          the viewport (width + left/right insets)
 //   prefer      the side to try first (Right for a left-to-right cascade)
 //
 // Prefer the side the submenu fully fits. If the preferred side doesn't fit but
@@ -121,8 +133,8 @@ inline float chooseSideX(const Rect& parent, float panelW, const Viewport& vp,
                          Side prefer = Side::Right) {
     const float rightX = parent.right();      // submenu left edge, opening right
     const float leftX = parent.x - panelW;    // submenu left edge, opening left
-    const bool rightFits = (rightX + panelW <= vp.width - vp.margin);
-    const bool leftFits = (leftX >= vp.margin);
+    const bool rightFits = (rightX + panelW <= vp.width - vp.right);
+    const bool leftFits = (leftX >= vp.left);
 
     const float roomRight = vp.width - rightX;  // space to the right of the parent
     const float roomLeft = parent.x;            // space to the left of the parent
@@ -161,7 +173,7 @@ struct PlacedRect {
 inline PlacedRect placePanel(Vec anchor, Vec panelSize, const Viewport& vp,
                              float fixedMaxH = 0) {
     auto py = placePanelY(anchor.y, panelSize.y, vp, fixedMaxH);
-    float x = clampRange(anchor.x, vp.margin, vp.width - panelSize.x - vp.margin);
+    float x = clampRange(anchor.x, vp.left, vp.width - panelSize.x - vp.right);
     return {x, py.y, py.height};
 }
 
