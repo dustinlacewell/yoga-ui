@@ -129,6 +129,44 @@ auto FormComponent = [&](ComponentContext& ctx) -> VNode {
 };
 ```
 
+### useElementRef
+
+A stable handle to a host element's rendered node, so you can read its drawn
+position after layout — the analog of React's `useRef` + `<div ref={ref}>` +
+`ref.current`. Attach it to a host element with `.ref(...)`, then read the node
+in an event handler (never during render):
+
+```cpp
+auto Menu = [&](ComponentContext& ctx) -> VNode {
+    auto rowRef = ctx.useElementRef();         // stable across re-renders
+    return Row({ Text("File"), Text("\xe2\x96\xb8") })
+        .ref(rowRef)                           // attaches to the Row (a host element)
+        .onHover([rowRef](bool over) {
+            if (!over) return;
+            Node* row = rowRef.current();       // nullptr if reconciled away — guard it
+            if (!row) return;
+            Rect r = rowRef.getBoundingRect();  // the row's absolute drawn rect
+            openSubmenuAt(r);
+        });
+};
+```
+
+- `current()` (alias `get()`) returns the live `Node*`, or `nullptr` — both when
+  the element has been reconciled away **and during render** (like React, refs
+  are null during render; read them only in handlers/effects against settled
+  layout). Always guard the result.
+- `getBoundingRect()` returns the element's absolute drawn rect (a
+  `layout::Rect`, scroll- and clamp-correct) — the analog of the DOM's
+  `getBoundingClientRect()`. Feed it into the placement helpers (see below) to
+  position floating panels.
+- `.ref(...)` only exists on host elements (Box, Text, Input, …), not on
+  `Component` — a component has no single node, so a ref on one is a compile
+  error, not a silent no-op.
+
+For positioning context menus / dropdowns / cascading submenus from a measured
+rect, see [Integration Notes — floating-panel placement](integration-notes.md)
+and `yui/layout/Placement.hpp` (`placePanel`, `placeSubmenu`).
+
 ### Hook Rules
 
 Hooks must be called in the same order every render — no conditional hooks:
