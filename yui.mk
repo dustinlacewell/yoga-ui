@@ -18,6 +18,7 @@ SOURCES += $(YUI_DIR)/src/core/EventHandler.cpp
 SOURCES += $(YUI_DIR)/src/core/Fiber.cpp
 SOURCES += $(YUI_DIR)/src/core/Host.cpp
 SOURCES += $(YUI_DIR)/src/core/Node.cpp
+SOURCES += $(YUI_DIR)/src/core/NodeRef.cpp
 SOURCES += $(YUI_DIR)/src/core/Reconciler.cpp
 
 # YUI NanoVG renderer (for VCV Rack / NanoVG hosts)

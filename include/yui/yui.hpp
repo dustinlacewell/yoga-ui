@@ -8,6 +8,7 @@
 #include <yui/core/Host.hpp>
 #include <yui/core/Measure.hpp>
 #include <yui/core/Node.hpp>
+#include <yui/core/NodeRef.hpp>
 #include <yui/core/Props.hpp>
 #include <yui/core/Store.hpp>
 #include <yui/core/VNode.hpp>

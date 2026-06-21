@@ -8,7 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "Fiber.hpp"  // HookTag
+#include "Fiber.hpp"     // HookTag
+#include "NodeRef.hpp"   // NodeRef (return type of useElementRef)
 
 namespace yui {
 
@@ -30,6 +31,12 @@ public:
     // useRef hook - returns a reference to persistent mutable storage
     template <typename T>
     T& useRef(T initial = T{});
+
+    // useElementRef hook - returns a stable element ref handle. Attach it to a
+    // host element with BuilderBase::ref(); read the node's drawn rect via the
+    // handle in an event handler (NOT during render). Returns the SAME underlying
+    // slot every render (React useRef identity stability).
+    NodeRef useElementRef();
 
     // useField hook - binds to a Store field for controlled inputs
     template <typename S, typename T>
@@ -128,6 +135,24 @@ T& ComponentContext::useRef(T initial) {
     }
 
     return std::any_cast<T&>(fiber_->hookState[index]);
+}
+
+inline NodeRef ComponentContext::useElementRef() {
+    // Occupies a positional + hookState slot like useRef. The NodeRef stored on
+    // first render owns a stable slot (shared_ptr); returning a copy each render
+    // hands back the SAME underlying slot, so a captured ref stays valid across
+    // re-renders (React useRef identity stability).
+    if (!checkHookTag(hookIndex_++, HookTag::Kind::ElementRef, std::type_index(typeid(NodeRef)))) {
+        throw std::runtime_error("yui: useElementRef hook changed across renders (rules-of-hooks violation)");
+    }
+
+    size_t index = stateSlot_++;
+
+    if (index >= fiber_->hookState.size()) {
+        fiber_->hookState.push_back(NodeRef{});
+    }
+
+    return std::any_cast<NodeRef&>(fiber_->hookState[index]);
 }
 
 template <typename S, typename T>

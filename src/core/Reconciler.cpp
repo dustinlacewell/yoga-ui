@@ -11,6 +11,18 @@ namespace yui {
 
 // --- Helpers for Child variant ---
 
+// Bind a VNode's element ref (if it set one via BuilderBase::ref) to the render
+// node created/reused for it. Captures the node's liveness token in lockstep so
+// the ref nulls out when the node is later destroyed (mirrors setFocusedInput).
+// Called at every site where a render Node is bound to its VNode, so the ref
+// self-heals across remounts (the bind re-runs each render the element appears).
+static void bindRefSlot(Node* node, const VNode& vnode) {
+    if (!vnode.ref || !node) return;
+    auto& slot = *vnode.ref->slot();
+    slot.node = node;
+    slot.alive = node->alive;
+}
+
 static bool isChildEmpty(const Child& child) {
     return std::visit(
         [](const auto& c) {
@@ -124,6 +136,7 @@ std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
     rootNode->updateProps(vnode.props);
     rootNode->key = vnode.key;
     rootNode->intKey = vnode.intKey;
+    bindRefSlot(rootNode.get(), vnode);
 
     auto fiber = std::make_unique<Fiber>();
     fiber->tag = Fiber::Tag::Host;
@@ -165,6 +178,7 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     node->updateProps(vnode.props);
     node->key = vnode.key;
     node->intKey = vnode.intKey;
+    bindRefSlot(node.get(), vnode);
     fiber->renderNode = node.get();
 
     // Check for autoFocus before moving ownership
@@ -279,6 +293,7 @@ void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
 
     // Update props on the render node
     fiber->renderNode->updateProps(vnode.props);
+    bindRefSlot(fiber->renderNode, vnode);
 
     // Reconcile children
     reconcileChildren(fiber, vnode.children, fiber->renderNode);
@@ -331,6 +346,7 @@ void Reconciler::reconcileHost(Fiber* fiber, const VNode& vnode) {
 
     // Update props
     fiber->renderNode->updateProps(vnode.props);
+    bindRefSlot(fiber->renderNode, vnode);
 
     // Update identity
     fiber->key = vnode.key;

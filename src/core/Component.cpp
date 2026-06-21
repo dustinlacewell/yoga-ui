@@ -15,10 +15,11 @@ ComponentContext::ComponentContext(Fiber* fiber, DirtyScheduler* host) : fiber_(
 namespace {
 const char* kindName(HookTag::Kind k) {
     switch (k) {
-        case HookTag::Kind::State:  return "useState";
-        case HookTag::Kind::Ref:    return "useRef";
-        case HookTag::Kind::Field:  return "useField";
-        case HookTag::Kind::Effect: return "useEffect";
+        case HookTag::Kind::State:      return "useState";
+        case HookTag::Kind::Ref:        return "useRef";
+        case HookTag::Kind::Field:      return "useField";
+        case HookTag::Kind::Effect:     return "useEffect";
+        case HookTag::Kind::ElementRef: return "useElementRef";
     }
     return "?";
 }

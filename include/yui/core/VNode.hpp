@@ -1,9 +1,11 @@
 #pragma once
 
+#include "NodeRef.hpp"
 #include "Props.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -94,6 +96,12 @@ struct VNode {
     std::vector<Child> children;
     bool isEmpty = false;
 
+    // Optional element ref: when set via BuilderBase::ref(), the reconciler binds
+    // this handle's slot to the render Node created for this VNode, so a consumer
+    // can read the node's drawn rect. Empty for the vast majority of nodes; the
+    // shared_ptr inside copies cheaply with the VNode.
+    std::optional<NodeRef> ref;
+
     // Primitive type derived from the active props alternative.
     PrimitiveType type() const { return static_cast<PrimitiveType>(props.index()); }
 
@@ -129,6 +137,16 @@ public:
     }
     Derived& setKey(int64_t k) {
         node_.intKey = k;
+        return self();
+    }
+
+    // --- Element ref ---
+    // Attach a NodeRef (from ComponentContext::useElementRef) to this element, so
+    // the consumer can read its drawn rect after layout. Host elements only —
+    // a Component is not a BuilderBase, so a ref on a component is a compile error
+    // (not a silent no-op): there is no single node to bind.
+    Derived& ref(NodeRef r) {
+        node_.ref = std::move(r);
         return self();
     }
 

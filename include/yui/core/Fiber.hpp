@@ -32,7 +32,7 @@ struct DirtyScheduler;
 // Effects carry no value type; they tag as Kind::Effect / typeid(void) so an
 // effect that swaps places with a state hook is still caught.
 struct HookTag {
-    enum class Kind { State, Ref, Field, Effect };
+    enum class Kind { State, Ref, Field, Effect, ElementRef };
     Kind kind;
     std::type_index type;
 
