@@ -185,6 +185,21 @@ public:
             installedMeasurer_->detachHost(this);
         installedMeasurer_ = measurer;
         YGConfigSetContext(config_.get(), measurer);
+        // Every Text node's cached Yoga measurement was produced by the PREVIOUS
+        // measurer (or, on first install, by the heuristic fallback used while no
+        // measurer was set). Those cached sizes are now wrong — but a measure-func
+        // node is only re-measured when it is marked dirty, and reconciliation
+        // dirties a Text node only when its string/fontSize prop changes. A node
+        // that never changes (e.g. a constant glyph like a submenu chevron) would
+        // otherwise keep its stale first-pass fallback width forever, leaving the
+        // glyph mis-sized and mis-placed. Swapping the measurer invalidates ALL
+        // text measurements, so dirty every measure node in the live tree to force
+        // re-measure on the next layout pass — and flag the host dirty so that
+        // pass actually runs (update() only calls calculateLayout when dirty_).
+        if (renderRoot_) {
+            markMeasureNodesDirty(renderRoot_.get());
+            markDirty();
+        }
         if (measurer) {
             YGConfigRef cfg = config_.get();
             // Run by ~ITextMeasurer (measurer-dies-first) while this host is still
@@ -361,6 +376,20 @@ public:
     }
 
 private:
+    // Recursively dirty every measure-func node (Text) in a subtree so the next
+    // layout pass re-measures it. Used when the text measurer is swapped: all
+    // cached measurements were produced by the old measurer / fallback and are
+    // stale. Only Text nodes carry a Yoga measure func, and YGNodeMarkDirty asserts
+    // a measure func exists — so guard on the node type.
+    static void markMeasureNodesDirty(Node* node) {
+        if (!node)
+            return;
+        if (node->type() == PrimitiveType::Text && node->yogaNode)
+            YGNodeMarkDirty(node->yogaNode);
+        for (auto& child : node->children)
+            markMeasureNodesDirty(child.get());
+    }
+
     // Backstop wrappers for the noexcept event entrypoints: run the body, and on a
     // throw that slipped past the per-callback isolation inside EventHandler route
     // it to the sink instead of propagating through noexcept. bool variants return

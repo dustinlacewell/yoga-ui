@@ -111,6 +111,47 @@ TEST_CASE("Text updates trigger relayout") {
 }
 
 // ---------------------------------------------------------------------------
+// Installing a measurer invalidates measurements cached under the previous
+// measurer / fallback. A Text whose string never changes is dirtied by reconcile
+// only on a prop change; its first measurement — taken under the fallback before
+// the backend measurer was installed on the first draw — would otherwise stick
+// forever. (Real-world symptom: a constant submenu chevron glyph measured by the
+// byte-count fallback rendered ~3x too wide and mis-aligned. Regression guard.)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Installing a measurer re-measures unchanged text laid out under fallback") {
+    class TestHost : public Host {
+    public:
+        using Host::Host;
+        void install(ITextMeasurer* m) { setTextMeasurer(m); }
+    } host;
+
+    // A constant 3-char string in a left-aligning, wider parent so Yoga measures
+    // its intrinsic width. NOTE: the string is identical across both renders, so
+    // reconcile NEVER dirties this Text — only the measurer swap can.
+    auto render = [] {
+        return Column({Text("abc").fontSize(10).setKey("t")})
+            .width(200)
+            .alignItems(AlignItems::FlexStart);
+    };
+
+    // First layout with NO measurer installed → fallback (0.6 * fontSize/char):
+    // "abc" = 3 * (10 * 0.6) = 18.
+    host.setRender(render);
+    host.update(200, 100);
+    CHECK(host.root()->children[0]->layout.width == doctest::Approx(18.0f).epsilon(0.1));
+
+    // Now install a measurer that reports a DIFFERENT width (5px/char → 15).
+    // Without the invalidation in setTextMeasurer, the Text keeps its stale 18.
+    FnMeasurer measurer(perChar(5.0f));
+    host.install(&measurer);
+    host.update(200, 100);
+
+    CHECK(measurer.calls() > 0);
+    CHECK(host.root()->children[0]->layout.width == doctest::Approx(15.0f));  // 3 * 5
+}
+
+// ---------------------------------------------------------------------------
 // B7: per-host measurement — two hosts with distinct measurers do not clobber
 // each other (impossible under the old process-global Measure singleton).
 // ---------------------------------------------------------------------------
