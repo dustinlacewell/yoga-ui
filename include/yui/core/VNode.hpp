@@ -294,6 +294,8 @@ public:
     TextBuilder& text(std::string v) { return p([&](TextProps& t) { t.text = std::move(v); }); }
     TextBuilder& fontSize(float v) { return p([&](TextProps& t) { t.fontSize = v; }); }
     TextBuilder& color(uint32_t v) { return p([&](TextProps& t) { t.color = v; }); }
+    // Render/measure with a registered font face by name (see TextProps::font).
+    TextBuilder& font(std::string v) { return p([&](TextProps& t) { t.font = std::move(v); }); }
     TextBuilder& hoverStyle(TextStyle s) {
         return p([&](TextProps& t) { t.hoverStyle = std::move(s); });
     }
@@ -320,6 +322,8 @@ public:
     InputBuilder& password(bool v) { return p([&](InputProps& i) { i.password = v; }); }
     InputBuilder& fontSize(float v) { return p([&](InputProps& i) { i.fontSize = v; }); }
     InputBuilder& color(uint32_t v) { return p([&](InputProps& i) { i.color = v; }); }
+    // Render/measure with a registered font face by name (see TextProps::font).
+    InputBuilder& font(std::string v) { return p([&](InputProps& i) { i.font = std::move(v); }); }
     InputBuilder& backgroundColor(uint32_t v) {
         return p([&](InputProps& i) { i.backgroundColor = v; });
     }

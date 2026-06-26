@@ -366,7 +366,11 @@ TextNode::TextNode(YGConfigRef config) : Node(config) {
 void TextNode::updateProps(const PropsVariant& p) {
     const auto& newProps = std::get<TextProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
-    bool textChanged = newProps.text != props.text || newProps.fontSize != props.fontSize;
+    // The font affects measured width as much as the text/size do; without it in
+    // the predicate a `.font()`-only change would not re-mark the Yoga node dirty
+    // and would keep a stale measurement (the mis-sized-glyph class of bug).
+    bool textChanged = newProps.text != props.text || newProps.fontSize != props.fontSize
+                       || newProps.font != props.font;
     props = newProps;
     if (layoutChanged) {
         applyLayoutProps(props);
@@ -391,13 +395,16 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
 
     float fontSize = textNode->props.fontSize.value_or(render_defaults::kDefaultFontSize);
     float maxWidth = (widthMode == YGMeasureModeUndefined) ? 0 : width;
+    // Measure in the node's requested font face (empty ⇒ default) so the measured
+    // size matches what drawText will render with.
+    const std::string& font = textNode->props.font.value_or(std::string{});
 
     // The host's text measurer lives in the per-host Yoga config context. Recover
     // it from this node's config; fall back to the heuristic when none is set.
     auto* measurer = static_cast<const ITextMeasurer*>(
         YGConfigGetContext(YGNodeGetConfig(const_cast<YGNodeRef>(node))));
-    Size size = measurer ? measurer->measure(textNode->props.text, fontSize, maxWidth)
-                         : fallbackMeasure(textNode->props.text, fontSize, maxWidth);
+    Size size = measurer ? measurer->measure(textNode->props.text, fontSize, maxWidth, font)
+                         : fallbackMeasure(textNode->props.text, fontSize, maxWidth, font);
     return {size.width, size.height};
 }
 

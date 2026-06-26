@@ -15,9 +15,16 @@ namespace sdl {
 
 SdlRenderer::SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, int baseFontSize,
                          ErrorHandler onError)
-    : renderer_(renderer), fontPath_(fontPath), baseFontSize_(baseFontSize), onError_(std::move(onError)) {
-    // Pre-load base font
-    getFont(baseFontSize);
+    : renderer_(renderer), baseFontSize_(baseFontSize), onError_(std::move(onError)) {
+    // The construction-time font is the default face, registered under the empty
+    // name (what an unset Text/Input `.font` resolves to).
+    fonts_[std::string{}] = FontFace{fontPath, {}};
+    // Pre-load the default base font.
+    getFont(std::string{}, baseFontSize);
+}
+
+void SdlRenderer::registerFont(const std::string& name, const std::string& path) {
+    fonts_[name] = FontFace{path, {}};
 }
 
 void SdlRenderer::reportError(std::string_view where, const std::exception* eOrNull) noexcept {
@@ -30,40 +37,52 @@ void SdlRenderer::reportError(std::string_view where, const std::exception* eOrN
 }
 
 SdlRenderer::~SdlRenderer() {
-    // Clean up font cache
-    for (auto& [size, font] : fontCache_) {
-        if (font)
-            TTF_CloseFont(font);
+    // Close every opened (face, size) TTF_Font across all registered faces.
+    for (auto& [name, face] : fonts_) {
+        for (auto& [size, font] : face.sizes) {
+            if (font)
+                TTF_CloseFont(font);
+        }
+        face.sizes.clear();
     }
-    fontCache_.clear();
+    fonts_.clear();
 }
 
-TTF_Font* SdlRenderer::getFont(int size) const {
+TTF_Font* SdlRenderer::getFont(const std::string& font, int size) const {
     if (size < 1)
         size = 1;
 
-    auto it = fontCache_.find(size);
-    if (it != fontCache_.end())
+    // Resolve the named face; fall back to the default ("") for empty/unknown.
+    auto faceIt = fonts_.find(font);
+    if (faceIt == fonts_.end())
+        faceIt = fonts_.find(std::string{});
+    if (faceIt == fonts_.end())
+        return nullptr;
+    const FontFace& face = faceIt->second;
+
+    auto it = face.sizes.find(size);
+    if (it != face.sizes.end())
         return it->second;
 
-    TTF_Font* font = TTF_OpenFont(fontPath_.c_str(), size);
-    if (font) {
-        fontCache_[size] = font;
+    TTF_Font* f = TTF_OpenFont(face.path.c_str(), size);
+    if (f) {
+        face.sizes[size] = f;
     }
-    return font;
+    return f;
 }
 
-Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidth) const {
+Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidth,
+                          const std::string& font) const {
     if (text.empty())
         return {0, fontSize};
 
     int size = static_cast<int>(fontSize + 0.5f);
-    TTF_Font* font = getFont(size);
-    if (!font)
+    TTF_Font* fontPtr = getFont(font, size);
+    if (!fontPtr)
         return {0, fontSize};
 
     int w = 0, h = 0;
-    TTF_SizeUTF8(font, text.c_str(), &w, &h);
+    TTF_SizeUTF8(fontPtr, text.c_str(), &w, &h);
 
     float width = static_cast<float>(w);
     float height = static_cast<float>(h);
@@ -200,7 +219,7 @@ void SdlRenderer::renderText(TextNode* node, float x, float y) {
             color = *p.focusStyle->color;
     }
 
-    drawText(node->props.text, x, y, fontSize, color);
+    drawText(node->props.text, x, y, fontSize, color, p.font.value_or(std::string{}));
 }
 
 void SdlRenderer::renderInput(InputNode* node, float x, float y) {
@@ -263,6 +282,8 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
 
     const float padding = rd::kInputTextPad;
 
+    const std::string inputFont = p.font.value_or(std::string{});
+
     std::string displayText;
     if (!p.value.empty()) {
         if (p.password.value_or(false)) {
@@ -270,9 +291,10 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
         } else {
             displayText = p.value;
         }
-        drawText(displayText, x + padding, y + (h - fontSize) / 2, fontSize, color);
+        drawText(displayText, x + padding, y + (h - fontSize) / 2, fontSize, color, inputFont);
     } else if (p.placeholder) {
-        drawText(*p.placeholder, x + padding, y + (h - fontSize) / 2, fontSize, rd::kPlaceholderColor);
+        drawText(*p.placeholder, x + padding, y + (h - fontSize) / 2, fontSize,
+                 rd::kPlaceholderColor, inputFont);
     }
 
     // Blinking focus caret — mirrors the NanoVG backend (NvgRenderer::drawInput).
@@ -291,7 +313,7 @@ void SdlRenderer::renderInput(InputNode* node, float x, float y) {
             // Advance past the rendered text. Measure the masked display string so
             // the caret tracks password dots, matching NanoVG.
             if (!displayText.empty()) {
-                if (TTF_Font* font = getFont(static_cast<int>(fontSize + 0.5f))) {
+                if (TTF_Font* font = getFont(inputFont, static_cast<int>(fontSize + 0.5f))) {
                     int textW = 0;
                     int textH = 0;
                     TTF_SizeUTF8(font, displayText.c_str(), &textW, &textH);
@@ -457,12 +479,13 @@ void SdlRenderer::drawRoundedRect(float x, float y, float w, float h, float radi
     }
 }
 
-void SdlRenderer::drawText(const std::string& text, float x, float y, float fontSize, uint32_t color) {
+void SdlRenderer::drawText(const std::string& text, float x, float y, float fontSize, uint32_t color,
+                           const std::string& fontName) {
     if (text.empty())
         return;
 
     int size = static_cast<int>(fontSize + 0.5f);
-    TTF_Font* font = getFont(size);
+    TTF_Font* font = getFont(fontName, size);
     if (!font)
         return;
 

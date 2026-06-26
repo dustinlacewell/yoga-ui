@@ -13,6 +13,37 @@ namespace nvg {
 NvgRenderer::NvgRenderer(NVGcontext* vg, int fontId, ErrorHandler onError)
     : vg_(vg), fontId_(fontId), onError_(std::move(onError)) {}
 
+int NvgRenderer::registerFont(const std::string& name, const std::string& path) {
+    if (!vg_)
+        return -1;
+    int handle = nvgCreateFont(vg_, name.c_str(), path.c_str());
+    if (handle >= 0)
+        fonts_[name] = handle;
+    return handle;
+}
+
+void NvgRenderer::registerFont(const std::string& name, int existingHandle) {
+    if (existingHandle >= 0)
+        fonts_[name] = existingHandle;
+}
+
+void NvgRenderer::selectFont(const std::string& name) const {
+    // Named face if registered; otherwise the renderer default (fontId_, else
+    // nanovg's "default"). Keeps draw and measure on the SAME face for a node.
+    if (!name.empty()) {
+        auto it = fonts_.find(name);
+        if (it != fonts_.end()) {
+            nvgFontFaceId(vg_, it->second);
+            return;
+        }
+    }
+    if (fontId_ >= 0) {
+        nvgFontFaceId(vg_, fontId_);
+    } else {
+        nvgFontFace(vg_, "default");
+    }
+}
+
 void NvgRenderer::reportError(std::string_view where, const std::exception* eOrNull) noexcept {
     if (!onError_)
         return;
@@ -22,17 +53,14 @@ void NvgRenderer::reportError(std::string_view where, const std::exception* eOrN
     }
 }
 
-Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidth) const {
+Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidth,
+                          const std::string& font) const {
     if (!vg_) {
-        return fallbackMeasure(text, fontSize, maxWidth);
+        return fallbackMeasure(text, fontSize, maxWidth, font);
     }
 
     nvgFontSize(vg_, fontSize);
-    if (fontId_ >= 0) {
-        nvgFontFaceId(vg_, fontId_);
-    } else {
-        nvgFontFace(vg_, "default");
-    }
+    selectFont(font);
 
     float bounds[4];
     float width = nvgTextBounds(vg_, 0, 0, text.c_str(), nullptr, bounds);
@@ -194,11 +222,7 @@ void NvgRenderer::drawText(DrawContext& ctx, TextNode* node) {
     }
 
     nvgFontSize(vg_, fontSize);
-    if (fontId_ >= 0) {
-        nvgFontFaceId(vg_, fontId_);
-    } else {
-        nvgFontFace(vg_, "default");
-    }
+    selectFont(p.font.value_or(std::string{}));
     nvgFillColor(vg_, nvgRGBA((c >> 24) & 0xFF, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF));
     nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
     nvgText(vg_, x, y, p.text.c_str(), nullptr);
@@ -390,14 +414,12 @@ void NvgRenderer::drawInput(DrawContext& ctx, InputNode* node) {
         textColor = rd::kPlaceholderColor;
     }
 
-    // Set up font for text and cursor measurement
+    // Set up font for text and cursor measurement. Select the input's face BEFORE
+    // any nvgTextBounds below so the cursor X is measured in the same face it is
+    // drawn in (the input analog of the measured-vs-drawn mismatch).
     constexpr float textPad = rd::kInputTextPad;
     nvgFontSize(vg_, fontSize);
-    if (fontId_ >= 0) {
-        nvgFontFaceId(vg_, fontId_);
-    } else {
-        nvgFontFace(vg_, "default");
-    }
+    selectFont(p.font.value_or(std::string{}));
     nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
 
     if (!textToDraw.empty()) {

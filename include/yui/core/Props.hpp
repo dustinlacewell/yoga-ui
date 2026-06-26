@@ -126,6 +126,10 @@ struct TextProps : LayoutProps, EventProps {
     std::string text;
     std::optional<float> fontSize;
     std::optional<uint32_t> color;
+    // Registered font face to render/measure with (empty/unset ⇒ the default
+    // font). Selected by NAME so it is backend-agnostic and stable across a GL
+    // context rebuild; the renderer resolves the name to a backend handle.
+    std::optional<std::string> font;
 
     // State-based style overrides
     std::optional<TextStyle> hoverStyle;
@@ -139,6 +143,7 @@ struct InputProps : LayoutProps, EventProps {
     std::optional<bool> password;
     std::optional<float> fontSize;
     std::optional<uint32_t> color;
+    std::optional<std::string> font;  // registered font face (see TextProps::font)
     std::optional<uint32_t> backgroundColor;
     std::optional<uint32_t> borderColor;
     std::optional<float> borderWidth;

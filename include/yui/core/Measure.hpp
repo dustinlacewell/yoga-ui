@@ -18,8 +18,12 @@ struct Size {
 
 // Rough text size estimate used when no backend measurer is available.
 // Assumes ~0.6 * fontSize per character for width, fontSize for height.
-// maxWidth (0 = no limit) clamps the reported width for wrapping.
-inline Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth) {
+// maxWidth (0 = no limit) clamps the reported width for wrapping. The heuristic
+// is font-agnostic (a byte-count estimate), so it ignores any font name — the
+// parameter exists only to keep one uniform measure signature.
+inline Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth,
+                            const std::string& font = {}) {
+    (void)font;
     float charWidth = fontSize * 0.6f;
     float width = static_cast<float>(text.length()) * charWidth;
     if (maxWidth > 0 && width > maxWidth) {
@@ -54,8 +58,12 @@ struct ITextMeasurer {
     }
 
     // Measure text at the given font size. maxWidth (0 = no limit) is the
-    // wrapping constraint from layout.
-    virtual Size measure(const std::string& text, float fontSize, float maxWidth) const = 0;
+    // wrapping constraint from layout. `font` names a registered font face (empty
+    // ⇒ the host/renderer default); it MUST be honored so a node's measured size
+    // matches its drawn size (a glyph measured in the wrong face mis-sizes the
+    // layout). Implementations fall back to the default face for an unknown name.
+    virtual Size measure(const std::string& text, float fontSize, float maxWidth,
+                         const std::string& font) const = 0;
 
 private:
     friend class Host;

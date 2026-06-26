@@ -6,6 +6,7 @@
 #include <exception>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 // Forward declare NanoVG context
 struct NVGcontext;
@@ -27,7 +28,19 @@ public:
     void render(Node* root) noexcept;
 
     // ITextMeasurer: measure text using this renderer's nanovg context/font.
-    Size measure(const std::string& text, float fontSize, float maxWidth) const override;
+    Size measure(const std::string& text, float fontSize, float maxWidth,
+                 const std::string& font) const override;
+
+    // Register a named font face usable from Text/Input `.font(name)`.
+    //   - From a .ttf path: loads it via nvgCreateFont and returns the handle
+    //     (or -1 on failure). The name is what consumers reference.
+    //   - From an existing nanovg font handle: aliases `name` to a font already
+    //     loaded into this context (e.g. the host's UI font), no reload.
+    // Per-renderer (hence per-host / per-GL-context): the handles die with the
+    // context, exactly when this renderer does. Re-register by name after a
+    // context rebuild. Returns the handle.
+    int registerFont(const std::string& name, const std::string& path);
+    void registerFont(const std::string& name, int existingHandle);
 
 private:
     struct DrawContext {
@@ -45,9 +58,19 @@ private:
     // Route a caught draw exception to the optional sink (no-op if unset).
     void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
 
+    // Select the nanovg face for a (possibly empty) font name: a registered name
+    // → its handle; empty/unknown → the default (fontId_, else nvg "default").
+    // Shared by drawText/drawInput/measure so draw and measure never diverge.
+    void selectFont(const std::string& name) const;
+
     NVGcontext* vg_;
     int fontId_;
     ErrorHandler onError_;
+
+    // Named font registry (name → nanovg handle). Resolved by selectFont; the
+    // handles are owned by vg_ and die with it. Read-only in measure()/selectFont
+    // (const), populated only by registerFont.
+    std::unordered_map<std::string, int> fonts_;
 };
 
 }  // namespace nvg

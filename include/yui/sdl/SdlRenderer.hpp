@@ -30,8 +30,16 @@ public:
     // draw callback (a C boundary), so a throw must never escape.
     void render(Node* root) noexcept;
 
-    // ITextMeasurer: measure text using this renderer's font cache.
-    Size measure(const std::string& text, float fontSize, float maxWidth) const override;
+    // ITextMeasurer: measure text using this renderer's font cache. `font` selects
+    // a registered named face (empty/unknown ⇒ the default font this renderer was
+    // constructed with).
+    Size measure(const std::string& text, float fontSize, float maxWidth,
+                 const std::string& font) const override;
+
+    // Register a named font face (a .ttf path) usable from Text/Input `.font(name)`.
+    // Fonts open lazily per size on first use. The default font supplied at
+    // construction is registered under the empty name "".
+    void registerFont(const std::string& name, const std::string& path);
 
 private:
     void renderNode(Node* node, float offsetX, float offsetY);
@@ -44,21 +52,30 @@ private:
     // Draw a rounded rectangle (uses SDL2_gfx)
     void drawRoundedRect(float x, float y, float w, float h, float radius, uint32_t color, bool filled);
 
-    // Draw text at native font size (no scaling)
-    void drawText(const std::string& text, float x, float y, float fontSize, uint32_t color);
+    // Draw text at native font size (no scaling), in the named face.
+    void drawText(const std::string& text, float x, float y, float fontSize, uint32_t color,
+                  const std::string& font);
 
-    // Get or create a font at the specified size (lazily fills the cache).
-    TTF_Font* getFont(int size) const;
+    // Get or create the TTF_Font for (font name, size), lazily filling the cache.
+    // An empty/unknown name resolves to the default font.
+    TTF_Font* getFont(const std::string& font, int size) const;
 
     // Route a caught draw exception to the optional sink (no-op if unset).
     void reportError(std::string_view where, const std::exception* eOrNull) noexcept;
 
     SDL_Renderer* renderer_;
-    std::string fontPath_;
     int baseFontSize_;
     ErrorHandler onError_;
-    // Mutable: lazily populated by getFont, including from const measure().
-    mutable std::unordered_map<int, TTF_Font*> fontCache_;
+
+    // A registered named face: its .ttf path plus a lazily-filled per-size cache
+    // of opened fonts. The default font (construction-time fontPath) lives under
+    // the empty name "".
+    struct FontFace {
+        std::string path;
+        // Mutable: lazily populated by getFont, including from const measure().
+        mutable std::unordered_map<int, TTF_Font*> sizes;
+    };
+    std::unordered_map<std::string, FontFace> fonts_;
 };
 
 // Initialize SDL2 and SDL2_ttf (call once at startup)

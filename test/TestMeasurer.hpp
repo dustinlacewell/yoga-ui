@@ -16,11 +16,17 @@ namespace yui::test {
 // so tests can assert a measurer was (or was not) called.
 class FnMeasurer : public ITextMeasurer {
 public:
+    // The function still takes only (text, fontSize, maxWidth) — existing tests
+    // construct it that way and don't care about the face. The ITextMeasurer
+    // override accepts the new `font` param and drops it. A font-aware test can
+    // use FnMeasurerF below.
     using Fn = std::function<Size(const std::string& text, float fontSize, float maxWidth)>;
 
     explicit FnMeasurer(Fn fn) : fn_(std::move(fn)) {}
 
-    Size measure(const std::string& text, float fontSize, float maxWidth) const override {
+    Size measure(const std::string& text, float fontSize, float maxWidth,
+                 const std::string& font) const override {
+        (void)font;
         ++calls_;
         return fn_(text, fontSize, maxWidth);
     }
