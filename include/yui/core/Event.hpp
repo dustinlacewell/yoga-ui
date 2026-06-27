@@ -4,6 +4,8 @@
 
 namespace yui {
 
+class Node;
+
 // Mouse button
 enum class MouseButton { Left, Right, Middle };
 
@@ -46,6 +48,14 @@ struct Event {
     bool keyRepeat = false; // True if this is a key repeat event
 
     bool consumed = false;  // Set to stop propagation
+
+    // For MouseUp only: the node that received the matching MouseDown (the press
+    // target), or null. A click fires only on the handler node that ALSO received
+    // the press — so a release whose press landed elsewhere (e.g. an orphan
+    // release from opening an overlay under the cursor) does not fire onClick.
+    // Compared against the handler-bearing node in the bubble walk, so a press and
+    // release that resolve to the same onClick ancestor still count as a click.
+    Node* pressedTarget = nullptr;
 
     void consume() { consumed = true; }
 };

@@ -6,6 +6,19 @@ namespace yui {
 
 namespace {
 
+// Is `ancestor` the same node as `node` or one of its ancestors? Used by click
+// press/release matching: a click fires on a handler node when the press leaf is
+// within that node's subtree (so press-on-child + handler-on-parent still clicks),
+// bounded by the same depth guard the bubble walk uses.
+bool isAncestorOrSelf(const Node* ancestor, const Node* node, int maxDepth) {
+    int depth = 0;
+    for (const Node* n = node; n && depth < maxDepth; n = n->parent, ++depth) {
+        if (n == ancestor)
+            return true;
+    }
+    return false;
+}
+
 // Invoke a user callback inside its own try, routing any throw to the sink.
 // Returns true iff the callback ran to completion. For hover/focus the state
 // mutation has already committed (the caller structures it so) so an isolated
@@ -33,6 +46,12 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     // Update focus on click
     updateFocus(target);
 
+    // Remember the press target (+ button) so the matching release fires a click
+    // only on the node that ALSO received the press. Recorded even when target is
+    // null so a press on empty space can't leave a stale prior press to match a
+    // later release.
+    setPressedNode(target, button);
+
     if (!target)
         return false;
 
@@ -47,6 +66,13 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
 
 bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton button) noexcept {
     Node* target = hitTest(root, x, y);
+
+    // The press this release must match (null if the pressed node was reconciled
+    // away or the button differs). Read once, then clear: a press pairs with at
+    // most one release, and a stale press must not match a later unrelated one.
+    Node* pressed = (livePressedNode() && pressedButton_ == button) ? pressedNode_ : nullptr;
+    setPressedNode(nullptr);
+
     if (!target)
         return false;
 
@@ -55,6 +81,7 @@ bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton butto
     event.x = x;
     event.y = y;
     event.button = button;
+    event.pressedTarget = pressed;
 
     return dispatchEvent(target, event);
 }
@@ -278,8 +305,15 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
         }
     }
 
-    // Handle click events (mouseUp triggers click)
-    if (event.type == Event::Type::MouseUp) {
+    // Handle click events (mouseUp triggers click). A click fires on this
+    // handler-bearing node only if the press leaf (event.pressedTarget) is within
+    // this node's subtree — i.e. press and release both bubble through this node.
+    // So press-on-child + handler-on-parent still clicks, an in-node click works,
+    // but a release whose press landed elsewhere (an orphan release, e.g. from
+    // opening an overlay under the cursor) fires nothing.
+    bool pressMatches = event.pressedTarget
+                        && isAncestorOrSelf(node, event.pressedTarget, maxTreeDepth_);
+    if (event.type == Event::Type::MouseUp && pressMatches) {
         if (event.button == MouseButton::Left && onClick && *onClick) {
             if (fireCallback("onClick", [&] { (*onClick)(); }, report))
                 event.consume();

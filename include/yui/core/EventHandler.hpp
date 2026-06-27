@@ -72,6 +72,9 @@ public:
         if (focusedInput_ == node) {
             setFocusedInput(nullptr);
         }
+        if (pressedNode_ == node) {
+            setPressedNode(nullptr);
+        }
     }
 
     // Hit test: find deepest node containing point. `depth` bounds the descent
@@ -119,6 +122,31 @@ private:
         return focusedInput_;
     }
 
+    // Record the node that received the most recent mouse press, with its button,
+    // capturing the liveness token in lockstep (mirrors setFocusedInput). The
+    // MouseUp dispatch matches a click against this so a release with no matching
+    // press on the same node fires nothing.
+    void setPressedNode(Node* node, MouseButton button = MouseButton::Left) {
+        pressedNode_ = node;
+        pressedButton_ = button;
+        pressedNodeAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    }
+
+    // Return pressedNode_ only if its node is still alive; otherwise clear the
+    // stale pointer and return nullptr (mirrors liveFocusedInput — a node freed by
+    // a reconciliation between press and release can never be dereferenced).
+    Node* livePressedNode() const {
+        if (!pressedNode_)
+            return nullptr;
+        auto alive = pressedNodeAlive_.lock();
+        if (!alive || !*alive) {
+            pressedNode_ = nullptr;
+            pressedNodeAlive_.reset();
+            return nullptr;
+        }
+        return pressedNode_;
+    }
+
     // Which keyboard handler a routing search is looking for.
     enum class KeyPhase { Down, Up };
 
@@ -153,6 +181,12 @@ private:
     // liveness token (Node::alive) without owning it.
     mutable InputNode* focusedInput_ = nullptr;
     mutable std::weak_ptr<bool> focusedInputAlive_;
+    // The node that received the last mouse press (+ its button), for click
+    // press/release matching. mutable: livePressedNode() lazily clears a stale
+    // press; pressedNodeAlive_ observes the node's liveness token without owning.
+    mutable Node* pressedNode_ = nullptr;
+    mutable std::weak_ptr<bool> pressedNodeAlive_;
+    MouseButton pressedButton_ = MouseButton::Left;
 };
 
 }  // namespace yui

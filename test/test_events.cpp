@@ -68,6 +68,7 @@ TEST_CASE("Right click handler fires") {
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
+    events.handleMouseDown(root, 50, 50, MouseButton::Right);
     events.handleMouseUp(root, 50, 50, MouseButton::Right);
     CHECK(rightClicked);
 }
@@ -89,6 +90,7 @@ TEST_CASE("Click bubbles to parent") {
     root->calculateLayout(100, 100);
 
     // Click on inner (which has no handler)
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
     events.handleMouseUp(root, 25, 25, MouseButton::Left);
 
     // Should bubble to parent
@@ -114,10 +116,70 @@ TEST_CASE("Click consumption stops bubbling") {
     root->calculateLayout(100, 100);
 
     // Click on inner
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
     events.handleMouseUp(root, 25, 25, MouseButton::Left);
 
     CHECK(innerClicked);
     CHECK(!outerClicked);  // Stopped by inner handler
+}
+
+TEST_CASE("onClick requires press and release on the same node") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    // Two side-by-side boxes, each with its own onClick.
+    bool aClicked = false, bClicked = false;
+    auto tree = Box({
+                        Box().width(50).height(100).setKey("a").onClick([&]() { aClicked = true; }),
+                        Box().width(50).height(100).setKey("b").onClick([&]() { bClicked = true; }),
+                    })
+                    .flexDirection(FlexDirection::Row)
+                    .width(100).height(100);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    SUBCASE("press and release on the same node clicks") {
+        events.handleMouseDown(root, 25, 50, MouseButton::Left);  // box A
+        events.handleMouseUp(root, 25, 50, MouseButton::Left);    // box A
+        CHECK(aClicked);
+        CHECK(!bClicked);
+    }
+
+    SUBCASE("press on A, release on B fires neither") {
+        events.handleMouseDown(root, 25, 50, MouseButton::Left);  // box A
+        events.handleMouseUp(root, 75, 50, MouseButton::Left);    // box B
+        CHECK(!aClicked);
+        CHECK(!bClicked);
+    }
+
+    SUBCASE("bare release with no press fires nothing (the orphan-release case)") {
+        events.handleMouseUp(root, 25, 50, MouseButton::Left);    // box A, no prior press
+        CHECK(!aClicked);
+        CHECK(!bClicked);
+    }
+}
+
+TEST_CASE("onClick fires on a handler ancestor when press and release share it") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    // Only the PARENT has onClick; press and release both land on the inner child.
+    bool parentClicked = false;
+    auto tree = Box({
+                        Box().width(50).height(50).setKey("inner"),
+                    })
+                    .width(100).height(100)
+                    .onClick([&]() { parentClicked = true; });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);  // inner child
+    events.handleMouseUp(root, 25, 25, MouseButton::Left);    // inner child
+    CHECK(parentClicked);  // press leaf is within the parent's subtree → clicks
 }
 
 TEST_CASE("Hover callbacks fire") {
@@ -185,6 +247,7 @@ TEST_CASE("Text node receives events") {
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 20);
 
+    events.handleMouseDown(root, 50, 10, MouseButton::Left);
     events.handleMouseUp(root, 50, 10, MouseButton::Left);
     CHECK(clicked);
 }
@@ -355,6 +418,7 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
     auto* scrollNode = static_cast<ScrollNode*>(root);
 
     // Click at y=50 should hit child initially
+    events.handleMouseDown(root, 50, 50, MouseButton::Left);
     events.handleMouseUp(root, 50, 50, MouseButton::Left);
     CHECK(childClicked);
 
@@ -364,6 +428,7 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
     scrollNode->scrollOffsetY = 50;
 
     // Click at y=50 now hits y=100 in content (still in child's 0-200 range)
+    events.handleMouseDown(root, 50, 50, MouseButton::Left);
     events.handleMouseUp(root, 50, 50, MouseButton::Left);
     CHECK(childClicked);
 }
@@ -734,6 +799,7 @@ TEST_CASE("Exception - throwing onClick is isolated; bubble target still fires")
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
     CHECK_NOTHROW(events.handleMouseUp(root, 25, 25, MouseButton::Left));
 
     CHECK(errorCount == 1);
@@ -951,6 +1017,7 @@ TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing o
 
     // The platform calls Host::handle* directly; a throwing handler must not
     // escape (noexcept) and must reach the host sink.
+    host.handleMouseDown(50, 50, MouseButton::Left);
     CHECK_NOTHROW(host.handleMouseUp(50, 50, MouseButton::Left));
     CHECK(errorCount == 1);
 }
