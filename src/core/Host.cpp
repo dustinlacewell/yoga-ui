@@ -51,6 +51,17 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
     if (inUpdate_)
         return earlyReturn(result, UpdateStatus::Reentrant,
                            "Host::update: reentrant call ignored");
+    // A handler calling update() mid-dispatch cannot reconcile now — the event
+    // walk holds raw pointers into the trees this would rebuild. Coalesce it into
+    // one pending update and apply it same-frame once dispatch unwinds (React-style
+    // batching), rather than dropping it. drainPendingUpdate() runs the deferred
+    // reconcile at the tail of the top-level handle*() call.
+    if (inDispatch_) {
+        pendingUpdate_ = true;
+        markDirty();
+        return earlyReturn(result, UpdateStatus::Deferred,
+                           "Host::update: deferred until event dispatch completes");
+    }
     if (!render_)
         return earlyReturn(result, UpdateStatus::NoRenderFn,
                            "Host::update: no render function set");

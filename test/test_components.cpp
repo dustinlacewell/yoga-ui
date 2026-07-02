@@ -1147,6 +1147,71 @@ TEST_CASE("UpdateStatus - reentrant update() from a callback is ignored, not cra
     CHECK(after.status == UpdateStatus::Ok);
 }
 
+TEST_CASE("UpdateStatus - a handler's update() is deferred and applied same-frame") {
+    // A user onClick that calls host.update() cannot reconcile inline (the event
+    // walk holds raw pointers into the live trees). The call must (a) NOT reconcile
+    // synchronously, (b) return UpdateStatus::Deferred, and (c) still be applied by
+    // the time the handle*() call returns — same-frame, React-style batching.
+    TestHost host;
+
+    // The render fn draws `count` child boxes, so the tree structure reflects the
+    // handler-mutated state; a same-frame drain is observable as a child-count bump.
+    int count = 1;
+    UpdateResult handlerResult;
+    bool handlerRan = false;
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        std::vector<Child> kids;
+        for (int i = 0; i < count; ++i)
+            kids.push_back(Box().width(20).height(20).setKey(std::to_string(i)));
+        return Box(std::move(kids))
+            .width(100)
+            .height(100)
+            .onClick([&]() {
+                handlerRan = true;
+                ++count;                              // state change made in the handler
+                handlerResult = host.update(200, 200); // must DEFER, not reconcile now
+                // Mid-dispatch: the reconcile has NOT run — the clicked tree is still
+                // the pre-update one (one child), safe to keep dispatching against.
+                CHECK(host.root()->children.size() == 1u);
+            });
+    }));
+
+    host.update(200, 200);
+    REQUIRE(host.root() != nullptr);
+    REQUIRE(host.root()->children.size() == 1u);
+
+    // Click: press + release on the same node (the click contract).
+    host.handleMouseDown(10, 10, MouseButton::Left);
+    host.handleMouseUp(10, 10, MouseButton::Left);
+
+    CHECK(handlerRan);
+    // (b) the handler's update() reported Deferred, not Ok/Reentrant.
+    CHECK(handlerResult.status == UpdateStatus::Deferred);
+    // (c) the deferred reconcile DID run same-frame: by the time handleMouseUp
+    // returned, the tree reflects the handler's state change (two children now).
+    CHECK(host.root()->children.size() == 2u);
+
+    // A normal, top-level update() (not from a handler) still works.
+    auto normal = host.update(200, 200);
+    CHECK(normal.status == UpdateStatus::Ok);
+
+    // And a nested update()-in-update() still returns Reentrant (distinct latch).
+    UpdateResult nested;
+    bool reentered = false;
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        if (!reentered) {
+            reentered = true;
+            nested = host.update(200, 200);
+        }
+        return Box().width(10).height(10);
+    }));
+    host.markDirty();
+    host.update(200, 200);
+    CHECK(reentered);
+    CHECK(nested.status == UpdateStatus::Reentrant);
+}
+
 TEST_CASE("Threading - Store::set marks atomic dirty flag, re-render on host thread") {
     // Single-threaded sanity for the atomic dirty flags. The host-subscriber path
     // (top-level use()) flips Host::dirty_; the fiber-subscriber path flips

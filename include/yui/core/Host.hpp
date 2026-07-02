@@ -38,6 +38,8 @@ enum class UpdateStatus {
     EmptyRender,   // render function returned VNode::empty()
     ZeroViewport,  // width <= 0 || height <= 0
     Reentrant,     // called from within an in-flight update() (ignored, see below)
+    Deferred,      // called from within event dispatch — coalesced and applied
+                   // same-frame after dispatch unwinds (see below)
 };
 
 // Result of Host::update() - tells caller what happened
@@ -271,12 +273,20 @@ public:
     // silent corruption of host state.
     //
     // NOT reentrant: an update() walks the fiber/render trees holding raw pointers
-    // into them, so a nested update() (e.g. a user onClick/onChange/effect that
-    // calls host.update()) would mutate the very trees the outer walk is reading —
-    // use-after-free / corruption. A reentrant call is therefore ignored and
+    // into them, so a nested update() would mutate the very trees the outer walk is
+    // reading — use-after-free / corruption. A call from within an in-flight
+    // update() (e.g. an effect during drainCommit) is therefore ignored and
     // diagnosed (UpdateStatus::Reentrant), and the in-flight update completes
-    // normally. Do not call update() from within a yui event/effect callback;
-    // mark the host dirty instead and let the next frame's update() pick it up.
+    // normally.
+    //
+    // A call from within EVENT DISPATCH (a user onClick/onChange/onKeyDown that
+    // calls host.update()) is likewise unsafe to run inline — the event walk holds
+    // raw pointers into the trees a reconcile would rebuild. Rather than drop it,
+    // such a call is DEFERRED (UpdateStatus::Deferred): coalesced into one pending
+    // update and applied SAME-FRAME once the top-level handle*() unwinds, before
+    // returning to the platform loop (React-style batching). So a handler may call
+    // update() freely; the reconcile just happens at the tail of the current event
+    // rather than synchronously mid-callback.
     //
     // Defined out of line in Host.cpp: the reconcile/mount calls in the body
     // need Reconciler's complete type, which is the internal detail header.
@@ -398,31 +408,63 @@ private:
             markMeasureNodesDirty(child.get());
     }
 
-    // Backstop wrappers for the noexcept event entrypoints: run the body, and on a
-    // throw that slipped past the per-callback isolation inside EventHandler route
-    // it to the sink instead of propagating through noexcept. bool variants return
-    // false (event not consumed) on failure.
+    // RAII latch marking a live event dispatch, so a user callback that calls
+    // update() defers rather than reconciling into the trees the event walk is
+    // reading. Saves/restores the prior value so nested handle*() calls compose.
+    struct DispatchGuard {
+        bool& flag;
+        bool prev;
+        explicit DispatchGuard(bool& f) : flag(f), prev(f) { flag = true; }
+        ~DispatchGuard() { flag = prev; }
+    };
+
+    // Apply a deferred update() coalesced during dispatch. Runs the reconcile
+    // SAME-FRAME — after the outermost handle*() has unwound inDispatch_ but before
+    // returning to the platform loop — so a state change a handler made is reflected
+    // this frame. No-op while still dispatching (only the outermost drain fires) or
+    // when nothing was deferred. noexcept: called from noexcept entrypoints.
+    void drainPendingUpdate() noexcept {
+        if (inDispatch_ || !pendingUpdate_)
+            return;
+        pendingUpdate_ = false;
+        update(lastWidth_, lastHeight_);
+    }
+
+    // Backstop wrappers for the noexcept event entrypoints: run the body under the
+    // dispatch latch, and on a throw that slipped past the per-callback isolation
+    // inside EventHandler route it to the sink instead of propagating through
+    // noexcept. After the outermost dispatch unwinds, apply any deferred update.
+    // bool variants return false (event not consumed) on failure.
     template <typename Fn>
     bool guardedBool(std::string_view where, Fn&& fn) noexcept {
-        try {
-            return fn();
-        } catch (const std::exception& e) {
-            reportError(where, &e);
-        } catch (...) {
-            reportError(where, nullptr);
+        bool result = false;
+        {
+            DispatchGuard dispatchGuard(inDispatch_);
+            try {
+                result = fn();
+            } catch (const std::exception& e) {
+                reportError(where, &e);
+            } catch (...) {
+                reportError(where, nullptr);
+            }
         }
-        return false;
+        drainPendingUpdate();
+        return result;
     }
 
     template <typename Fn>
     void guardedVoid(std::string_view where, Fn&& fn) noexcept {
-        try {
-            fn();
-        } catch (const std::exception& e) {
-            reportError(where, &e);
-        } catch (...) {
-            reportError(where, nullptr);
+        {
+            DispatchGuard dispatchGuard(inDispatch_);
+            try {
+                fn();
+            } catch (const std::exception& e) {
+                reportError(where, &e);
+            } catch (...) {
+                reportError(where, nullptr);
+            }
         }
+        drainPendingUpdate();
     }
 
     // Tag an early-return UpdateResult with its status and emit ONE diagnostic
@@ -483,6 +525,16 @@ protected:
     // call observes it and bails (see update()). Managed by an RAII guard so it is
     // cleared on every exit path, including the render-callback rethrow.
     bool inUpdate_ = false;
+
+    // Dispatch latch, DISTINCT from inUpdate_. True while a top-level handle*()
+    // event entrypoint is running (set by DispatchGuard in guardedBool/guardedVoid).
+    // A user callback that calls update() while this is set defers instead of
+    // reconciling into the live trees. inDispatch_ is set ONLY in the event
+    // entrypoints; inUpdate_ is set ONLY in update() — they never overlap.
+    bool inDispatch_ = false;
+    // Set when an update() was deferred during dispatch; drained same-frame once
+    // dispatch fully unwinds.
+    bool pendingUpdate_ = false;
 
     // Last early-return status reported through the sink. update() only emits a
     // diagnostic when the status changes, so a persistent misconfiguration is
