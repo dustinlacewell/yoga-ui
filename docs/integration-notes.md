@@ -53,20 +53,22 @@ single open of a menu/panel belongs in a `Store`.
 
 `Store` has two readers, and they are not interchangeable:
 
-- **`use()`** returns `const T&` **and subscribes** the current fiber. Its job is
-  subscription, and it is only valid *during the render that calls it*.
-- **`peek()`** returns `const T&` **without subscribing** — a live read of the
+- **`use()`** returns `T` **by value** (a copy) **and subscribes** the current
+  fiber. Its job is subscription, and it is only valid *during the render that
+  calls it*.
+- **`peek()`** returns `T` **by value without subscribing** — a live read of the
   current value, valid any time on the host thread.
 
-The footgun: a builder lambda or callback that runs **after** the render — a
-deferred row builder, an async completion, a cascade panel built lazily —
-must not capture the `use()`'d value. Capturing it **by value** freezes a stale
-snapshot taken at lambda-creation time; capturing the `const T&` **by reference**
-risks dangling past the render. Either way the deferred code sees stale state.
+Both return by value (a copy taken under the store lock), so there is no
+reference to dangle. The remaining footgun is *staleness*: a builder lambda or
+callback that runs **after** the render — a deferred row builder, an async
+completion, a cascade panel built lazily — must not capture the `use()`'d value.
+Capturing the returned copy freezes a stale snapshot taken at lambda-creation
+time, so the deferred code renders old state.
 
 ```cpp
 // WRONG: captures a frozen snapshot; deferred build shows stale state.
-const auto& s = store->use();
+auto s = store->use();
 auto buildRow = [s] { return Row(renderFrom(s)); };   // s is stale when this runs
 
 // RIGHT: subscribe once in render, read live at call time.

@@ -369,9 +369,14 @@ todos.set([](auto& t) { t.push_back(...); }); // Works with vectors
 > **Threading:** yui is single-threaded — `Host::update()`, event handling, and
 > building VNodes all run on one thread (the UI/main thread). `Store::set()` is
 > the *only* operation you may call from another thread (e.g. an audio, network,
-> or worker thread): it just marks subscribers dirty, and the re-render is
-> applied on the host thread at the next `update()`. Do not call `use()`,
-> `peek()`, or any `Host` method off the host thread.
+> or worker thread): it just marks subscribers dirty (via a release/acquire handoff
+> of the dirty flags), and the re-render is applied on the host thread at the next
+> `update()`. Do not call `use()`, `peek()`, or any `Host` method off the host
+> thread.
+>
+> `use()` and `peek()` return the store value **by value** (a copy taken under the
+> store's lock), not a reference — so there is no reference to escape and no
+> dangling read if another thread's `set()` replaces the value while you hold it.
 
 **Best practices:**
 - Prefer component-level `use()` for selective re-rendering

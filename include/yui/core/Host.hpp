@@ -120,12 +120,16 @@ private:
 //
 // The ONLY sanctioned cross-thread operation is Store::set() (see Store.hpp).
 // A Store::set() from another thread marks the relevant dirty flags safely:
-// the Host flags it touches (dirty_, componentsDirty_) are std::atomic, and
-// host liveness is checked under a mutex (see detail::liveHosts / isHostLive).
-// set() does NOT itself reconcile or render — it only flips the dirty flags.
-// The actual re-render is applied on the host thread at the next update().
-// Concretely: a worker/audio/network thread may call Store::set(); the change
-// becomes visible on screen when the host thread next calls update().
+// the Host flags it touches (dirty_, componentsDirty_) are std::atomic, marked
+// with RELEASE and read with ACQUIRE in update() so the state the producer wrote
+// first (the store's new value, the fiber dirty flags) is published to the host
+// thread. Host liveness is checked-AND-marked together under a mutex (see
+// detail::markHostIfLive), closing the window where a host could be freed between
+// the check and the mark. set() does NOT itself reconcile or render — it only
+// flips the dirty flags. The actual re-render is applied on the host thread at
+// the next update(). Concretely: a worker/audio/network thread may call
+// Store::set(); the change becomes visible on screen when the host thread next
+// calls update().
 //
 // Host realises DirtyScheduler — the narrow back-channel core uses for dirty
 // scheduling, the diagnostic sink, and render-root handoff. Core holds a
@@ -240,17 +244,21 @@ public:
     }
 
     // Mark for re-render on next update. Sanctioned to run cross-thread (from
-    // Store::set on a worker thread); the atomic store is the synchronisation.
-    void markDirty() override { dirty_.store(true, std::memory_order_relaxed); }
+    // Store::set on a worker thread). RELEASE store: it publishes everything the
+    // producer wrote before it (the store's new value_, the fiber dirty flags) to
+    // the host thread, which pairs its update() load with an ACQUIRE.
+    void markDirty() override { dirty_.store(true, std::memory_order_release); }
 
     // Mark that at least one component needs re-rendering. Also reachable
-    // cross-thread via Store::set -> Fiber::markDirty -> here.
-    void markComponentDirty() override { componentsDirty_.store(true, std::memory_order_relaxed); }
+    // cross-thread via Store::set -> Fiber::markDirty -> here. RELEASE store: it is
+    // the publish point for the fiber.dirty flags written just before it, which the
+    // reconciler then reads with relaxed loads ordered by update()'s ACQUIRE load.
+    void markComponentDirty() override { componentsDirty_.store(true, std::memory_order_release); }
 
-    bool isDirty() const { return dirty_.load(std::memory_order_relaxed); }
+    bool isDirty() const { return dirty_.load(std::memory_order_acquire); }
     bool needsUpdate() const {
-        return dirty_.load(std::memory_order_relaxed) ||
-               componentsDirty_.load(std::memory_order_relaxed);
+        return dirty_.load(std::memory_order_acquire) ||
+               componentsDirty_.load(std::memory_order_acquire);
     }
 
     // Call each frame to update animations, reconcile if dirty, and layout.
@@ -461,11 +469,13 @@ protected:
     // Dirty flags. These are the ONE piece of Host state written cross-thread:
     // Store::set() (the sole sanctioned off-thread entry, see the class-level
     // threading contract) flips them via markDirty()/markComponentDirty(). They
-    // are atomic so that off-thread write and the host-thread read in update()
-    // are not a data race. They are independent flags, not a lock, so relaxed
-    // ordering suffices — set() only needs the flag to eventually be observed by
-    // the host thread, which it is at the next update(); no other state is
-    // published through them.
+    // are atomic so the off-thread write and the host-thread read in update() are
+    // not a data race — AND they are the publish/consume handoff for the state the
+    // producer wrote first: markDirty()/markComponentDirty() store with RELEASE and
+    // update()/needsUpdate()/isDirty() load with ACQUIRE. That pairing is what makes
+    // the fiber.dirty flags (written before markComponentDirty, then read RELAXED in
+    // the reconciler) and the store's new value_ visible to the host thread once it
+    // observes the flag set. Relaxed alone would permit a lost wakeup / stale read.
     std::atomic<bool> dirty_{true};
     std::atomic<bool> componentsDirty_{false};
 
@@ -490,10 +500,19 @@ protected:
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
-// Check if a host is still alive (for Store notification)
-inline bool isHostLive(Host* host) {
-    std::lock_guard lock(detail::liveHostsMutex);
-    return detail::liveHosts.count(host) > 0;
+namespace detail {
+// Mark a host dirty IF it is still live — the check and the mark happen together
+// under liveHostsMutex, closing the TOCTOU window a separate isHostLive()+markDirty
+// left open (the host could be destroyed between the two). ~Host erases itself from
+// liveHosts under liveHostsMutex BEFORE tearing down members, so a host we still
+// observe in the registry while holding the lock cannot be freed under markDirty().
+// markDirty() only flips an atomic flag, so holding liveHostsMutex across it is cheap.
+inline void markHostIfLive(Host* host) {
+    std::lock_guard lock(liveHostsMutex);
+    if (liveHosts.count(host) > 0) {
+        host->markDirty();
+    }
 }
+}  // namespace detail
 
 }  // namespace yui

@@ -52,7 +52,9 @@ inline yui::Store<AppState>& state() {
     return *storePtr;
 }
 
-inline const Theme& theme() {
+// Returns by value: state().use() now returns a copy, so the .theme member lives
+// only as long as that temporary — a const Theme& would dangle.
+inline Theme theme() {
     return state().use().theme;
 }
 

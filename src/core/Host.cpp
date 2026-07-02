@@ -81,16 +81,22 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
             dirty_.store(true, std::memory_order_relaxed);
         }
 
-        // Process dirty components - walk FIBER tree
+        // Process dirty components - walk FIBER tree.
+        // ACQUIRE load pairs with markComponentDirty()'s RELEASE store: once we
+        // observe componentsDirty_ set, the fiber.dirty flags the producer wrote
+        // before it are visible, so the reconciler's relaxed reads of them are
+        // correctly ordered. The clear store stays relaxed (host-thread only).
         bool componentsReconciled = false;
-        if (componentsDirty_.load(std::memory_order_relaxed) && fiberRoot_) {
+        if (componentsDirty_.load(std::memory_order_acquire) && fiberRoot_) {
             componentsDirty_.store(false, std::memory_order_relaxed);
             componentsReconciled = reconciler_->reconcileDirtyComponents(fiberRoot_.get());
         }
 
-        // Full re-render only for structural changes
+        // Full re-render only for structural changes.
+        // ACQUIRE load pairs with markDirty()'s RELEASE store (publishes the store's
+        // new value_ before the render reads it). The clear store stays relaxed.
         bool fullReconcile = false;
-        if (dirty_.load(std::memory_order_relaxed)) {
+        if (dirty_.load(std::memory_order_acquire)) {
             dirty_.store(false, std::memory_order_relaxed);
             fullReconcile = true;
 

@@ -41,11 +41,11 @@ struct HookTag {
 };
 
 // One Store subscription held by a component fiber. A subscription is a pair of
-// inverse actions over the Store's fiberSubscribers_ set, plus the store's
+// inverse actions over the Store's fiberSubscribers_ map, plus the store's
 // identity:
 //   - unsubscribe: remove this fiber from the store (teardown / re-render reset)
-//   - resubscribe: re-add this fiber to the store
-// Both are idempotent (set insert/erase) and liveness-guarded (no-op once the
+//   - resubscribe: re-add this fiber to the store (with its liveness token)
+// Both are idempotent (map insert/erase) and liveness-guarded (no-op once the
 // Store is gone), mirroring the Store/Host alive_ idiom. The pair lets the
 // re-render path restore the EXACT pre-render membership when a render throws:
 // Store::set() consumed (cleared) the triggering store's membership before the
@@ -152,6 +152,17 @@ struct Fiber {
 
     Fiber() = default;
     ~Fiber() {
+        // Unsubscribe from every Store BEFORE flipping *alive. Each unsubscribe
+        // takes Store::mutex_, which serializes against Store::notify() (it marks
+        // subscribers UNDER that same mutex): so a notify() in flight either marks
+        // this fiber before we erase it (harmless — markDirty just flips an atomic)
+        // or waits for our erase and never sees it. This closes the exception-
+        // -unwind hole where a fiber destroyed off the normal willUnmount path
+        // (e.g. a throw during mount) would leave a dangling subscriber in a Store.
+        // Idempotent: runSubscriptionCleanups clears the vector, so the normal path
+        // (willUnmount -> runCleanups already cleared it) makes this a no-op.
+        // A move-out (see remountRoot) leaves an empty vector and null `alive`.
+        runSubscriptionCleanups();
         if (alive) *alive = false;  // null after a move-out (see remountRoot)
     }
 

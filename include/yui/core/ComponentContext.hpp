@@ -38,9 +38,12 @@ public:
     // slot every render (React useRef identity stability).
     NodeRef useElementRef();
 
-    // useField hook - binds to a Store field for controlled inputs
+    // useField hook - binds to a Store field for controlled inputs.
+    // Returns the field BY VALUE: store.use() now returns a copy, so the field is
+    // read out of that copy — a reference would dangle the moment a set() replaced
+    // the store value.
     template <typename S, typename T>
-    std::pair<const T&, std::function<void(const T&)>> useField(Store<S>& store, T S::*field);
+    std::pair<T, std::function<void(const T&)>> useField(Store<S>& store, T S::*field);
 
     // useEffect hook - run side effects after render
     void useEffect(std::function<std::function<void()>()> effect);
@@ -103,11 +106,13 @@ std::pair<T, std::function<void(T)>> ComponentContext::useState(T initial) {
 
     T& value = std::any_cast<T&>(fiber_->hookState[index]);
 
-    // The setter may outlive the component (stored in a node prop, a sibling's
-    // handler, a Store, a timer, an async completion). Capture the fiber's
-    // liveness token by copy and verify it before touching the fiber, so an
-    // invocation after unmount is a safe no-op instead of a use-after-free.
-    // Mirrors Store's alive_ token / the isHostLive pattern.
+    // The setter may be STORED and called later (in a node prop, a sibling's
+    // handler), but ONLY on the host thread — the setter mutates hookState and marks
+    // the fiber dirty, which are host-thread-only operations. For state that must be
+    // written from another thread (a timer, a worker, an async completion), use a
+    // Store (Store::set() is the sole sanctioned cross-thread write). The captured
+    // fiber liveness token makes an on-thread call after unmount a safe no-op
+    // instead of a use-after-free; it is NOT a license to call the setter off-thread.
     Fiber* captured = fiber_;
     auto alive = fiber_->alive;
     auto setter = [captured, alive = std::move(alive), index](T newValue) {
@@ -156,7 +161,7 @@ inline NodeRef ComponentContext::useElementRef() {
 }
 
 template <typename S, typename T>
-std::pair<const T&, std::function<void(const T&)>> ComponentContext::useField(Store<S>& store, T S::*field) {
+std::pair<T, std::function<void(const T&)>> ComponentContext::useField(Store<S>& store, T S::*field) {
     // useField occupies a positional hook slot like the others, so it must advance
     // the index and tag itself — otherwise a useField<->useState reorder would slip
     // past the rules-of-hooks check. It binds to a Store rather than an any slot, so
@@ -164,9 +169,19 @@ std::pair<const T&, std::function<void(const T&)>> ComponentContext::useField(St
     // unsafe any_cast to guard, so we proceed.
     checkHookTag(hookIndex_++, HookTag::Kind::Field, std::type_index(typeid(T)));
 
-    const T& value = store.use().*field;
+    // use() returns a copy of the store value; take the field out of it by value.
+    T value = store.use().*field;
 
-    auto setter = [&store, field](const T& newValue) { store.set([field, newValue](S& s) { s.*field = newValue; }); };
+    // The setter may outlive the Store (stored in a node prop / async callback).
+    // Capture the Store's liveness token (weak) and verify it before set(), so a
+    // call after the Store is destroyed is a safe no-op instead of a use-after-free.
+    // Mirrors useState's fiber-alive token.
+    auto token = store.aliveToken();
+    auto setter = [&store, token = std::move(token), field](const T& newValue) {
+        if (auto a = token.lock(); a && *a) {
+            store.set([field, newValue](S& s) { s.*field = newValue; });
+        }
+    };
 
     return {value, std::move(setter)};
 }

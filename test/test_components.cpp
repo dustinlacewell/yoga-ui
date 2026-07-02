@@ -1338,6 +1338,107 @@ TEST_CASE("Store - set() outside render emits no spurious diagnostic") {
     CHECK(diagnostics == 0);
 }
 
+TEST_CASE("Store - concurrent set() vs fiber unmount does not use a freed subscriber") {
+    // Phase-1 fiber-subscriber UAF regression. A component subscribes to a Store
+    // (recorded in fiberSubscribers_). When that component unmounts, ~Fiber must
+    // unsubscribe UNDER Store::mutex_ before freeing itself, and notify() must
+    // verify each subscriber's weak liveness token UNDER the same mutex before
+    // markDirty(). Together those close the window where a worker thread's set()
+    // could mark a fiber that the host thread just destroyed.
+    //
+    // We drive it adversarially: a worker hammers set() in a tight loop while the
+    // host thread repeatedly mounts and unmounts the subscribing component by
+    // toggling it in/out of the tree. Pre-fix this races markDirty() against a
+    // freed Fiber (heap-corruption UAF); post-fix it runs clean. runsWithin also
+    // guards against a lock-hierarchy deadlock between mutex_ and liveHostsMutex.
+    bool finished = runsWithin(std::chrono::seconds(10), [] {
+        TestHost host;
+        Store<int> counter(0);
+        std::atomic<bool> stop{false};
+
+        // Worker: pound set() from another thread for the whole test.
+        std::thread worker([&] {
+            while (!stop.load(std::memory_order_relaxed)) {
+                counter.set([](int& n) { ++n; });
+            }
+        });
+
+        auto Sub = [&](ComponentContext& ctx) {
+            int n = counter.use();  // subscribe THIS fiber to the store
+            return Text(std::to_string(n));
+        };
+
+        // Toggle the subscribing component in and out of the tree: each removal
+        // unmounts (and frees) its fiber while the worker is still notifying.
+        bool present = true;
+        host.setRender(std::function<VNode()>([&]() -> VNode {
+            if (present)
+                return Box({Component(Sub)});
+            return Box(std::vector<Child>{});
+        }));
+
+        for (int i = 0; i < 2000; ++i) {
+            present = !present;
+            host.markDirty();       // force a full re-render (structural toggle)
+            host.update(200, 200);  // mount or unmount Sub's fiber
+        }
+
+        stop.store(true, std::memory_order_relaxed);
+        worker.join();
+    });
+    REQUIRE(finished);  // false == deadlock; a UAF would crash the process instead
+}
+
+TEST_CASE("Store - set(mutator) re-entered from its own mutator is diagnosed, not deadlocked") {
+    // Phase-1 reentrancy guard (E2: diagnose, don't deadlock). A mutator that
+    // itself calls set(mutator) on the SAME store would re-lock the non-recursive
+    // mutex_ and deadlock. The guard detects the reentry by thread id, routes ONE
+    // diagnostic through the render-context sink, and drops the reentrant write.
+    // runsWithin turns a deadlock regression into a clean failure instead of a hang.
+    bool finished = runsWithin(std::chrono::seconds(5), [] {
+        TestHost host;
+        Store<int> counter(0);
+
+        int diagnostics = 0;
+        std::string lastWhere;
+        host.setErrorHandler([&](std::string_view where, const std::exception*) {
+            diagnostics++;
+            lastWhere = std::string(where);
+        });
+
+        auto Comp = [&](ComponentContext& ctx) {
+            int n = counter.use();
+            if (n == 0) {
+                // Reentrant set(mutator): the outer mutator's re-render runs this
+                // body, which calls set(mutator) on the same store from within the
+                // in-flight mutation. Must be dropped-and-diagnosed, not deadlock.
+                counter.set([](int& v) {
+                    // No further store access here — the reentry is the outer/inner
+                    // set() pair below.
+                    v += 1;
+                });
+                counter.set([&](int& /*v*/) {
+                    counter.set([](int& inner) { inner += 100; });  // REENTRANT
+                });
+            }
+            return Text(std::to_string(n));
+        };
+
+        host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+
+        host.update(200, 200);
+        host.update(200, 200);
+        host.update(200, 200);
+
+        // The reentrant inner set(+100) was dropped; only the outer +1 (and the
+        // first set) applied. The exact value is not the contract — surviving
+        // without deadlock and emitting the diagnostic is.
+        CHECK(diagnostics >= 1);
+        CHECK(lastWhere.find("mutator") != std::string::npos);
+    });
+    REQUIRE(finished);  // false == the reentrant set() deadlocked (regression)
+}
+
 // --- FIX #7 / #8: per-slot hook type tag (rules-of-hooks + any_cast guard) ---
 
 TEST_CASE("Hooks - changing a hook's TYPE at a stable index is diagnosed (FIX #7)") {

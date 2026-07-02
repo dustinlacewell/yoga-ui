@@ -16,7 +16,7 @@ using namespace yui;
 
 inline Component ThemeSwitcher() {
     return [](ComponentContext&) -> VNode {
-        auto& s = state().use();
+        auto s = state().use();
         const auto& t = s.theme;
 
         auto themeButton = [&](const std::string& name, int index) {
@@ -90,7 +90,7 @@ inline auto LoginForm() -> Component {
                         Button(
                             "Sign In",
                             [] {
-                                auto& s = state().use();
+                                auto s = state().use();
                                 if (!s.username.empty() && !s.password.empty()) {
                                     setStatus("Welcome, " + s.username, theme().success);
                                 } else {
@@ -148,7 +148,7 @@ inline VNode ListItem(const std::string& text, size_t index) {
 
 inline auto DynamicList() -> Component {
     return [](ComponentContext& ctx) -> VNode {
-        auto& s = state().use();
+        auto s = state().use();
         const auto& t = s.theme;
 
         // useField for the input text
@@ -204,7 +204,7 @@ inline auto DynamicList() -> Component {
 
 inline Component Counter() {
     return [](ComponentContext&) -> VNode {
-        auto& s = state().use();
+        auto s = state().use();
         const auto& t = s.theme;
 
         return Section("Counter",
@@ -375,7 +375,7 @@ inline void handleKeyboardEvent(int keyCode, uint16_t mods) {
 
 inline Component KeyboardDemo() {
     return [](ComponentContext&) -> VNode {
-        auto& s = state().use();
+        auto s = state().use();
         const auto& t = s.theme;
 
         return Section(

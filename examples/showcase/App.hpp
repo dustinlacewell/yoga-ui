@@ -15,7 +15,7 @@ using namespace yui;
 
 inline Component Header(const std::string& title) {
     return [title](ComponentContext&) -> VNode {
-        auto& s = state().use();
+        auto s = state().use();
         const auto& t = s.theme;
 
         return Row({

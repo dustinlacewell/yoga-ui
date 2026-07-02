@@ -7,6 +7,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -18,15 +20,20 @@ namespace yui {
 // ------------------
 // yui is single-threaded (see Host's threading contract). use() and peek() must
 // run on the host thread — use() reads thread_local render context and touches
-// the subscriber sets, so calling it off-thread is meaningless and unsafe.
+// the subscriber sets, so calling it off-thread is meaningless and unsafe. Both
+// return the value BY VALUE (a copy taken under the lock), never a reference into
+// value_: a returned reference would dangle the instant a cross-thread set()
+// reassigns value_, so the copy is what makes the read race-free.
 //
 // set() is the ONE sanctioned cross-thread entry point in the whole library.
 // You may call Store::set() from any thread (worker, audio, network callback).
-// set() only flags the host/fibers dirty: the Host dirty flags it marks are
-// atomic, and host liveness is checked under a mutex. set() does NOT reconcile
-// or render on the calling thread — the re-render is applied on the host thread
-// at its next update(). So a cross-thread set() is safe and its effect becomes
-// visible on screen the next time the host thread runs update().
+// set() only flags the host/fibers dirty: fiber liveness is checked under the
+// store mutex (so a subscriber cannot be freed between the check and markDirty),
+// and host liveness is checked-and-marked under liveHostsMutex. set() does NOT
+// reconcile or render on the calling thread — the re-render is applied on the
+// host thread at its next update() via a release/acquire handoff of the dirty
+// flags. So a cross-thread set() is safe and its effect becomes visible on
+// screen the next time the host thread runs update().
 template <typename T>
 class Store {
 public:
@@ -44,13 +51,23 @@ public:
     // Read + subscribe (use in render)
     // If inside a component, subscribes the fiber (selective re-render)
     // Otherwise subscribes the host (full re-render)
-    const T& use() const {
+    //
+    // Returns BY VALUE: a copy taken under the lock. A reference into value_ would
+    // dangle if a cross-thread set() reassigned value_ while the caller held it.
+    T use() const {
+        // Reentrant read from within this store's own mutator (set(mutator) whose
+        // re-render re-enters use()): we already hold mutex_ on this thread, and it
+        // is non-recursive, so re-locking would deadlock. Read value_ directly.
+        if (mutatingThread_.load(std::memory_order_relaxed) == std::this_thread::get_id()) {
+            return value_;
+        }
         std::lock_guard lock(mutex_);
         if (currentRenderFiber) {
             // Inside a component - subscribe just this fiber. The insert is the
-            // live subscription for THIS render; it is idempotent (set keyed by
-            // Fiber*).
-            fiberSubscribers_.insert(currentRenderFiber);
+            // live subscription for THIS render; it is idempotent (map keyed by
+            // Fiber*). The mapped weak token lets notify() verify the fiber is
+            // still alive before marking it dirty (see notify()).
+            fiberSubscribers_[currentRenderFiber] = currentRenderFiber->alive;
 
             // Record the subscription unconditionally — even when membership
             // already existed. The re-render path (rerenderComponent) relies on
@@ -63,14 +80,15 @@ public:
             // fiber as already-member and skipped the record, so the snapshot
             // restore could not re-arm it.
             Fiber* fiber = currentRenderFiber;
+            auto fiberAlive = fiber->alive;
             auto alive = alive_;
             const Store* self = this;
             fiber->subscriptionCleanups.push_back(SubscriptionRecord{
                 self,
-                [self, fiber, alive] {  // resubscribe
+                [self, fiber, fiberAlive, alive] {  // resubscribe
                     if (!*alive) return;  // Store destroyed — nothing to re-arm
                     std::lock_guard lock(self->mutex_);
-                    self->fiberSubscribers_.insert(fiber);
+                    self->fiberSubscribers_[fiber] = fiberAlive;
                 },
                 [self, fiber, alive] {  // unsubscribe
                     if (!*alive) return;  // Store destroyed — nothing to unsubscribe
@@ -85,7 +103,14 @@ public:
     }
 
     // Read without subscribing (use outside render)
-    const T& peek() const {
+    //
+    // Returns BY VALUE: a copy taken under the lock, for the same dangling-on-set
+    // reason as use().
+    T peek() const {
+        // Reentrant read from within this store's own mutator (see use()).
+        if (mutatingThread_.load(std::memory_order_relaxed) == std::this_thread::get_id()) {
+            return value_;
+        }
         std::lock_guard lock(mutex_);
         return value_;
     }
@@ -104,6 +129,14 @@ public:
     // notify(). Narrow critical section, not a recursive_mutex.
     void set(T value) {
         diagnoseSetDuringRender();
+        // Reentrant write from within this store's own mutator: we already hold
+        // mutex_ (non-recursive) and are mid-mutation on this thread. Assign value_
+        // directly and skip notify() — the in-flight set(mutator) will notify() once
+        // it unwinds, coalescing both writes into a single notification.
+        if (mutatingThread_.load(std::memory_order_relaxed) == std::this_thread::get_id()) {
+            value_ = std::move(value);
+            return;
+        }
         {
             std::lock_guard lock(mutex_);
             value_ = std::move(value);
@@ -117,8 +150,23 @@ public:
     // released so the mutator's resulting re-render can re-enter the store safely.
     void set(const std::function<void(T&)>& mutator) {
         diagnoseSetDuringRender();
+        // Recursion guard (E2 — diagnose, don't deadlock). A mutator that itself
+        // calls set(mutator) on THIS store would re-lock the non-recursive mutex_
+        // and deadlock. Detect the reentry by thread id, route ONE diagnostic
+        // through the same sink as setDuringRender, and return without re-locking.
+        if (mutatingThread_.load(std::memory_order_relaxed) == std::this_thread::get_id()) {
+            diagnoseReentrantMutator();
+            return;
+        }
         {
             std::lock_guard lock(mutex_);
+            mutatingThread_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+            // Reset even if the mutator throws, so a later set() is not misread as
+            // reentrant on this thread.
+            struct ClearThread {
+                std::atomic<std::thread::id>& t;
+                ~ClearThread() { t.store(std::thread::id{}, std::memory_order_relaxed); }
+            } clearThread{mutatingThread_};
             mutator(value_);
         }
         notify();
@@ -144,39 +192,82 @@ private:
             nullptr);
     }
 
+    // A set(mutator) that re-enters set(mutator) on the same store from within the
+    // mutator would deadlock the non-recursive mutex_. We diagnose-and-drop the
+    // reentrant write (E2) rather than defer or deadlock: the reentry is a logic
+    // error, and the warning is the actionable signal. Routed through whatever
+    // render-context sink is available; if none, it is silently dropped (there is
+    // no host to report to off the render path).
+    void diagnoseReentrantMutator() noexcept {
+        DirtyScheduler* host = currentRenderFiber ? currentRenderFiber->host : currentRenderHost;
+        if (!host) return;
+        if (reentrantMutatorReported_.exchange(true)) return;  // already warned once
+        host->reportError(
+            "Store::set(mutator) re-entered from within its own mutator — the "
+            "reentrant write is dropped (would deadlock the store mutex)",
+            nullptr);
+    }
+
     void notify() {
-        // Run UNLOCKED. Snapshot the subscriber sets under a brief lock, then
-        // mark dirty on the copies: markDirty() only flips atomic flags and never
-        // re-enters this store, but taking a copy keeps the iteration safe against
-        // a concurrent use()/set() mutating the live sets, and lets us clear the
-        // live sets atomically with the snapshot (consume-once semantics).
-        std::unordered_set<Fiber*> fibers;
+        // Two-phase, with a strict lock hierarchy (Store::mutex_ -> liveHostsMutex,
+        // never inverted).
+        //
+        // Phase 1 (under mutex_): mark every LIVE fiber subscriber dirty, then
+        // consume (clear) the set. Marking under mutex_ is what makes the fiber
+        // path airtight: ~Fiber runs its unsubscribe (which takes mutex_) before
+        // it clears *alive, so once we hold mutex_ a subscriber we observe as live
+        // (weak.lock() && *a) cannot be freed underneath the markDirty() call —
+        // the dtor's erase-under-mutex_ is serialized behind us. markDirty() only
+        // flips atomic flags and never re-enters this store.
+        //
+        // Phase 2 (NO mutex_ held): swap out the host set, then mark each live host
+        // under liveHostsMutex ALONE. Running this after releasing mutex_ keeps
+        // liveHostsMutex from ever nesting under mutex_.
         std::unordered_set<Host*> hosts;
         {
             std::lock_guard lock(mutex_);
-            fibers.swap(fiberSubscribers_);
+            for (auto& [fiber, weak] : fiberSubscribers_) {
+                if (auto a = weak.lock(); a && *a) {
+                    fiber->markDirty();  // marked UNDER mutex_ (see above)
+                }
+            }
+            fiberSubscribers_.clear();  // consume-once
             hosts.swap(hostSubscribers_);
         }
 
-        for (auto* fiber : fibers) {
-            fiber->markDirty();
-        }
         for (auto* host : hosts) {
-            if (isHostLive(host)) {
-                host->markDirty();
-            }
+            detail::markHostIfLive(host);  // liveHostsMutex only — no Store::mutex_
         }
     }
 
+public:
+    // Liveness token shared with callbacks that outlive this Store (e.g. useField's
+    // setter, which captures the store by reference). Observers hold a weak_ptr and
+    // verify (lock() && *p) before calling set(), mirroring the Fiber/Host alive_
+    // idiom. Cleared in ~Store.
+    std::weak_ptr<bool> aliveToken() const { return alive_; }
+
+private:
     T value_;
     mutable std::mutex mutex_;
-    mutable std::unordered_set<Fiber*> fiberSubscribers_;
+    // Fiber subscribers, each mapped to a weak liveness token captured at use().
+    // notify() checks the token under mutex_ before marking, so a fiber freed
+    // concurrently is skipped rather than dereferenced (see notify()).
+    mutable std::unordered_map<Fiber*, std::weak_ptr<bool>> fiberSubscribers_;
     mutable std::unordered_set<Host*> hostSubscribers_;
     // One-shot latch for the set-during-render diagnostic: fires once per Store so
     // a livelocking unconditional-set-in-render warns a single time, not per frame.
     std::atomic<bool> setDuringRenderReported_{false};
-    // Liveness token shared with outstanding fiber-cleanup lambdas; cleared in
-    // the destructor so they no-op rather than dereference a freed Store.
+    // One-shot latch for the reentrant-mutator diagnostic (see diagnoseReentrantMutator).
+    std::atomic<bool> reentrantMutatorReported_{false};
+    // The thread currently inside set(mutator)'s locked region, or a default id.
+    // use()/peek()/set() compare against it to detect a reentrant call from within
+    // this store's own mutator and read/write value_ directly instead of re-locking
+    // the non-recursive mutex_ (which would deadlock).
+    std::atomic<std::thread::id> mutatingThread_{};
+    // Liveness token shared with outstanding fiber-cleanup lambdas and useField
+    // setters; cleared in the destructor so they no-op rather than dereference a
+    // freed Store.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
