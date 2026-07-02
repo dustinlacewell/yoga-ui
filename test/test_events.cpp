@@ -904,6 +904,47 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     CHECK(events.getFocusedInput() == nullptr);
 }
 
+TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box({
+                        Input().width(80).height(20).setKey("field"),
+                    })
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    events.focusInput(input);
+
+    // "é" is a 2-byte UTF-8 code point (0xC3 0xA9). One backspace must remove
+    // both bytes, leaving an empty (and valid-UTF-8) string.
+    std::string lastChange = "sentinel";
+    input->props.onChange = [&](const std::string& s) { lastChange = s; };
+
+    events.handleTextInput("\xC3\xA9");
+    CHECK(input->displayText == "\xC3\xA9");
+    CHECK(input->displayText.size() == 2);
+
+    events.handleBackspace();
+    CHECK(input->displayText.empty());
+    // The onChange payload is valid UTF-8 (empty), not a lone continuation byte.
+    CHECK(lastChange.empty());
+
+    // Mixed content: "aé" -> backspace -> "a" (the ASCII byte survives intact).
+    events.handleTextInput("a");
+    events.handleTextInput("\xC3\xA9");
+    CHECK(input->displayText == "a\xC3\xA9");
+    events.handleBackspace();
+    CHECK(input->displayText == "a");
+    CHECK(lastChange == "a");
+}
+
 // ============================================================================
 // Depth-guard contract (handoff item #17): the event-path walks (hitTest,
 // dispatchEvent's bubble, findKeyTarget) descend/bubble one native stack frame

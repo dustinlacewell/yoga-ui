@@ -558,8 +558,15 @@ void EventHandler::handleBackspace() noexcept {
 
     if (!focused->displayText.empty()) {
         // Same optimistic-advance contract as handleTextInput: commit the edit,
-        // isolate only the onChange notification.
-        focused->displayText.pop_back();
+        // isolate only the onChange notification. Erase a whole UTF-8 code point,
+        // not a single byte, so multi-byte characters delete cleanly and leave
+        // valid UTF-8 behind.
+        std::string& s = focused->displayText;
+        size_t i = s.size();
+        do {
+            --i;
+        } while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80);
+        s.erase(i);
 
         if (focused->props.onChange) {
             fireCallback(
