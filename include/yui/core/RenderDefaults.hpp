@@ -64,6 +64,23 @@ inline constexpr float kCaretWidth = 1.0f;
 inline constexpr long kCaretBlinkPeriodMs = 1000;
 inline constexpr long kCaretBlinkOnMs = 530;
 
+// --- Overlay scrollbars ---
+
+// Scrollbars OVERLAY the padded viewport's inside edge (vertical bar on the
+// right, horizontal on the bottom) rather than reserving content width: thin
+// modern bars, and toggling overflow never reflows layout. The geometry lives
+// on ScrollNode (scrollbar/scrollbarHitTest) so the renderer draw and the
+// event-handler hit regions can never disagree.
+inline constexpr float kScrollbarThickness = 8.0f;
+
+// Shortest a proportional thumb may get (thumbLen = trackLen * viewport /
+// content, clamped up to this) so it stays grabbable in a long document.
+inline constexpr float kScrollbarMinThumbLen = 24.0f;
+
+// Track subtle, thumb visible (0xRRGGBBAA, alpha-blended over content).
+inline constexpr uint32_t kScrollbarTrackColor = 0xFFFFFF14u;
+inline constexpr uint32_t kScrollbarThumbColor = 0xFFFFFF59u;
+
 // --- Pointer interaction ---
 
 // Chebyshev distance (px) the pointer must move from the press anchor before

@@ -4,6 +4,7 @@
 #include "Props.hpp"
 #include "VNode.hpp"
 
+#include "../layout/Placement.hpp"  // layout::Rect (scrollbar geometry, scrollIntoView)
 #include "../render/TextWrap.hpp"
 
 #include <cstdint>
@@ -206,6 +207,24 @@ private:
     float blinkPhaseMs_ = 0;
 };
 
+// Which scrollbar of a Scroll node an operation refers to.
+enum class ScrollAxis { Horizontal, Vertical };
+
+// What a point inside a Scroll node landed on, scrollbar-wise. Thumb starts a
+// drag gesture; track pages by a viewport; None falls through to content.
+enum class ScrollbarPart { None, HorizontalTrack, HorizontalThumb, VerticalTrack, VerticalThumb };
+
+// Geometry of one overlay scrollbar, in the scroll node's LOCAL space (origin =
+// its border-box top-left). active is false when the axis doesn't overflow the
+// padded viewport — the bar isn't drawn and eats no hits — and the rects are
+// meaningful only while active. Computed on demand by ScrollNode::scrollbar so
+// the renderer's bars and the event handler's hit regions share one source.
+struct ScrollbarGeometry {
+    bool active = false;
+    layout::Rect track;
+    layout::Rect thumb;
+};
+
 class ScrollNode : public Node {
 public:
     explicit ScrollNode(YGConfigRef config);
@@ -227,6 +246,27 @@ public:
     void updateContentSize();
     void clampScrollOffset();
     bool updateSmooth(float dt);
+
+    // Programmatic scroll: set the target offset (clamped like every other
+    // writer, via clampScrollOffset); the smooth interpolation animates there.
+    void scrollTo(float x, float y);
+
+    // Scroll the minimum needed to bring an ABSOLUTE-space rect (e.g. a
+    // NodeRef::getBoundingRect) into the padded viewport; a rect already fully
+    // visible changes nothing. A rect larger than the viewport aligns its
+    // near (top/left) edge.
+    void scrollIntoView(const layout::Rect& target);
+
+    // Overlay scrollbar geometry along one axis (see ScrollbarGeometry).
+    ScrollbarGeometry scrollbar(ScrollAxis axis) const;
+
+    // Classify a point in LOCAL (border-box) coordinates against the active
+    // scrollbars. The EventHandler routes thumb/track presses through this.
+    ScrollbarPart scrollbarHitTest(float localX, float localY) const;
+
+    // Scroll offset change per pixel of thumb travel along an axis
+    // (maxScroll / free track length); 0 when the thumb cannot travel.
+    float scrollPerThumbPixel(ScrollAxis axis) const;
 };
 
 class CanvasNode : public Node {

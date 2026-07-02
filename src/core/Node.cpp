@@ -1,5 +1,6 @@
 #include <yui/core/Node.hpp>
 
+#include <yui/core/NodeRef.hpp>  // absoluteRect (scrollIntoView)
 #include <yui/core/RenderDefaults.hpp>
 
 #include <algorithm>
@@ -546,6 +547,101 @@ void ScrollNode::clampScrollOffset() {
     targetScrollY = std::max(0.0f, std::min(targetScrollY, maxScrollY));
     scrollOffsetX = std::max(0.0f, std::min(scrollOffsetX, maxScrollX));
     scrollOffsetY = std::max(0.0f, std::min(scrollOffsetY, maxScrollY));
+}
+
+void ScrollNode::scrollTo(float x, float y) {
+    targetScrollX = x;
+    targetScrollY = y;
+    clampScrollOffset();
+}
+
+void ScrollNode::scrollIntoView(const layout::Rect& target) {
+    // The padded viewport in absolute space — the region content shows through.
+    layout::Rect self = absoluteRect(this);
+    float vx = self.x + layout.insetLeft;
+    float vy = self.y + layout.insetTop;
+
+    // The target in CONTENT space: its absolute rect was computed at the
+    // CURRENT offsets, so adding them back yields scroll-independent coords.
+    float cx = target.x - vx + scrollOffsetX;
+    float cy = target.y - vy + scrollOffsetY;
+
+    // Minimal scroll per axis, measured against the TARGET offsets so a call
+    // during an in-flight animation composes with where the scroll is headed.
+    // Far edge first, near edge second: for an oversized target the near
+    // (top/left) alignment wins.
+    if (cx + target.w > targetScrollX + layout.contentWidth())
+        targetScrollX = cx + target.w - layout.contentWidth();
+    if (cx < targetScrollX)
+        targetScrollX = cx;
+    if (cy + target.h > targetScrollY + layout.contentHeight())
+        targetScrollY = cy + target.h - layout.contentHeight();
+    if (cy < targetScrollY)
+        targetScrollY = cy;
+    clampScrollOffset();
+}
+
+ScrollbarGeometry ScrollNode::scrollbar(ScrollAxis axis) const {
+    namespace rd = render_defaults;
+    ScrollbarGeometry g;
+    float vw = layout.contentWidth();
+    float vh = layout.contentHeight();
+    // A bar is active exactly when its axis overflows the padded viewport —
+    // the same predicate the wheel path scrolls by and clampScrollOffset
+    // ranges over. When both bars are active each track stops short of the
+    // shared bottom-right corner.
+    bool vActive = contentHeight > vh;
+    bool hActive = contentWidth > vw;
+
+    if (axis == ScrollAxis::Vertical) {
+        float trackLen = vh - (hActive ? rd::kScrollbarThickness : 0.0f);
+        if (!vActive || trackLen <= 0)
+            return g;
+        g.active = true;
+        g.track = {layout.insetLeft + vw - rd::kScrollbarThickness, layout.insetTop, rd::kScrollbarThickness, trackLen};
+        float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vh / contentHeight));
+        float travel = trackLen - thumbLen;
+        float maxScroll = contentHeight - vh;
+        float pos = maxScroll > 0 ? (scrollOffsetY / maxScroll) * travel : 0.0f;
+        g.thumb = {g.track.x, g.track.y + pos, rd::kScrollbarThickness, thumbLen};
+    } else {
+        float trackLen = vw - (vActive ? rd::kScrollbarThickness : 0.0f);
+        if (!hActive || trackLen <= 0)
+            return g;
+        g.active = true;
+        g.track = {layout.insetLeft, layout.insetTop + vh - rd::kScrollbarThickness, trackLen, rd::kScrollbarThickness};
+        float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vw / contentWidth));
+        float travel = trackLen - thumbLen;
+        float maxScroll = contentWidth - vw;
+        float pos = maxScroll > 0 ? (scrollOffsetX / maxScroll) * travel : 0.0f;
+        g.thumb = {g.track.x + pos, g.track.y, thumbLen, rd::kScrollbarThickness};
+    }
+    return g;
+}
+
+ScrollbarPart ScrollNode::scrollbarHitTest(float localX, float localY) const {
+    auto contains = [](const layout::Rect& r, float px, float py) {
+        return px >= r.x && px < r.right() && py >= r.y && py < r.bottom();
+    };
+    ScrollbarGeometry v = scrollbar(ScrollAxis::Vertical);
+    if (v.active && contains(v.track, localX, localY))
+        return contains(v.thumb, localX, localY) ? ScrollbarPart::VerticalThumb : ScrollbarPart::VerticalTrack;
+    ScrollbarGeometry h = scrollbar(ScrollAxis::Horizontal);
+    if (h.active && contains(h.track, localX, localY))
+        return contains(h.thumb, localX, localY) ? ScrollbarPart::HorizontalThumb : ScrollbarPart::HorizontalTrack;
+    return ScrollbarPart::None;
+}
+
+float ScrollNode::scrollPerThumbPixel(ScrollAxis axis) const {
+    ScrollbarGeometry g = scrollbar(axis);
+    if (!g.active)
+        return 0.0f;
+    bool vertical = axis == ScrollAxis::Vertical;
+    float travel = vertical ? g.track.h - g.thumb.h : g.track.w - g.thumb.w;
+    if (travel <= 0)
+        return 0.0f;
+    float maxScroll = vertical ? contentHeight - layout.contentHeight() : contentWidth - layout.contentWidth();
+    return maxScroll / travel;
 }
 
 bool ScrollNode::updateSmooth(float dt) {

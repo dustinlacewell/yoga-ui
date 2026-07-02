@@ -7,6 +7,7 @@
 namespace yui {
 
 class Node;
+class ScrollNode;
 
 // Backing slot for an element ref. Holds a non-owning pointer to the render Node
 // the ref is attached to, plus a weak copy of that node's liveness token
@@ -52,6 +53,11 @@ public:
 
     // Alias for current(), for C++ smart-pointer muscle memory.
     Node* get() const { return current(); }
+
+    // Type-checked downcast of current(): the live ScrollNode, or nullptr when
+    // the ref is unattached/dead or on a non-Scroll element. The sanctioned
+    // route to the programmatic scroll API (scrollTo / scrollIntoView).
+    ScrollNode* asScroll() const;
 
     // Absolute drawn rect of the live node, or an empty rect if current() is
     // null. Defined out-of-line (needs Node + the absoluteRect walk).

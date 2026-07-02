@@ -52,6 +52,7 @@ private:
     void drawText(const TextNode* node, float x, float y);
     void drawInput(const InputNode* node, const Rect& r);
     void drawScroll(const ScrollNode* node, const Rect& r);
+    void drawScrollbar(const ScrollNode& node, ScrollAxis axis, const Rect& r);
     void drawCanvas(const CanvasNode* node, const Rect& r);
 
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
@@ -161,6 +162,22 @@ void TreeWalker::drawScroll(const ScrollNode* node, const Rect& r) {
         drawNode(child.get(), childOffsetX, childOffsetY);
     }
     backend_.popClip();
+
+    // Overlay scrollbars, outside the content clip (they sit within the
+    // viewport bounds anyway): a bar per overflowing axis, geometry from the
+    // node so the drawn thumb IS the hit region the EventHandler drags.
+    drawScrollbar(*node, ScrollAxis::Vertical, r);
+    drawScrollbar(*node, ScrollAxis::Horizontal, r);
+}
+
+void TreeWalker::drawScrollbar(const ScrollNode& node, ScrollAxis axis, const Rect& r) {
+    namespace rd = render_defaults;
+    ScrollbarGeometry g = node.scrollbar(axis);
+    if (!g.active)
+        return;
+    float radius = rd::kScrollbarThickness / 2;
+    backend_.fillRect({r.x + g.track.x, r.y + g.track.y, g.track.w, g.track.h}, rd::kScrollbarTrackColor, radius);
+    backend_.fillRect({r.x + g.thumb.x, r.y + g.thumb.y, g.thumb.w, g.thumb.h}, rd::kScrollbarThumbColor, radius);
 }
 
 void TreeWalker::drawInput(const InputNode* node, const Rect& r) {

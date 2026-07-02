@@ -19,9 +19,12 @@ layout::Rect absoluteRect(const Node* node) {
     const Node* cur = node->parent;
     while (cur) {
         if (cur->type() == PrimitiveType::Scroll) {
+            // Scroll content lives at the PADDED viewport origin, shifted by
+            // the scroll offset — the same accumulation hitTest and drawScroll
+            // use, so the drawn rect matches where the node is hit and painted.
             const auto* scroll = static_cast<const ScrollNode*>(cur);
-            x -= scroll->scrollOffsetX;
-            y -= scroll->scrollOffsetY;
+            x += cur->layout.insetLeft - scroll->scrollOffsetX;
+            y += cur->layout.insetTop - scroll->scrollOffsetY;
         }
         x += cur->layout.left;
         y += cur->layout.top;
@@ -33,6 +36,13 @@ layout::Rect absoluteRect(const Node* node) {
 
 layout::Rect NodeRef::getBoundingRect() const {
     return absoluteRect(current());
+}
+
+ScrollNode* NodeRef::asScroll() const {
+    Node* n = current();
+    if (!n || n->type() != PrimitiveType::Scroll)
+        return nullptr;
+    return static_cast<ScrollNode*>(n);
 }
 
 bool NodeRef::inRenderPhase() {

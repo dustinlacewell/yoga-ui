@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -123,6 +124,19 @@ private:
     // `captor` across the two dispatches).
     bool dispatchCapturedMove(Node* captor, float x, float y);
 
+    // Start a scrollbar gesture if the press landed on a Scroll node's overlay
+    // scrollbar. Scrollbars are chrome: the press captures the scroll node
+    // (pressedNode_) and is handled entirely here — a thumb press arms the
+    // drag mapping, a track press pages by one viewport — with NO user-handler
+    // dispatch, focus change, or click chaining. Returns true iff consumed.
+    bool beginScrollbarGesture(Node* target, float x, float y, MouseButton button);
+
+    // One captured move of an armed thumb drag: map the press-anchored pointer
+    // delta through the thumb-travel scale into the target offset, through the
+    // single clamp (clampScrollOffset). Track-press gestures (no axis) ignore
+    // moves.
+    void dragScrollbarThumb(Node* captor, float x, float y);
+
     // Advance the multi-click machine at a press: a press within the interval /
     // radius of the previous click (same button) extends the chain, anything
     // else restarts clickCount_ at 1.
@@ -181,6 +195,10 @@ private:
         pressX_ = lastX_ = x;
         pressY_ = lastY_ = y;
         dragging_ = false;
+        // Every press lifecycle change disarms the scrollbar gesture;
+        // beginScrollbarGesture re-arms it right after recording the press.
+        scrollbarGesture_ = false;
+        scrollbarDragAxis_.reset();
     }
 
     // Return pressedNode_ only if its node is still alive; otherwise clear the
@@ -283,6 +301,15 @@ private:
     float lastX_ = 0;
     float lastY_ = 0;
     bool dragging_ = false;
+    // Scrollbar gesture riding the capture slot: while the recorded press
+    // landed on a scroll node's scrollbar, moves and the release are consumed
+    // as chrome (no user-handler dispatch). scrollbarDragAxis_ is set for a
+    // thumb press (the drag maps pointer deltas to that axis's offset) and
+    // empty for a track press. Armed only by beginScrollbarGesture; disarmed
+    // by setPressedNode (see there).
+    bool scrollbarGesture_ = false;
+    std::optional<ScrollAxis> scrollbarDragAxis_;
+    float scrollbarDragStartTarget_ = 0;
     // Multi-click machine: the dt-accumulated clock (advanceClock) plus the last
     // press's time/pos/button, chained into clickCount_ by updateClickChain. A
     // drag resets clickCount_ to 0 so the next press starts a fresh chain.

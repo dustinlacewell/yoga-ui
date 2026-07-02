@@ -268,8 +268,9 @@ TEST_CASE("renderTree: scroll clips at its absolute rect and offsets children") 
 
     render::renderTree(root, backend, {});
 
-    // Root box has no chrome; the stream is exactly clip / content / unclip.
-    REQUIRE(backend.calls.size() == 3);
+    // Root box has no chrome; the stream is clip / content / unclip, then the
+    // vertical overlay scrollbar (track + thumb) outside the clip.
+    REQUIRE(backend.calls.size() == 5);
 
     CHECK(backend.calls[0].kind == Call::Kind::PushClip);
     checkRect(backend.calls[0].rect, 10, 10, 100, 80);  // absolute (inside padding)
@@ -279,6 +280,16 @@ TEST_CASE("renderTree: scroll clips at its absolute rect and offsets children") 
 
     CHECK(backend.calls[2].kind == Call::Kind::PopClip);
     CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+
+    // Track hugs the viewport's right edge; the thumb is trackLen * vh/content
+    // = 80 * 80/200 = 32 tall, at offset 30 of maxScroll 120 over 48 of travel.
+    CHECK(backend.calls[3].kind == Call::Kind::FillRect);
+    CHECK(backend.calls[3].color == rd::kScrollbarTrackColor);
+    checkRect(backend.calls[3].rect, 10 + 100 - rd::kScrollbarThickness, 10, rd::kScrollbarThickness, 80);
+    CHECK(backend.calls[4].kind == Call::Kind::FillRect);
+    CHECK(backend.calls[4].color == rd::kScrollbarThumbColor);
+    checkRect(backend.calls[4].rect, 10 + 100 - rd::kScrollbarThickness, 10 + (30.0f / 120.0f) * 48,
+              rd::kScrollbarThickness, 32);
 }
 
 TEST_CASE("renderTree: scroll padding insets the clip viewport and the content origin") {
@@ -300,7 +311,7 @@ TEST_CASE("renderTree: scroll padding insets the clip viewport and the content o
 
     render::renderTree(root, backend, {});
 
-    REQUIRE(backend.calls.size() == 3);
+    REQUIRE(backend.calls.size() == 5);
 
     CHECK(backend.calls[0].kind == Call::Kind::PushClip);
     checkRect(backend.calls[0].rect, 10, 10, 80, 60);  // the PADDED viewport
@@ -309,6 +320,113 @@ TEST_CASE("renderTree: scroll padding insets the clip viewport and the content o
     checkRect(backend.calls[1].rect, 10, -20, 80, 200);  // content origin (10,10) - 30 scroll
 
     CHECK(backend.calls[2].kind == Call::Kind::PopClip);
+
+    // The bar lives INSIDE the padded viewport, consistent with the clip: track
+    // at the viewport's right edge (x = 10 + 80 - thickness), spanning its 60px
+    // height. The proportional thumb (60 * 60/200 = 18) clamps up to the min
+    // length; offset 30 of maxScroll 140 maps over the remaining travel.
+    float thumbLen = rd::kScrollbarMinThumbLen;
+    float travel = 60 - thumbLen;
+    CHECK(backend.calls[3].color == rd::kScrollbarTrackColor);
+    checkRect(backend.calls[3].rect, 10 + 80 - rd::kScrollbarThickness, 10, rd::kScrollbarThickness, 60);
+    CHECK(backend.calls[4].color == rd::kScrollbarThumbColor);
+    checkRect(backend.calls[4].rect, 10 + 80 - rd::kScrollbarThickness, 10 + (30.0f / 140.0f) * travel,
+              rd::kScrollbarThickness, thumbLen);
+}
+
+// ---------------------------------------------------------------------------
+// Overlay scrollbars: a bar per overflowing axis, proportional thumb tracking
+// the offset, min-length clamp, corner yield when both bars show, and no bar
+// at all when content fits.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: vertical scrollbar thumb is proportional and tracks the offset") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Content 2x the viewport: thumb = trackLen * vh/content = 100 * 100/200 = 50.
+    auto tree = Scroll(Box().width(50).height(200).setKey("content")).width(100).height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+
+    render::renderTree(root, backend, {});
+
+    // No content chrome: the only fills are the track and the thumb.
+    REQUIRE(backend.count(Call::Kind::FillRect) == 2);
+    const Call* track = backend.nthOf(Call::Kind::FillRect, 0);
+    const Call* thumb = backend.nthOf(Call::Kind::FillRect, 1);
+    CHECK(track->color == rd::kScrollbarTrackColor);
+    checkRect(track->rect, 100 - rd::kScrollbarThickness, 0, rd::kScrollbarThickness, 100);
+    CHECK(thumb->color == rd::kScrollbarThumbColor);
+    checkRect(thumb->rect, 100 - rd::kScrollbarThickness, 0, rd::kScrollbarThickness, 50);  // top at scroll 0
+
+    // At max scroll the thumb's far edge meets the track's far edge.
+    scroll->scrollOffsetY = 100;  // maxScroll = 200 - 100
+    backend.calls.clear();
+    render::renderTree(root, backend, {});
+    checkRect(backend.nthOf(Call::Kind::FillRect, 1)->rect, 100 - rd::kScrollbarThickness, 50,
+              rd::kScrollbarThickness, 50);
+}
+
+TEST_CASE("renderTree: no scrollbar when content fits the viewport") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Scroll(Box().width(50).height(50).backgroundColor(0x112233FFu).setKey("content"))
+                    .width(100)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 100);
+
+    render::renderTree(root, backend, {});
+
+    CHECK(backend.count(Call::Kind::FillRect) == 1);  // the content box only
+}
+
+TEST_CASE("renderTree: both bars when both axes overflow; tracks yield the shared corner") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Scroll(Box().width(200).height(200).setKey("content")).width(100).height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 100);
+
+    render::renderTree(root, backend, {});
+
+    // Vertical track+thumb, then horizontal track+thumb. Each track stops
+    // short of the bottom-right corner by the other bar's thickness, and the
+    // thumb is proportional to the SHORTENED track (92 * 100/200 = 46).
+    REQUIRE(backend.count(Call::Kind::FillRect) == 4);
+    float t = rd::kScrollbarThickness;
+    checkRect(backend.nthOf(Call::Kind::FillRect, 0)->rect, 100 - t, 0, t, 100 - t);
+    checkRect(backend.nthOf(Call::Kind::FillRect, 1)->rect, 100 - t, 0, t, (100 - t) / 2);
+    checkRect(backend.nthOf(Call::Kind::FillRect, 2)->rect, 0, 100 - t, 100 - t, t);
+    checkRect(backend.nthOf(Call::Kind::FillRect, 3)->rect, 0, 100 - t, (100 - t) / 2, t);
+}
+
+TEST_CASE("renderTree: tiny proportional thumb clamps to the min length and still reaches the end") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // 1000px of content in a 100px viewport: proportional thumb would be 10px,
+    // below the grabbable minimum.
+    auto tree = Scroll(Box().width(50).height(1000).setKey("content")).width(100).height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+    scroll->scrollOffsetY = 900;  // max
+
+    render::renderTree(root, backend, {});
+
+    const Call* thumb = backend.nthOf(Call::Kind::FillRect, 1);
+    CHECK(thumb->rect.h == doctest::Approx(rd::kScrollbarMinThumbLen));
+    // At max scroll the clamped thumb still lands flush with the track end.
+    CHECK(thumb->rect.y + thumb->rect.h == doctest::Approx(100));
 }
 
 // ---------------------------------------------------------------------------

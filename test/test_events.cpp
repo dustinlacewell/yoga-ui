@@ -521,6 +521,180 @@ TEST_CASE("ScrollNode padding: scrolling clamps to the padded viewport") {
     CHECK(scrollNode->targetScrollY == 0);
 }
 
+// ============================================================================
+// Overlay scrollbars (6b): the bar is Scroll chrome — its hits never reach
+// content, a thumb press captures the scroll and drags proportionally through
+// the single clamp, a track press pages by a viewport, and none of it
+// dispatches user handlers.
+// ============================================================================
+
+TEST_CASE("Scrollbar - thumb drag maps pointer deltas through the track scale, clamped") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int clicks = 0, mouseDowns = 0, drags = 0;
+    auto tree = Scroll(Box().width(50).height(200).setKey("content"))
+                    .width(100)
+                    .height(100)
+                    .onClick([&]() { ++clicks; })
+                    .onMouseDown([&](float, float, MouseButton) { ++mouseDowns; })
+                    .onDrag([&](const DragEvent&) { ++drags; });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+
+    // Content 2x viewport: track 100, thumb 50, travel 50, maxScroll 100 —
+    // 2px of scroll per thumb pixel (= contentLen / trackLen).
+    events.handleMouseDown(root, 96, 25, MouseButton::Left);  // in the thumb (92..100 x 0..50)
+    CHECK(events.hasCapture());
+    CHECK(mouseDowns == 0);  // chrome: no user dispatch
+
+    events.handleMouseMove(root, 96, 35);
+    CHECK(scroll->targetScrollY == doctest::Approx(20));
+    CHECK(events.getCursor() == CursorShape::Arrow);
+
+    // Way past the end: saturates at maxScroll, no overshoot.
+    events.handleMouseMove(root, 96, 300);
+    CHECK(scroll->targetScrollY == doctest::Approx(100));
+
+    // Back up: retraces from the press anchor, not from the clamp.
+    events.handleMouseMove(root, 96, 60);
+    CHECK(scroll->targetScrollY == doctest::Approx(70));
+
+    // Pointer far off the bar horizontally: capture keeps the drag alive.
+    events.handleMouseMove(root, 300, 45);
+    CHECK(scroll->targetScrollY == doctest::Approx(40));
+
+    events.handleMouseUp(root, 300, 45, MouseButton::Left);
+    CHECK(!events.hasCapture());
+    CHECK(clicks == 0);  // a scrollbar gesture never clicks
+    CHECK(drags == 0);   // ...and never streams user drags
+    CHECK(scroll->targetScrollY == doctest::Approx(40));
+}
+
+TEST_CASE("Scrollbar - track click pages by one viewport toward the click") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Scroll(Box().width(50).height(200).setKey("content")).width(100).height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+
+    // Thumb occupies y 0..50; a press below it pages down one viewport (100),
+    // clamped to maxScroll (100).
+    events.handleMouseDown(root, 96, 80, MouseButton::Left);
+    events.handleMouseUp(root, 96, 80, MouseButton::Left);
+    CHECK(scroll->targetScrollY == doctest::Approx(100));
+
+    // Settle the smooth interpolation so the drawn thumb reaches the bottom.
+    root->update(1.0f);
+    root->update(1.0f);
+    CHECK(scroll->scrollOffsetY == doctest::Approx(100));
+
+    // Now the thumb occupies y 50..100; a press above it pages back up.
+    events.handleMouseDown(root, 96, 10, MouseButton::Left);
+    events.handleMouseUp(root, 96, 10, MouseButton::Left);
+    CHECK(scroll->targetScrollY == doctest::Approx(0));
+}
+
+TEST_CASE("Scrollbar - the bar region hits the scroll chrome, not the content beneath") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Scroll(Box().width(100).height(200).setKey("content")).width(100).height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    Node* content = root->children[0].get();
+
+    // Over the vertical bar: the scroll itself, even though the full-width
+    // content is drawn underneath the overlay.
+    events.handleMouseMove(root, 96, 25);
+    CHECK(events.getHoveredNode() == root);
+
+    // Off the bar: the content.
+    events.handleMouseMove(root, 50, 25);
+    CHECK(events.getHoveredNode() == content);
+}
+
+TEST_CASE("Scrollbar - content that fits shows no bar, so the same point hits the child") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Scroll(Box().width(100).height(80).setKey("content")).width(100).height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    Node* content = root->children[0].get();
+
+    events.handleMouseMove(root, 96, 25);
+    CHECK(events.getHoveredNode() == content);
+}
+
+// ============================================================================
+// Programmatic scroll (6b): scrollTo and scrollIntoView write the target
+// through the same clamp every other writer uses.
+// ============================================================================
+
+TEST_CASE("ScrollNode::scrollTo clamps; scrollIntoView scrolls the minimum to reveal a rect") {
+    Reconciler reconciler;
+
+    auto tree = Scroll(Column(Box().height(50).setKey("r0"), Box().height(50).setKey("r1"),
+                              Box().height(50).setKey("r2"), Box().height(50).setKey("r3")))
+                    .width(100)
+                    .height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+    Node* column = scroll->children[0].get();
+    REQUIRE(column->children.size() == 4);
+
+    // scrollTo goes through the single clamp: maxScroll = 200 - 100.
+    scroll->scrollTo(0, 500);
+    CHECK(scroll->targetScrollY == doctest::Approx(100));
+    scroll->scrollTo(0, -50);
+    CHECK(scroll->targetScrollY == doctest::Approx(0));
+
+    // Row 2 (content y 100..150) is below the viewport: scroll just enough to
+    // bring its bottom edge to the viewport's bottom.
+    scroll->scrollIntoView(absoluteRect(column->children[2].get()));
+    CHECK(scroll->targetScrollY == doctest::Approx(50));
+
+    // Row 1 (50..100) is already visible at the pending target: no change.
+    scroll->scrollIntoView(absoluteRect(column->children[1].get()));
+    CHECK(scroll->targetScrollY == doctest::Approx(50));
+
+    // Row 0 (0..50) is above: scroll back up to its top.
+    scroll->scrollIntoView(absoluteRect(column->children[0].get()));
+    CHECK(scroll->targetScrollY == doctest::Approx(0));
+}
+
+TEST_CASE("ScrollNode::scrollIntoView measures against the padded viewport") {
+    Reconciler reconciler;
+
+    auto tree = Scroll(Column(Box().height(50).setKey("r0"), Box().height(50).setKey("r1"),
+                              Box().height(50).setKey("r2"), Box().height(50).setKey("r3")))
+                    .width(100)
+                    .height(100)
+                    .padding(10);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    auto* scroll = static_cast<ScrollNode*>(root);
+    Node* column = scroll->children[0].get();
+
+    // Padded viewport is 80 tall; row 2 (content 100..150) needs target
+    // 150 - 80 = 70. Exercises absoluteRect's padded-scroll origin too: the
+    // row's drawn rect starts at the viewport origin (10), not the border box.
+    scroll->scrollIntoView(absoluteRect(column->children[2].get()));
+    CHECK(scroll->targetScrollY == doctest::Approx(70));
+}
+
 TEST_CASE("ScrollNode child layout dimensions - fixed size child") {
     Reconciler reconciler;
 

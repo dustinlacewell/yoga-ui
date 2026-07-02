@@ -1,5 +1,6 @@
 #include <yui/core/EventHandler.hpp>
 
+#include <yui/core/NodeRef.hpp>  // absoluteRect (scrollbar-local press coords)
 #include <yui/core/RenderDefaults.hpp>
 
 #include <algorithm>
@@ -56,6 +57,11 @@ bool fireCallback(std::string_view where, Invoke&& invoke, Report&& report) {
 bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button) noexcept {
     Node* target = hitTest(root, x, y);
 
+    // A press on a scroll node's overlay scrollbar is chrome, consumed before
+    // any of the content-press machinery (focus, click chain, user dispatch).
+    if (beginScrollbarGesture(target, x, y, button))
+        return true;
+
     // Update focus on click
     updateFocus(target);
 
@@ -102,14 +108,16 @@ bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton butto
         markVisualStateChanged();
     Node* pressed = (captor && pressedButton_ == button) ? captor : nullptr;
     bool wasDragging = dragging_;
+    bool wasScrollbarGesture = scrollbarGesture_;  // read before setPressedNode disarms it
     setPressedNode(nullptr);
 
     // Captured: the release goes to the captor regardless of where it landed
     // (even off-window, releaseTarget null). Uncaptured: to the hit node, as a
-    // plain (orphan) release.
-    Node* dispatchTarget = captor ? captor : releaseTarget;
+    // plain (orphan) release. A scrollbar gesture's release is chrome — it
+    // ends the gesture and dispatches nothing.
+    Node* dispatchTarget = wasScrollbarGesture ? nullptr : (captor ? captor : releaseTarget);
 
-    bool consumed = false;
+    bool consumed = wasScrollbarGesture;
     if (dispatchTarget) {
         Event event;
         event.type = Event::Type::MouseUp;
@@ -164,6 +172,15 @@ bool EventHandler::handleMouseMove(Node* root, float x, float y) noexcept {
 // only after the top-level handle*() unwinds, and the NEXT move re-derives the
 // captor from its liveness token.
 bool EventHandler::dispatchCapturedMove(Node* captor, float x, float y) {
+    // A scrollbar gesture owns the whole capture: moves drive the thumb (or
+    // nothing, for a track press) and never reach user handlers.
+    if (scrollbarGesture_) {
+        dragScrollbarThumb(captor, x, y);
+        lastX_ = x;
+        lastY_ = y;
+        return true;
+    }
+
     Event event;
     event.type = Event::Type::MouseMove;
     event.x = x;
@@ -191,6 +208,70 @@ bool EventHandler::dispatchCapturedMove(Node* captor, float x, float y) {
     lastX_ = x;
     lastY_ = y;
     return consumed;
+}
+
+bool EventHandler::beginScrollbarGesture(Node* target, float x, float y, MouseButton button) {
+    if (!target || target->type() != PrimitiveType::Scroll || button != MouseButton::Left)
+        return false;
+    auto* scroll = static_cast<ScrollNode*>(target);
+    layout::Rect abs = absoluteRect(scroll);
+    ScrollbarPart part = scroll->scrollbarHitTest(x - abs.x, y - abs.y);
+    if (part == ScrollbarPart::None)
+        return false;
+
+    // The press transition is a visual change (mirrors the content-press path);
+    // the scroll motion itself repaints via the update walk's animating result.
+    markVisualStateChanged();
+    setPressedNode(target, button, x, y);  // capture: further moves route here
+    scrollbarGesture_ = true;
+
+    switch (part) {
+    case ScrollbarPart::VerticalThumb:
+        scrollbarDragAxis_ = ScrollAxis::Vertical;
+        scrollbarDragStartTarget_ = scroll->targetScrollY;
+        break;
+    case ScrollbarPart::HorizontalThumb:
+        scrollbarDragAxis_ = ScrollAxis::Horizontal;
+        scrollbarDragStartTarget_ = scroll->targetScrollX;
+        break;
+    case ScrollbarPart::VerticalTrack: {
+        // Page toward the click: one viewport up above the thumb, down below.
+        float dir = (y - abs.y) < scroll->scrollbar(ScrollAxis::Vertical).thumb.y ? -1.0f : 1.0f;
+        scroll->targetScrollY += dir * scroll->layout.contentHeight();
+        scroll->clampScrollOffset();
+        break;
+    }
+    case ScrollbarPart::HorizontalTrack: {
+        float dir = (x - abs.x) < scroll->scrollbar(ScrollAxis::Horizontal).thumb.x ? -1.0f : 1.0f;
+        scroll->targetScrollX += dir * scroll->layout.contentWidth();
+        scroll->clampScrollOffset();
+        break;
+    }
+    case ScrollbarPart::None:
+        break;  // unreachable (gated above)
+    }
+    return true;
+}
+
+void EventHandler::dragScrollbarThumb(Node* captor, float x, float y) {
+    if (!scrollbarDragAxis_ || captor->type() != PrimitiveType::Scroll)
+        return;
+    auto* scroll = static_cast<ScrollNode*>(captor);
+    // Press-anchored absolute mapping: total pointer delta times the thumb
+    // travel scale, from the target recorded at press. Clamping is left to the
+    // single clamp, so dragging past an end saturates and retraces cleanly.
+    float scale = scroll->scrollPerThumbPixel(*scrollbarDragAxis_);
+    bool vertical = *scrollbarDragAxis_ == ScrollAxis::Vertical;
+    float before = vertical ? scroll->targetScrollY : scroll->targetScrollX;
+    if (vertical)
+        scroll->targetScrollY = scrollbarDragStartTarget_ + (y - pressY_) * scale;
+    else
+        scroll->targetScrollX = scrollbarDragStartTarget_ + (x - pressX_) * scale;
+    scroll->clampScrollOffset();
+    // Latch the repaint here too: a sub-snap-threshold move would otherwise be
+    // snapped silently by updateSmooth (offset moves, animating stays false).
+    if ((vertical ? scroll->targetScrollY : scroll->targetScrollX) != before)
+        markVisualStateChanged();
 }
 
 void EventHandler::updateClickChain(float x, float y, MouseButton button) {
@@ -300,6 +381,11 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
         if (!inOwnRect)
             return nullptr;
         auto* scrollNode = static_cast<ScrollNode*>(node);
+        // Overlay scrollbars eat hits before content: a point on an active
+        // bar is the scroll's own chrome (handleMouseDown routes it), never
+        // the content drawn underneath.
+        if (scrollNode->scrollbarHitTest(x - nodeX, y - nodeY) != ScrollbarPart::None)
+            return node;
         bool inViewport = x >= nodeX + l.insetLeft && x < nodeX + l.width - l.insetRight && y >= nodeY + l.insetTop &&
                           y < nodeY + l.height - l.insetBottom;
         if (!inViewport)

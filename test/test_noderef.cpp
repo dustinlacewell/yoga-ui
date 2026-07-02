@@ -72,6 +72,67 @@ TEST_CASE("absoluteRect: a scrolled ancestor subtracts its scroll offset") {
     CHECK(yAfter == doctest::Approx(yBefore - 30));
 }
 
+TEST_CASE("absoluteRect: a padded scroll ancestor offsets children by the viewport origin") {
+    TestHost host;
+    NodeRef row;
+    ScrollNode* scrollNode = nullptr;
+
+    host.setRender(std::function<VNode()>([&]() {
+        return Box(
+            Scroll(Column(
+                Box().height(50),
+                Box().ref(row).height(50)    // 2nd row → content y = 50
+            )).height(80).padding(10)
+        );
+    }));
+    host.update(200, 200);
+
+    std::function<void(Node*)> find = [&](Node* p) {
+        if (p->type() == PrimitiveType::Scroll) scrollNode = static_cast<ScrollNode*>(p);
+        for (auto& c : p->children) find(c.get());
+    };
+    find(host.root());
+    REQUIRE(scrollNode != nullptr);
+
+    // Content draws at the PADDED viewport origin: the row's drawn rect is
+    // inset by the scroll's padding on both axes (then shifted by the offset).
+    auto r = row.getBoundingRect();
+    CHECK(r.x == doctest::Approx(10));
+    CHECK(r.y == doctest::Approx(10 + 50));
+
+    scrollNode->scrollOffsetY = 30;
+    CHECK(row.getBoundingRect().y == doctest::Approx(10 + 50 - 30));
+}
+
+// ─── asScroll: the sanctioned route to the programmatic scroll API ───────────
+
+TEST_CASE("NodeRef::asScroll downcasts scroll elements; others read null") {
+    TestHost host;
+    NodeRef scrollRef;
+    NodeRef boxRef;
+
+    host.setRender(std::function<VNode()>([&]() {
+        return Box(
+            Scroll(Column(
+                Box().height(50), Box().height(50), Box().height(50)
+            )).ref(scrollRef).height(80),
+            Box().ref(boxRef).height(10)
+        );
+    }));
+    host.update(200, 200);
+
+    CHECK(boxRef.asScroll() == nullptr);
+    ScrollNode* s = scrollRef.asScroll();
+    REQUIRE(s != nullptr);
+
+    // The handle drives the real API, through the single clamp:
+    // maxScroll = 150 - 80.
+    s->scrollTo(0, 20);
+    CHECK(s->targetScrollY == doctest::Approx(20));
+    s->scrollTo(0, 1000);
+    CHECK(s->targetScrollY == doctest::Approx(70));
+}
+
 // ─── Render-phase guard: current() is null during render (React parity) ──────
 
 TEST_CASE("NodeRef::current returns null during render, valid after") {
