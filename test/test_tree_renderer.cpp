@@ -1040,3 +1040,190 @@ TEST_CASE("renderTree: the selection highlight shifts by the follow-scroll with 
     REQUIRE(caret != nullptr);
     CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad + 120 - 36 - rd::kCaretWidth / 2));
 }
+
+// ---------------------------------------------------------------------------
+// Multiline input (6c C6): the wrapped-run loop. Lines stack TOP-aligned from
+// the content top (single-line centers its one run — a documented divergence),
+// the selection paints one rect per overlapped line, the caret occupies its
+// line's box, and textScrollY shifts the whole block up inside the clip.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: multiline input draws its wrapped runs top-aligned in a loop") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Box-wrapped so the input keeps its own rect at the origin; the input
+    // auto-grows to its 2 hard lines (measure func).
+    auto tree = Box(
+                    Input().value("ab\ncd").multiline().fontSize(10).width(100)
+                )
+                    .width(200)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(200, 100);
+    auto* in = static_cast<InputNode*>(root->children[0].get());
+    CHECK(in->layout.height == doctest::Approx(20));
+
+    render::renderTree(root, backend, {});
+
+    // One run per line at the text pad, stacked by lineHeight from the top —
+    // NOT the single-line vertically-centered y.
+    REQUIRE(backend.count(Call::Kind::TextRun) == 2);
+    const Call* run0 = backend.nthOf(Call::Kind::TextRun, 0);
+    const Call* run1 = backend.nthOf(Call::Kind::TextRun, 1);
+    CHECK(run0->text == "ab");
+    CHECK(run0->x == doctest::Approx(rd::kInputTextPad));
+    CHECK(run0->y == doctest::Approx(0));
+    CHECK(run1->text == "cd");
+    CHECK(run1->x == doctest::Approx(rd::kInputTextPad));
+    CHECK(run1->y == doctest::Approx(10));
+    CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+}
+
+TEST_CASE("renderTree: a multiline selection paints one rect per overlapped line") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Runs [0,4), [5,9), [10,14). Selection [2,12) overlaps all three:
+    // partial first, full middle, partial last.
+    auto tree = Box(
+                    Input().value("aaaa\nbbbb\ncccc").multiline().fontSize(10).width(100)
+                )
+                    .width(200)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(200, 100);
+    auto* in = static_cast<InputNode*>(root->children[0].get());
+    in->focused = true;
+    in->selectionAnchor = 2;
+    in->caret = 12;
+
+    render::renderTree(root, backend, {});
+
+    // Stream: bg fill / border stroke / clip / 3 selection fills / 3 text
+    // runs / caret fill / unclip — highlight under the glyphs, caret on top.
+    REQUIRE(backend.calls.size() == 11);
+    CHECK(backend.calls[2].kind == Call::Kind::PushClip);
+    for (int i = 3; i <= 5; ++i)
+        CHECK(backend.calls[i].kind == Call::Kind::FillRect);
+    for (int i = 6; i <= 8; ++i)
+        CHECK(backend.calls[i].kind == Call::Kind::TextRun);
+    CHECK(backend.calls[9].kind == Call::Kind::FillRect);
+    CHECK(backend.calls[10].kind == Call::Kind::PopClip);
+
+    // Partial first line: [2,4) of "aaaa" -> x = pad + 20, width 20, line 0.
+    CHECK(backend.calls[3].color == rd::kSelectionColor);
+    checkRect(backend.calls[3].rect, rd::kInputTextPad + 20, 0, 20, 10);
+    // Fully-enclosed middle line: its whole run width, full line box.
+    CHECK(backend.calls[4].color == rd::kSelectionColor);
+    checkRect(backend.calls[4].rect, rd::kInputTextPad, 10, 40, 10);
+    // Partial last line: [10,12) -> from the line start, width 20.
+    CHECK(backend.calls[5].color == rd::kSelectionColor);
+    checkRect(backend.calls[5].rect, rd::kInputTextPad, 20, 20, 10);
+
+    // The caret (moving end, byte 12) sits on line 2 at column 20.
+    const Call& caret = backend.calls[9];
+    CHECK(caret.rect.x == doctest::Approx(rd::kInputTextPad + 20 - rd::kCaretWidth / 2));
+    CHECK(caret.rect.y == doctest::Approx(20));
+    CHECK(caret.rect.h == doctest::Approx(10));
+}
+
+TEST_CASE("renderTree: a multiline selection within one line paints a single rect") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Box(
+                    Input().value("aaaa\nbbbb").multiline().fontSize(10).width(100)
+                )
+                    .width(200)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(200, 100);
+    auto* in = static_cast<InputNode*>(root->children[0].get());
+    in->focused = true;
+    in->selectionAnchor = 1;
+    in->caret = 3;
+
+    render::renderTree(root, backend, {});
+
+    int selRects = 0;
+    for (const auto& c : backend.calls)
+        if (c.kind == Call::Kind::FillRect && c.color == rd::kSelectionColor)
+            ++selRects;
+    CHECK(selRects == 1);
+    const Call* sel = backend.nthOf(Call::Kind::FillRect, 1);  // bg is fill 0
+    REQUIRE(sel != nullptr);
+    checkRect(sel->rect, rd::kInputTextPad + 10, 0, 20, 10);
+}
+
+TEST_CASE("renderTree: textScrollY shifts multiline runs and caret up inside the clip") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Five 10px lines in a 25px box; caret at the end follows to scrollY 25.
+    auto tree = Box(
+                    Input().value("a\nb\nc\nd\ne").multiline().fontSize(10).width(100).height(25)
+                )
+                    .width(200)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(200, 100);
+    auto* in = static_cast<InputNode*>(root->children[0].get());
+    in->focused = true;
+    in->caret = in->displayText.size();
+    in->clearSelection();
+    in->scrollCaretIntoView(&backend);
+    CHECK(in->textScrollY == doctest::Approx(25));
+
+    render::renderTree(root, backend, {});
+
+    // The first line rides 25px above the content top (clipped away); the
+    // last sits at 40 - 25 = 15; the caret shares its line's y.
+    const Call* clip = backend.nthOf(Call::Kind::PushClip, 0);
+    REQUIRE(clip != nullptr);
+    checkRect(clip->rect, 0, 0, 100, 25);
+    const Call* run0 = backend.nthOf(Call::Kind::TextRun, 0);
+    CHECK(run0->y == doctest::Approx(-25));
+    const Call* run4 = backend.nthOf(Call::Kind::TextRun, 4);
+    CHECK(run4->y == doctest::Approx(15));
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.y == doctest::Approx(15));
+    CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+}
+
+TEST_CASE("renderTree: empty multiline input draws the placeholder run and a first-line caret") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Box(
+                    Input().placeholder("hint").multiline().fontSize(10).width(100)
+                )
+                    .width(200)
+                    .height(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(200, 100);
+    auto* in = static_cast<InputNode*>(root->children[0].get());
+    in->focused = true;  // fresh blink state: caret visible
+
+    render::renderTree(root, backend, {});
+
+    // Placeholder: one un-wrapped run in the placeholder color at the first
+    // line slot; the caret sits at the pad on line 0 (no advance past "hint").
+    REQUIRE(backend.count(Call::Kind::TextRun) == 1);
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    CHECK(run->text == "hint");
+    CHECK(run->color == rd::kPlaceholderColor);
+    CHECK(run->y == doctest::Approx(0));
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad - rd::kCaretWidth / 2));
+    CHECK(caret->rect.y == doctest::Approx(0));
+    CHECK(caret->rect.h == doctest::Approx(10));
+    CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+}

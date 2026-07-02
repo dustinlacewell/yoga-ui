@@ -518,6 +518,35 @@ inline Component RightClickDemo() {
 }
 
 // ============================================================================
+// Textarea Demo - Demonstrates a multiline Input (Enter inserts a newline,
+// the box grows with its wrapped lines, Up/Down navigate by visual line)
+// ============================================================================
+
+inline Component TextAreaDemo() {
+    return [](ComponentContext& ctx) -> VNode {
+        auto [text, setText] = ctx.useState<std::string>("Multiline input.\nEnter adds a line;\nUp/Down move by line.");
+        const auto& t = theme();
+
+        return Section("Textarea",
+                       {
+                           Input()
+                               .value(text)
+                               .onChange([setText](const std::string& v) { setText(v); })
+                               .multiline()
+                               .placeholder("Type multiple lines...")
+                               .color(t.text)
+                               .backgroundColor(t.bg)
+                               .borderColor(t.border)
+                               .borderWidth(1)
+                               .borderRadius(t.radiusSm)
+                               .hoverStyle(InputStyle{.borderColor = t.textMuted})
+                               .focusStyle(InputStyle{.borderColor = t.accent}),
+                           Label("Grows to fit its wrapped lines"),
+                       });
+    };
+}
+
+// ============================================================================
 // AutoFocus Demo - Demonstrates autoFocus on Input
 // ============================================================================
 

@@ -116,7 +116,12 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
         layout::Rect abs = absoluteRect(input);
         const ITextMeasurer* m = measurerOf(input);
         float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
-        size_t clickIndex = input->indexAtPoint(textX, m);
+        // The y maps like the x (content-box origin plus follow-scroll) and is
+        // consumed only by a multiline input's line pick — multiline text is
+        // TOP-aligned at the content top, no vertical text pad.
+        float textY = y - (abs.y + input->layout.insetTop) + input->textScrollY;
+        size_t clickIndex = input->indexAtPoint(textX, textY, m);
+        input->verticalNavGoalX.reset();  // a click re-anchors the goal column
         if (button == MouseButton::Left && clickCount_ >= 3) {
             // Triple-click and beyond (chains cap at triple): select all,
             // anchor front / caret back (the moving end) — matching
@@ -258,7 +263,7 @@ bool EventHandler::dispatchCapturedMove(Node* captor, float x, float y) {
         // threshold latched, so a sub-threshold wiggle stays a plain click;
         // never reached by a scrollbar gesture (early return above).
         if (captor->type() == PrimitiveType::Input && captor->focused && pressedButton_ == MouseButton::Left)
-            dragSelectText(static_cast<InputNode*>(captor), x);
+            dragSelectText(static_cast<InputNode*>(captor), x, y);
 
         Event drag;
         drag.type = Event::Type::Drag;
@@ -340,23 +345,25 @@ void EventHandler::dragScrollbarThumb(Node* captor, float x, float y) {
         markVisualStateChanged();
 }
 
-void EventHandler::dragSelectText(InputNode* input, float x) {
+void EventHandler::dragSelectText(InputNode* input, float x, float y) {
     // The same window→text mapping as the press (see handleMouseDown), against
-    // the CURRENT textScrollX — as the follow-scroll chases the caret, the same
-    // window x maps ever deeper into the run, so holding past the content edge
-    // keeps scrolling and extending (indexAtPoint clamps at 0/size). The anchor
-    // is untouched: after a plain press it is the press boundary, after a
-    // shift+press the pre-press anchor, after a double-click the word start —
-    // the drag always moves the caret by CHARACTER from there (word-granular
-    // double-click drag is deliberately not implemented in v1).
+    // the CURRENT textScrollX/Y — as the follow-scroll chases the caret, the
+    // same window point maps ever deeper into the text, so holding past a
+    // content edge keeps scrolling and extending (indexAtPoint clamps at the
+    // bounds). The anchor is untouched: after a plain press it is the press
+    // boundary, after a shift+press the pre-press anchor, after a double-click
+    // the word start — the drag always moves the caret by CHARACTER from there
+    // (word-granular double-click drag is deliberately not implemented in v1).
     layout::Rect abs = absoluteRect(input);
     const ITextMeasurer* m = measurerOf(input);
     float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
-    size_t index = input->indexAtPoint(textX, m);
+    float textY = y - (abs.y + input->layout.insetTop) + input->textScrollY;
+    size_t index = input->indexAtPoint(textX, textY, m);
     if (index == input->caret)
         return;  // no boundary crossed: nothing changed, nothing to repaint
     input->caret = index;
-    input->resetCaretBlink();  // the moving caret shows immediately
+    input->verticalNavGoalX.reset();  // a drag re-anchors the goal column
+    input->resetCaretBlink();         // the moving caret shows immediately
     input->scrollCaretIntoView(m);
     markVisualStateChanged();
 }
@@ -957,14 +964,19 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     focused->displayText.insert(focused->caret, text);
     focused->caret += text.size();
     focused->selectionAnchor = focused->caret;
-    focused->resetCaretBlink();  // typing keeps the caret visible
+    focused->verticalNavGoalX.reset();  // typing re-anchors the goal column
+    focused->resetCaretBlink();         // typing keeps the caret visible
+    // Invalidate the wrap/measure state BEFORE the follow-scroll reads the
+    // (multiline) line structure; latches the relayout for multiline.
+    noteTextEdited(focused);
     // Follow-scroll AFTER the insert: typing past the right edge scrolls the
     // text so the caret stays inside the content box.
     focused->scrollCaretIntoView(measurerOf(focused));
 
     // An edit is a visual transition: latch the repaint so an Input with no
-    // onChange wired (no app-driven reconcile) still repaints. Repaint only —
-    // a single-line input's size is prop-driven, so layout is unaffected.
+    // onChange wired (no app-driven reconcile) still repaints. A single-line
+    // input's size is prop-driven (repaint only); a multiline edit ALSO
+    // latched a relayout above (noteTextEdited).
     markVisualStateChanged();
 
     if (focused->props.onChange) {
@@ -977,22 +989,27 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
 namespace {
 
 // What applying one EditCommand did: `handled` decides consumption (a command
-// whose implementation lands in a later commit is NOT consumed, so platform
-// shims can fall through until then); `textChanged` drives the onChange
-// notification.
+// unimplemented for the input's mode is NOT consumed, so platform shims can
+// route the key elsewhere); `textChanged` drives the onChange notification;
+// `submit` asks the caller to fire onSubmit (single-line Enter).
 struct EditOutcome {
     bool handled = false;
     bool textChanged = false;
+    bool submit = false;
 };
 
 // Apply one editing command to an Input's text/caret/selection state.
-// Single-line semantics: MoveLineStart/End span the whole value. The CARET is
-// the MOVING end (see InputNode::selectionAnchor): an extended (Shift) move
-// changes only the caret, leaving the anchor to span the selection. A move
-// already at its bound is still consumed: the key targeted the focused input
-// either way. `clipboard` is what Cut/Copy/Paste read/write; nullptr means
-// none is installed (those commands report unconsumed).
-EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, IClipboard* clipboard) {
+// Single-line semantics: MoveLineStart/End span the whole value; multiline
+// works the VISUAL (wrapped) line. The CARET is the MOVING end (see
+// InputNode::selectionAnchor): an extended (Shift) move changes only the
+// caret, leaving the anchor to span the selection. A move already at its
+// bound is still consumed: the key targeted the focused input either way.
+// `clipboard` is what Cut/Copy/Paste read/write; nullptr means none is
+// installed (those commands report unconsumed). `m` measures the multiline
+// line geometry (vertical moves, visual line bounds) — the same config-context
+// measurer every other edit-path measurement reads.
+EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, IClipboard* clipboard,
+                             const ITextMeasurer* m) {
     std::string& s = input.displayText;
     // Land the caret: an unextended move collapses the anchor onto it, an
     // extended one leaves the anchor as the selection's fixed end.
@@ -1027,12 +1044,55 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, ICl
         else
             moveTo(utf8::nextCodePoint(s, input.caret));
         return {true, false};
-    case EditCommand::MoveLineStart:
-        moveTo(0);
+    case EditCommand::MoveLineStart: {
+        // Single-line: the whole value IS the line. Multiline: the start of
+        // the caret's VISUAL (wrapped) line — Home on a soft-wrapped
+        // paragraph goes to the wrap point, not the paragraph start.
+        if (!input.multiline()) {
+            moveTo(0);
+            return {true, false};
+        }
+        const auto& runs = input.displayRuns(input.wrapWidth(), m);
+        moveTo(runs[input.caretPlacement(m).line].begin);
         return {true, false};
-    case EditCommand::MoveLineEnd:
-        moveTo(s.size());
+    }
+    case EditCommand::MoveLineEnd: {
+        if (!input.multiline()) {
+            moveTo(s.size());
+            return {true, false};
+        }
+        const auto& runs = input.displayRuns(input.wrapWidth(), m);
+        moveTo(runs[input.caretPlacement(m).line].end);
         return {true, false};
+    }
+    case EditCommand::MoveUp:
+    case EditCommand::MoveDown: {
+        // Vertical caret navigation exists only in the wrapped line structure:
+        // single-line stays unconsumed so a shim can route the key elsewhere.
+        if (!input.multiline())
+            return {};
+        const auto& runs = input.displayRuns(input.wrapWidth(), m);
+        InputNode::CaretPlacement place = input.caretPlacement(m);
+        // Sticky goal column: the FIRST vertical move records the caret's x;
+        // consecutive Up/Down steer toward it (a clamp at a short line does
+        // not lose the column). Every other command resets it — see
+        // handleEditCommand.
+        if (!input.verticalNavGoalX)
+            input.verticalNavGoalX = place.x;
+        // At the boundary lines the move degenerates to start/end of the
+        // text (the standard textarea behavior) — still consumed.
+        if (cmd == EditCommand::MoveUp && place.line == 0) {
+            moveTo(0);
+            return {true, false};
+        }
+        if (cmd == EditCommand::MoveDown && place.line + 1 >= runs.size()) {
+            moveTo(s.size());
+            return {true, false};
+        }
+        size_t target = cmd == EditCommand::MoveUp ? place.line - 1 : place.line + 1;
+        moveTo(input.indexAtLineX(target, *input.verticalNavGoalX, m));
+        return {true, false};
+    }
     case EditCommand::SelectAll:
         // Anchor at the front, caret (the moving end) at the back, so the
         // follow-scroll reveals the tail — matching editor convention.
@@ -1101,11 +1161,29 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, ICl
     case EditCommand::Paste: {
         if (!clipboard)
             return {};
-        // Single-line sanitize: STRIP newlines (LF and CR) rather than mapping
-        // them to spaces — the standard single-line input behavior. Multiline
-        // routing arrives with C6.
         std::string text = clipboard->getText();
-        std::erase_if(text, [](char c) { return c == '\n' || c == '\r'; });
+        if (input.multiline()) {
+            // Multiline paste KEEPS its newlines (the whole point of a
+            // textarea), normalized to '\n': \r\n collapses, a lone \r (old-Mac
+            // convention) maps — so caret math and wrapping see one newline
+            // byte, matching what InsertNewline writes.
+            std::string normalized;
+            normalized.reserve(text.size());
+            for (size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '\r') {
+                    normalized.push_back('\n');
+                    if (i + 1 < text.size() && text[i + 1] == '\n')
+                        ++i;
+                } else {
+                    normalized.push_back(text[i]);
+                }
+            }
+            text = std::move(normalized);
+        } else {
+            // Single-line sanitize: STRIP newlines (LF and CR) rather than
+            // mapping them to spaces — the standard single-line behavior.
+            std::erase_if(text, [](char c) { return c == '\n' || c == '\r'; });
+        }
         // Pasting nothing is consumed but changes nothing — an empty paste is
         // not a delete, so an active selection survives it.
         if (text.empty())
@@ -1118,12 +1196,20 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, ICl
         input.selectionAnchor = input.caret;
         return {true, true};
     }
-    // Declared ahead of their commit (see EditCommand.hpp):
-    // MoveUp/MoveDown/InsertNewline are C6 (multiline).
-    case EditCommand::MoveUp:
-    case EditCommand::MoveDown:
-    case EditCommand::InsertNewline:
-        return {};
+    case EditCommand::InsertNewline: {
+        // Enter routes here from every shim; CORE decides by mode. Single-line
+        // Enter is SUBMIT (the former Host::handleSubmit, folded into the
+        // command path so shims carry exactly one Enter mapping); multiline
+        // inserts '\n' at the caret, replacing any selection like typed text.
+        if (!input.multiline())
+            return {true, false, true};
+        if (input.hasSelection())
+            eraseSelection();
+        s.insert(input.caret, 1, '\n');
+        input.caret += 1;
+        input.selectionAnchor = input.caret;
+        return {true, true};
+    }
     }
     return {};  // unreachable for a valid enum; -Wswitch flags new enumerators
 }
@@ -1137,9 +1223,20 @@ bool EventHandler::handleEditCommand(EditCommand cmd, bool extend, IClipboard* c
     if (!focused)
         return false;
 
-    EditOutcome outcome = applyEditCommand(*focused, cmd, extend, clipboard);
+    const ITextMeasurer* m = measurerOf(focused);
+    EditOutcome outcome = applyEditCommand(*focused, cmd, extend, clipboard, m);
     if (!outcome.handled)
         return false;
+
+    // Goal-column invalidation: any command OTHER than a vertical move resets
+    // the sticky column, so the next Up/Down re-records from the caret's new
+    // x. Up/Down themselves preserve it across a run of vertical moves.
+    if (cmd != EditCommand::MoveUp && cmd != EditCommand::MoveDown)
+        focused->verticalNavGoalX.reset();
+    // Invalidate the wrap/measure state BEFORE the follow-scroll reads the
+    // (multiline) line structure; latches the relayout for multiline.
+    if (outcome.textChanged)
+        noteTextEdited(focused);
 
     // Every consumed command restarts the blink (the caret shows while the user
     // works the keyboard) and latches the repaint: a caret move is a visual
@@ -1150,7 +1247,7 @@ bool EventHandler::handleEditCommand(EditCommand cmd, bool extend, IClipboard* c
     focused->resetCaretBlink();
     // Follow-scroll AFTER the op: any caret move or deletion may push the
     // caret outside the visible span (or shrink the text under the scroll).
-    focused->scrollCaretIntoView(measurerOf(focused));
+    focused->scrollCaretIntoView(m);
     markVisualStateChanged();
 
     if (outcome.textChanged && focused->props.onChange) {
@@ -1158,19 +1255,14 @@ bool EventHandler::handleEditCommand(EditCommand cmd, bool extend, IClipboard* c
             "onChange", [&] { focused->props.onChange(focused->displayText); },
             [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
-    return true;
-}
-
-void EventHandler::handleSubmit() noexcept {
-    InputNode* focused = liveFocusedInput();
-    if (!focused)
-        return;
-
-    if (focused->props.onSubmit) {
+    // Single-line Enter (InsertNewline routed to a single-line input): fire
+    // onSubmit — after the state bookkeeping above, like onChange.
+    if (outcome.submit && focused->props.onSubmit) {
         fireCallback(
             "onSubmit", [&] { focused->props.onSubmit(); },
             [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
+    return true;
 }
 
 // Does `node` carry the handler matching the requested key phase?

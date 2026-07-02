@@ -492,10 +492,19 @@ InputNode::InputNode(YGConfigRef config) : Node(config) {}
 void InputNode::updateProps(PropsVariant&& p) {
     auto& newProps = std::get<InputProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    // Font size/face feed the multiline measure func exactly like TextNode's
+    // (a stale measurement is the mis-sized-glyph class of bug); computed
+    // against the CURRENT member props before the move.
+    bool fontChanged = newProps.fontSize != props.fontSize || newProps.font != props.font;
     props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
+    // Install/remove the measure func as the effective multiline mode toggles
+    // (also covers a password toggle flipping the mode — password wins).
+    syncMeasureFunc();
+    if (fontChanged)
+        markTextChanged();
     // Read displayText from the MOVED-IN member (props.value), not the moved-from
     // source (newProps.value is now empty).
     //
@@ -511,6 +520,8 @@ void InputNode::updateProps(PropsVariant&& p) {
         displayText = props.value;
         caret = utf8::snapToCodePoint(displayText, caret);
         selectionAnchor = utf8::snapToCodePoint(displayText, selectionAnchor);
+        markTextChanged();
+        verticalNavGoalX.reset();  // the goal column is meaningless in the new text
         // The replaced text's scroll is meaningless against the new run: drop
         // it, then re-follow the preserved caret into view. Without the
         // re-follow, a caret preserved deep in a now-LONGER value would sit
@@ -521,6 +532,7 @@ void InputNode::updateProps(PropsVariant&& p) {
         // (TextNode::measureFunc idiom): available here because reconcile runs
         // against the host's config, on which setTextMeasurer installed it.
         textScrollX = 0;
+        textScrollY = 0;
         scrollCaretIntoView(
             static_cast<const ITextMeasurer*>(YGConfigGetContext(YGNodeGetConfig(yogaNode))));
     }
@@ -545,6 +557,13 @@ InputFont inputFont(const InputNode& n) {
 // measurer is installed (matching TextNode::wrappedRuns).
 float runWidth(const InputFont& f, std::string_view run, const ITextMeasurer* m) {
     return m ? m->measureRun(run, f.size, f.face) : fallbackMeasureRun(run, f.size, f.face);
+}
+
+// Line advance at the input's resolved font — the vertical unit of every
+// multiline mapping (line index <-> y), same fallback rule as runWidth.
+float inputLineHeight(const InputNode& n, const ITextMeasurer* m) {
+    InputFont f = inputFont(n);
+    return (m ? m->fontMetrics(f.size, f.face) : fallbackFontMetrics(f.size, f.face)).lineHeight;
 }
 
 }  // namespace
@@ -607,22 +626,179 @@ std::pair<size_t, size_t> InputNode::wordRangeAt(size_t i) const {
     return {begin, end};
 }
 
-void InputNode::scrollCaretIntoView(const ITextMeasurer* m) {
+// --- InputNode: multiline geometry ---
+
+float InputNode::wrapWidth() const {
     namespace rd = render_defaults;
+    return std::max(0.0f, layout.contentWidth() - 2 * rd::kInputTextPad);
+}
+
+void InputNode::syncMeasureFunc() {
+    if (multiline() && !YGNodeHasMeasureFunc(yogaNode)) {
+        YGNodeSetContext(yogaNode, this);
+        YGNodeSetMeasureFunc(yogaNode, &InputNode::measureFunc);
+        YGNodeMarkDirty(yogaNode);  // measure under the new sizing model
+    } else if (!multiline() && YGNodeHasMeasureFunc(yogaNode)) {
+        // Dirty BEFORE removing (YGNodeMarkDirty asserts without a measure
+        // func) so the next layout re-resolves the prop-driven size.
+        YGNodeMarkDirty(yogaNode);
+        YGNodeSetMeasureFunc(yogaNode, nullptr);
+    }
+}
+
+YGSize InputNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode,
+                              [[maybe_unused]] float height, [[maybe_unused]] YGMeasureMode heightMode) {
+    // Mirror of TextNode::measureFunc, over displayText: the host's measurer is
+    // recovered from the per-host Yoga config context, and reading through the
+    // node's wrap cache keeps this, the edit-path geometry, and the tree
+    // renderer on the SAME wrap. Installed only while multiline.
+    namespace rd = render_defaults;
+    auto* input = static_cast<InputNode*>(YGNodeGetContext(node));
+    if (!input) {
+        return {0, 0};
+    }
+
+    // The text draws kInputTextPad in from each side of the content box, so it
+    // wraps at the available width minus both pads, and the pads are reported
+    // back as part of the measured width.
+    float maxWidth = widthMode == YGMeasureModeUndefined ? 0 : std::max(0.0f, width - 2 * rd::kInputTextPad);
+    auto* measurer =
+        static_cast<const ITextMeasurer*>(YGConfigGetContext(YGNodeGetConfig(const_cast<YGNodeRef>(node))));
+    const auto& runs = input->displayRuns(maxWidth, measurer);
+    Size size = render::runsSize(runs, inputLineHeight(*input, measurer));
+    return {size.width + 2 * rd::kInputTextPad, size.height};
+}
+
+const std::vector<render::TextRun>& InputNode::displayRuns(float maxWidth, const ITextMeasurer* m) const {
+    if (wrapCache_.valid && wrapCache_.measurer == m && wrapCache_.maxWidth == maxWidth) {
+        return wrapCache_.runs;
+    }
+    InputFont font = inputFont(*this);
+    wrapCache_.runs =
+        render::wrapText(displayText, maxWidth, [&](std::string_view run) { return runWidth(font, run, m); });
+    wrapCache_.measurer = m;
+    wrapCache_.maxWidth = maxWidth;
+    wrapCache_.valid = true;
+    return wrapCache_.runs;
+}
+
+void InputNode::markTextChanged() {
+    wrapCache_.valid = false;
+    // Multiline only (the gate is the measure func itself): the measured line
+    // count tracks the text, so an edit must re-measure at the next layout.
+    if (YGNodeHasMeasureFunc(yogaNode))
+        YGNodeMarkDirty(yogaNode);
+}
+
+size_t InputNode::lineOf(size_t i, const std::vector<render::TextRun>& runs) const {
+    // First run whose range still reaches i: a caret exactly ON a soft-break
+    // boundary (i == run.end == the next run's begin, minus dropped spaces)
+    // resolves to the EARLIER line's end (soft-wrap affinity, documented on
+    // caretPlacement). wrapText always yields at least one run.
+    for (size_t k = 0; k < runs.size(); ++k) {
+        if (i <= runs[k].end)
+            return k;
+    }
+    return runs.size() - 1;
+}
+
+InputNode::CaretPlacement InputNode::caretPlacement(const ITextMeasurer* m) const {
+    if (!multiline())
+        return {0, caretPrefixWidth(m)};
+    size_t line = lineOf(caret, displayRuns(wrapWidth(), m));
+    return {line, prefixWidthInLine(line, caret, m)};
+}
+
+float InputNode::prefixWidthInLine(size_t line, size_t i, const ITextMeasurer* m) const {
+    const auto& runs = displayRuns(wrapWidth(), m);
+    const render::TextRun& run = runs[std::min(line, runs.size() - 1)];
+    // Clamp into the run: a boundary inside a dropped soft-break space gap
+    // maps to the line edge rather than a negative/overshot x.
+    size_t inRun = std::clamp(i, run.begin, run.end);
+    return runWidth(inputFont(*this), std::string_view(displayText).substr(run.begin, inRun - run.begin), m);
+}
+
+size_t InputNode::indexAtLineX(size_t line, float textX, const ITextMeasurer* m) const {
+    const auto& runs = displayRuns(wrapWidth(), m);
+    const render::TextRun& run = runs[std::min(line, runs.size() - 1)];
+    // The single-line midpoint rule (see the 1-D indexAtPoint) over one line's
+    // byte range, widths measured from the line's start — the same origin the
+    // renderer draws the line from. Multiline text is never masked, so the
+    // display prefix IS the raw prefix.
+    InputFont font = inputFont(*this);
+    std::string_view raw(displayText);
+    float before = 0;
+    size_t b = run.begin;
+    while (b < run.end) {
+        size_t next = utf8::nextCodePoint(raw, b);
+        float after = runWidth(font, raw.substr(run.begin, next - run.begin), m);
+        if (textX <= (before + after) / 2)
+            return b;
+        before = after;
+        b = next;
+    }
+    return run.end;
+}
+
+size_t InputNode::indexAtPoint(float textX, float textY, const ITextMeasurer* m) const {
+    if (!multiline())
+        return indexAtPoint(textX, m);
+    const auto& runs = displayRuns(wrapWidth(), m);
+    float lineHeight = inputLineHeight(*this, m);
+    // Clamp the y-derived line into range: a click above the text lands on
+    // line 0, below it on the last line (then the x walk clamps within it).
+    float rawLine = lineHeight > 0 ? std::floor(textY / lineHeight) : 0;
+    size_t line = rawLine <= 0 ? 0 : std::min(static_cast<size_t>(rawLine), runs.size() - 1);
+    return indexAtLineX(line, textX, m);
+}
+
+void InputNode::scrollCaretIntoView(const ITextMeasurer* m) {
     // The visible text span is the content box minus the text pad on BOTH
     // sides: text draws at the left pad, and the symmetric right pad keeps a
     // followed caret off the clip edge.
-    float avail = std::max(0.0f, layout.contentWidth() - 2 * rd::kInputTextPad);
-    float caretX = caretPrefixWidth(m);
-    if (caretX - textScrollX < 0)
-        textScrollX = caretX;  // caret left of the span: scroll left to it
-    if (caretX - textScrollX > avail)
-        textScrollX = caretX - avail;  // caret right of the span: scroll right
-    // Never scroll past the text (deletions shrink it): dead space beyond the
-    // last glyph would push the visible run needlessly left. Short text
-    // clamps to 0, so an input whose text fits never scrolls at all.
-    float total = runWidth(inputFont(*this), displayRun(), m);
-    textScrollX = std::clamp(textScrollX, 0.0f, std::max(0.0f, total - avail));
+    float avail = wrapWidth();
+    if (!multiline()) {
+        float caretX = caretPrefixWidth(m);
+        if (caretX - textScrollX < 0)
+            textScrollX = caretX;  // caret left of the span: scroll left to it
+        if (caretX - textScrollX > avail)
+            textScrollX = caretX - avail;  // caret right of the span: scroll right
+        // Never scroll past the text (deletions shrink it): dead space beyond the
+        // last glyph would push the visible run needlessly left. Short text
+        // clamps to 0, so an input whose text fits never scrolls at all.
+        float total = runWidth(inputFont(*this), displayRun(), m);
+        textScrollX = std::clamp(textScrollX, 0.0f, std::max(0.0f, total - avail));
+        return;
+    }
+
+    // Multiline follows BOTH axes. X: the single-line follow within the
+    // caret's LINE (wrapping keeps lines inside the span, so this stays ~0;
+    // it matters only for an unbreakable run wider than the box).
+    const auto& runs = displayRuns(avail, m);
+    CaretPlacement place = caretPlacement(m);
+    if (place.x - textScrollX < 0)
+        textScrollX = place.x;
+    if (place.x - textScrollX > avail)
+        textScrollX = place.x - avail;
+    textScrollX = std::clamp(textScrollX, 0.0f, std::max(0.0f, runs[place.line].width - avail));
+
+    // Y: the textScrollX mirror — keep the caret's whole line box inside the
+    // content height, clamped so no dead space opens past the last line. An
+    // auto-grown input (measure-func height) always fits and stays at 0.
+    // Gated on a laid-out viewport: before the first layout the content
+    // height is 0 and the line-box test (which spans a whole lineHeight)
+    // would scroll a line-0 caret off the top.
+    float availY = layout.contentHeight();
+    if (availY > 0) {
+        float lineHeight = inputLineHeight(*this, m);
+        float caretY = static_cast<float>(place.line) * lineHeight;
+        if (caretY - textScrollY < 0)
+            textScrollY = caretY;
+        if (caretY + lineHeight - textScrollY > availY)
+            textScrollY = caretY + lineHeight - availY;
+        float totalY = static_cast<float>(runs.size()) * lineHeight;
+        textScrollY = std::clamp(textScrollY, 0.0f, std::max(0.0f, totalY - availY));
+    }
 }
 
 bool InputNode::updateBlink(float dt) {

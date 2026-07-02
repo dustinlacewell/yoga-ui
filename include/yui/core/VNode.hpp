@@ -359,6 +359,8 @@ public:
         return p([&](InputProps& i) { i.placeholder = std::move(v); });
     }
     InputBuilder& password(bool v) { return p([&](InputProps& i) { i.password = v; }); }
+    // Multiline (textarea) mode; see InputProps::multiline (password wins over it).
+    InputBuilder& multiline(bool v = true) { return p([&](InputProps& i) { i.multiline = v; }); }
     InputBuilder& fontSize(float v) { return p([&](InputProps& i) { i.fontSize = v; }); }
     InputBuilder& color(uint32_t v) { return p([&](InputProps& i) { i.color = v; }); }
     // Render/measure with a registered font face by name (see TextProps::font).

@@ -7,15 +7,11 @@ namespace yui {
 // keycode-agnostic: the shim owns the key -> command mapping, core owns the
 // command semantics.
 //
-// The full command set is declared up front so the enum is stable across the
-// text-editing commits, but implementations land incrementally:
-//   - C1 (landed):    MoveLeft, MoveRight, MoveLineStart, MoveLineEnd,
-//     DeleteBackward, DeleteForward.
-//   - C3 (landed):    SelectAll (and the `extend` flag on moves).
-//   - C5 (landed):    Cut, Copy, Paste (through the IClipboard seam).
-//   - C6 (multiline): MoveUp, MoveDown, InsertNewline.
-// An unimplemented command is NOT consumed (handleEditCommand returns false),
-// so shims can fall through until its commit arrives.
+// The full command set is implemented. A command inapplicable to the focused
+// input's mode (MoveUp/MoveDown on a single-line input) is NOT consumed
+// (handleEditCommand returns false), so shims can route the key elsewhere.
+// InsertNewline is the Enter mapping for BOTH modes — core decides: a
+// multiline input inserts '\n', a single-line input fires onSubmit.
 enum class EditCommand {
     MoveLeft,
     MoveRight,

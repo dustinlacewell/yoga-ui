@@ -598,7 +598,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
         } else if (key == GLFW_KEY_BACKSPACE) {
             g_host->handleEditCommand(EditCommand::DeleteBackward);
         } else if (key == GLFW_KEY_ENTER) {
-            g_host->handleSubmit();
+            g_host->handleEditCommand(EditCommand::InsertNewline);
         }
     }
     uint16_t keyMod = toKeyMod(mods);

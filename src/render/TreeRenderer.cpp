@@ -68,6 +68,7 @@ private:
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
     void drawSelection(const InputNode& node, const Rect& content);
     void drawCaret(const InputNode& node, const Rect& content, const ResolvedInputStyle& s);
+    void drawMultilineInput(const InputNode& node, const Rect& content, const ResolvedInputStyle& s);
 
     IRenderBackend& backend_;
     const ErrorHandler& onError_;
@@ -212,6 +213,13 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
     // when there is nothing to draw inside it.
     const LayoutResult& l = node->layout;
     Rect content{r.x + l.insetLeft, r.y + l.insetTop, l.contentWidth(), l.contentHeight()};
+
+    // Multiline paints the wrapped-run loop (drawText's multi-run shape);
+    // single-line stays the one centered run below — byte-identical to C5.
+    if (node->multiline()) {
+        drawMultilineInput(*node, content, s);
+        return;
+    }
     // The whole run shifts left by the follow-scroll; the clip hides what
     // rides out. (textScrollX is 0 whenever the text fits — see
     // InputNode::scrollCaretIntoView — so a placeholder never shifts.)
@@ -255,6 +263,66 @@ void TreeWalker::drawCaret(const InputNode& node, const Rect& content, const Res
     CaretBand band = caretBand(content);
     Rect caret{caretX - rd::kCaretWidth / 2, band.top, rd::kCaretWidth, band.height};
     backend_.fillRect(caret, s.color, 0);
+}
+
+// The multiline input's inside: the wrapped-run loop drawText paints, plus the
+// input chrome (per-line selection rects, caret) at the node's shared line
+// geometry. Deliberate divergence from single-line: lines stack TOP-aligned
+// from the content top (a textarea reads from the top), where single-line
+// centers its one run vertically; selection and caret occupy the full line box
+// (line count is the vertical structure), not the single-line caret band.
+void TreeWalker::drawMultilineInput(const InputNode& node, const Rect& content, const ResolvedInputStyle& s) {
+    namespace rd = render_defaults;
+    std::string_view font = node.props.font ? std::string_view(*node.props.font) : std::string_view{};
+    float lineHeight = backend_.fontMetrics(s.fontSize, font).lineHeight;
+    // Both follow-scrolls shift the whole text block; the clip hides what
+    // rides out. Multiline text is never masked (password wins single-line),
+    // so the runs are over displayText itself.
+    float originX = content.x + rd::kInputTextPad - node.textScrollX;
+    float originY = content.y - node.textScrollY;
+    const auto& runs = node.displayRuns(node.wrapWidth(), &backend_);
+
+    backend_.pushClip(content, s.borderRadius);
+
+    // Selection highlight under the glyphs, one rect per wrapped line the
+    // range [selBegin, selEnd) overlaps: partial edge lines span their
+    // selected sub-range, a fully-enclosed line spans its whole run width.
+    // Gates on focus exactly like the single-line highlight (cursor chrome).
+    if (node.focused && node.hasSelection()) {
+        for (size_t i = 0; i < runs.size(); ++i) {
+            size_t begin = std::max(runs[i].begin, node.selBegin());
+            size_t end = std::min(runs[i].end, node.selEnd());
+            if (begin >= end)
+                continue;  // line outside the selection (or a blank line: zero width)
+            float x0 = node.prefixWidthInLine(i, begin, &backend_);
+            float x1 = node.prefixWidthInLine(i, end, &backend_);
+            backend_.fillRect({originX + x0, originY + static_cast<float>(i) * lineHeight, x1 - x0, lineHeight},
+                              rd::kSelectionColor, 0);
+        }
+    }
+
+    if (!node.displayText.empty()) {
+        for (size_t i = 0; i < runs.size(); ++i) {
+            const TextRun& run = runs[i];
+            if (run.begin == run.end)
+                continue;  // a blank line occupies its slot but draws nothing
+            backend_.drawTextRun(node.displayText.substr(run.begin, run.end - run.begin), originX,
+                                 originY + static_cast<float>(i) * lineHeight, s.fontSize, s.color, font);
+        }
+    } else if (node.props.placeholder) {
+        // Placeholder is chrome, not value: one un-wrapped run in the first
+        // line slot (mirrors the single-line placeholder fallback).
+        backend_.drawTextRun(*node.props.placeholder, originX, originY, s.fontSize, rd::kPlaceholderColor, font);
+    }
+
+    if (node.focused && node.caretVisible) {
+        InputNode::CaretPlacement place = node.caretPlacement(&backend_);
+        backend_.fillRect({originX + place.x - rd::kCaretWidth / 2,
+                           originY + static_cast<float>(place.line) * lineHeight, rd::kCaretWidth, lineHeight},
+                          s.color, 0);
+    }
+
+    backend_.popClip();
 }
 
 void TreeWalker::drawCanvas(const CanvasNode* node, const Rect& r) {

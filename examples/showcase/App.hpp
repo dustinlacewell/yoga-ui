@@ -83,6 +83,7 @@ inline Component App(const std::string& title, const std::string& backend, Child
                                          // Third column (optional canvas demo)
                                          Column(
                                                     ScrollDemo(),
+                                                    TextAreaDemo(),
                                                     AutoFocusDemo(),
                                                     KeyboardDemo(),
                                                     canvasDemo

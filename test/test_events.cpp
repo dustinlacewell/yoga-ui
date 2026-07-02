@@ -1190,7 +1190,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     // memory (focusedInput_->displayText / ->props).
     CHECK_NOTHROW(events.handleTextInput("b"));
     CHECK_NOTHROW(events.handleEditCommand(EditCommand::DeleteBackward));
-    CHECK_NOTHROW(events.handleSubmit());
+    CHECK_NOTHROW(events.handleEditCommand(EditCommand::InsertNewline));
     CHECK_NOTHROW(events.handleKeyDown(reconciler.renderRoot(), 65, 0));
     CHECK_NOTHROW(events.handleKeyUp(reconciler.renderRoot(), 65, 0));
 
@@ -1379,16 +1379,17 @@ TEST_CASE("EditCommand - controlled round-trip preserves the caret; an external 
     CHECK(input->selectionAnchor == 1);
 }
 
-TEST_CASE("EditCommand - not consumed without a focused Input; unimplemented commands not consumed") {
+TEST_CASE("EditCommand - not consumed without a focused Input; inapplicable commands not consumed") {
     Reconciler reconciler;
     EventHandler events;
     std::unique_ptr<Fiber> fiber;
     InputNode* input = mountFocusedInput(reconciler, fiber, events, "abc");
 
-    // Commands whose implementations land in later commits (see EditCommand.hpp)
-    // report unconsumed and touch nothing.
+    // Commands inapplicable here report unconsumed and touch nothing: vertical
+    // moves need a multiline input; clipboard commands need a clipboard (none
+    // passed) — see EditCommand.hpp's consumption contract.
     for (EditCommand cmd : {EditCommand::MoveUp, EditCommand::MoveDown, EditCommand::Cut,
-                            EditCommand::Copy, EditCommand::Paste, EditCommand::InsertNewline}) {
+                            EditCommand::Copy, EditCommand::Paste}) {
         CHECK(events.handleEditCommand(cmd) == false);
     }
     CHECK(input->displayText == "abc");
@@ -3435,8 +3436,9 @@ TEST_CASE("Focus - text editing routes only through a focused Input") {
     CHECK(input->displayText == "h");
     bool submitted = false;
     input->props.onSubmit = [&] { submitted = true; };
-    events.handleSubmit();
+    CHECK(events.handleEditCommand(EditCommand::InsertNewline) == true);
     CHECK(submitted == true);
+    CHECK(input->displayText == "h");  // single-line Enter submits, never inserts
 
     // Focused Box: the typed view is null, so the same entry points are safe
     // no-ops — the Input's state is untouched.
@@ -3445,7 +3447,7 @@ TEST_CASE("Focus - text editing routes only through a focused Input") {
     CHECK(events.getFocusedInput() == nullptr);
     CHECK_NOTHROW(events.handleTextInput("x"));
     CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == false);
-    CHECK_NOTHROW(events.handleSubmit());
+    CHECK(events.handleEditCommand(EditCommand::InsertNewline) == false);
     CHECK(input->displayText == "h");
 }
 
@@ -3960,4 +3962,401 @@ TEST_CASE("C5 liveness: clearing, re-installing, and sharing across hosts stay s
         CHECK(host.handleEditCommand(EditCommand::Paste) == true);
         CHECK(input->displayText == "hiXYXY");
     }
+}
+
+// ============================================================================
+// Multiline input (6c C6): InputProps::multiline wraps the value at the
+// content width (minus the text pads), grows the input to its line count via
+// a Yoga measure func, routes Enter to InsertNewline (multiline inserts '\n';
+// single-line fires onSubmit), navigates vertically with a sticky goal
+// column, maps clicks by (x, y), and follows the caret with textScrollY.
+// ============================================================================
+
+namespace {
+
+// The Box-wrapped multiline Input the C6 tests mount: fontSize 10 + the
+// 10px/byte measurer give 10px character cells and a 10px line height; the
+// explicit width 100 makes the wrap span 100 - 2*kInputTextPad = 84.
+VNode multilineFixture(const char* value) {
+    return Box(
+               Input().value(value).multiline().fontSize(10).width(100).setKey("area")
+           )
+        .width(200)
+        .height(200);
+}
+
+InputNode* mountMultilineInput(test::MeasureHarness& h, const char* value) {
+    Node* root = h.mount(multilineFixture(value));
+    root->calculateLayout(200, 200);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    return input;
+}
+
+}  // namespace
+
+TEST_CASE("Multiline - measures wrapped-line-count * lineHeight and grows on InsertNewline") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+
+    // Three hard lines at 10px lineHeight: measured height 30 (no height prop).
+    InputNode* input = mountMultilineInput(h, "ab\ncd\nef");
+    CHECK(input->layout.height == doctest::Approx(30));
+
+    // InsertNewline adds a line; the edit marks the measure node dirty and
+    // latches the relayout flag, so the next layout re-measures to 4 lines.
+    events.focusNode(input);
+    events.handleEditCommand(EditCommand::MoveLineEnd);  // caret to line 0's end
+    CHECK(events.consumeTextLayoutChanged() == false);   // a pure move never latches
+    CHECK(events.handleEditCommand(EditCommand::InsertNewline) == true);
+    CHECK(input->displayText == "ab\n\ncd\nef");
+    CHECK(input->caret == 3);  // past the inserted '\n'
+    CHECK(events.consumeTextLayoutChanged() == true);
+    h.reconciler().renderRoot()->calculateLayout(200, 200);
+    CHECK(input->layout.height == doctest::Approx(40));
+}
+
+TEST_CASE("Multiline - soft wrap measures at the content width minus the text pads") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+
+    // Three 40px words against the 84px span: greedy wrap breaks before each
+    // next word (40 + 10 + 40 = 90 > 84) -> 3 lines -> height 30.
+    InputNode* input = mountMultilineInput(h, "aaaa bbbb cccc");
+    CHECK(input->layout.height == doctest::Approx(30));
+}
+
+TEST_CASE("Multiline - single-line and password inputs keep prop-driven sizing (no measure func)") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+
+    SUBCASE("single-line: no measure func, the height prop stands") {
+        InputNode* input = mountMeasuredInput(h, "hello");
+        CHECK(YGNodeHasMeasureFunc(input->yogaNode) == false);
+        CHECK(input->layout.height == doctest::Approx(30));
+    }
+
+    SUBCASE("password wins over multiline: a password textarea stays single-line") {
+        Node* root = h.mount(Box(
+                                 Input().value("abc").multiline().password(true).fontSize(10).width(100).height(30)
+                             )
+                                 .width(200)
+                                 .height(200));
+        root->calculateLayout(200, 200);
+        auto* input = static_cast<InputNode*>(root->children[0].get());
+        CHECK(input->multiline() == false);
+        CHECK(YGNodeHasMeasureFunc(input->yogaNode) == false);
+        CHECK(input->layout.height == doctest::Approx(30));
+    }
+
+    SUBCASE("toggling multiline off removes the measure func") {
+        InputNode* input = mountMultilineInput(h, "ab\ncd");
+        CHECK(YGNodeHasMeasureFunc(input->yogaNode) == true);
+        h.reconciler().reconcile(h.fiber(), Box(
+                                                Input().value("ab\ncd").multiline(false).fontSize(10).width(100).setKey("area")
+                                            )
+                                                .width(200)
+                                                .height(200));
+        CHECK(YGNodeHasMeasureFunc(input->yogaNode) == false);
+    }
+}
+
+TEST_CASE("Multiline - InsertNewline replaces a selection; onChange fires with the newline") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMultilineInput(h, "abcd");
+    events.focusNode(input);
+    std::string lastChange;
+    input->props.onChange = [&](const std::string& s) { lastChange = s; };
+
+    // Select [1,3) = "bc", then Enter: the selection is replaced by '\n'.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight, true);
+    events.handleEditCommand(EditCommand::MoveRight, true);
+    CHECK(events.handleEditCommand(EditCommand::InsertNewline) == true);
+    CHECK(input->displayText == "a\nd");
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+    CHECK(lastChange == "a\nd");
+}
+
+TEST_CASE("Multiline - MoveUp/MoveDown navigate by line with a sticky goal column") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // Lines of 6 / 2 / 6 chars: runs [0,6), [7,9), [10,16).
+    InputNode* input = mountMultilineInput(h, "cccccc\nbb\ndddddd");
+    events.focusNode(input);
+
+    // Caret to the very end (line 2, column x=60).
+    events.handleEditCommand(EditCommand::SelectAll);
+    events.handleEditCommand(EditCommand::MoveRight);  // collapse at the end
+    CHECK(input->caret == 16);
+
+    // First MoveUp records the goal column (60) and clamps to short line 1's end.
+    CHECK(events.handleEditCommand(EditCommand::MoveUp) == true);
+    CHECK(input->caret == 9);
+    // The goal SURVIVES the clamp: the next MoveUp lands at column 60 on line 0.
+    events.handleEditCommand(EditCommand::MoveUp);
+    CHECK(input->caret == 6);
+    // And back down through the short line to the original column.
+    events.handleEditCommand(EditCommand::MoveDown);
+    CHECK(input->caret == 9);
+    events.handleEditCommand(EditCommand::MoveDown);
+    CHECK(input->caret == 16);
+
+    // A horizontal move INVALIDATES the goal: the next vertical move
+    // re-records from the caret's new x.
+    events.handleEditCommand(EditCommand::MoveUp);    // line 1's end (byte 9)
+    events.handleEditCommand(EditCommand::MoveLeft);  // byte 8, x=10 - goal reset
+    CHECK(!input->verticalNavGoalX.has_value());
+    events.handleEditCommand(EditCommand::MoveUp);    // line 0 at the NEW column 10
+    CHECK(input->caret == 1);
+
+    // Typed text invalidates too.
+    events.handleEditCommand(EditCommand::MoveUp);  // establish a goal
+    CHECK(input->verticalNavGoalX.has_value());
+    events.handleTextInput("x");
+    CHECK(!input->verticalNavGoalX.has_value());
+}
+
+TEST_CASE("Multiline - MoveUp on the first line goes to the start; MoveDown on the last to the end") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMultilineInput(h, "aaaa\nbbbb");
+    events.focusNode(input);
+
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(events.handleEditCommand(EditCommand::MoveUp) == true);  // consumed even at the top
+    CHECK(input->caret == 0);
+
+    events.handleEditCommand(EditCommand::MoveDown);  // line 1, goal column 0
+    CHECK(events.handleEditCommand(EditCommand::MoveDown) == true);
+    CHECK(input->caret == input->displayText.size());
+
+    // Single-line vertical moves stay unconsumed (covered again here at the
+    // seam the multiline branch forked from).
+    Reconciler reconciler;
+    std::unique_ptr<Fiber> fiber;
+    EventHandler singleEvents;
+    mountFocusedInput(reconciler, fiber, singleEvents, "abc");
+    CHECK(singleEvents.handleEditCommand(EditCommand::MoveUp) == false);
+    CHECK(singleEvents.handleEditCommand(EditCommand::MoveDown) == false);
+}
+
+TEST_CASE("Multiline - shift+Down extends the selection from the anchor") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMultilineInput(h, "aaaa\nbbbb");
+    events.focusNode(input);
+
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);  // caret 2, x=20
+    events.handleEditCommand(EditCommand::MoveDown, true);
+    CHECK(input->caret == 7);  // line 1 at column 20
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 7);
+}
+
+TEST_CASE("Multiline - a click maps (x, y) to the line and column, clamped to the edge lines") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // padding 5 insets the content box; height 50 leaves room below the 3
+    // lines (30px) so clicks above/below the text stay INSIDE the input.
+    Node* root = h.mount(Box(
+                             Input().value("aaaa\nbbbb\ncccc").multiline().fontSize(10).width(100).height(50).padding(5)
+                         )
+                             .width(200)
+                             .height(200));
+    root->calculateLayout(200, 200);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+
+    // Window -> text mapping: textX = x - (insetLeft + pad), textY = y - insetTop.
+    auto clickAt = [&](float x, float y) {
+        events.advanceClock(0.6f);  // break the multi-click chain (see the C2 tests)
+        events.handleMouseDown(root, x, y);
+        events.handleMouseUp(root, x, y);
+        return input->caret;
+    };
+
+    // Line 1 (textY 15), textX 25: past 'b' cell 1's midpoint (15), on cell
+    // 2's midpoint (25, ties left) -> boundary 2 of the line -> byte 7.
+    CHECK(clickAt(5 + rd::kInputTextPad + 25, 5 + 15) == 7);
+    // Below all lines (textY 43 -> raw line 4): clamps to line 2; x past the
+    // last midpoint -> the line's end.
+    CHECK(clickAt(5 + rd::kInputTextPad + 70, 48) == 14);
+    // Above the content top (textY -3): clamps to line 0.
+    CHECK(clickAt(5 + rd::kInputTextPad + 25, 2) == 2);
+    // A click resets the vertical-nav goal column.
+    events.handleEditCommand(EditCommand::MoveUp);
+    CHECK(input->verticalNavGoalX.has_value());
+    clickAt(5 + rd::kInputTextPad + 25, 5 + 15);
+    CHECK(!input->verticalNavGoalX.has_value());
+}
+
+TEST_CASE("Multiline - textScrollY follows the caret line and returns to 0 at the top") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // Five 10px lines in a 25px-tall box: two lines and a half visible.
+    Node* root = h.mount(Box(
+                             Input().value("a\nb\nc\nd\ne").multiline().fontSize(10).width(100).height(25)
+                         )
+                             .width(200)
+                             .height(200));
+    root->calculateLayout(200, 200);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    events.focusNode(input);
+    CHECK(input->textScrollY == doctest::Approx(0));
+
+    // Descend: each move keeps the caret's LINE box inside [scrollY, scrollY+25].
+    events.handleEditCommand(EditCommand::MoveDown);  // line 1: 20 <= 25, no scroll
+    CHECK(input->textScrollY == doctest::Approx(0));
+    events.handleEditCommand(EditCommand::MoveDown);  // line 2: 30 > 25 -> 5
+    CHECK(input->textScrollY == doctest::Approx(5));
+    events.handleEditCommand(EditCommand::MoveDown);  // line 3 -> 15
+    CHECK(input->textScrollY == doctest::Approx(15));
+    events.handleEditCommand(EditCommand::MoveDown);  // line 4 -> 25 (== max: 50-25)
+    CHECK(input->textScrollY == doctest::Approx(25));
+
+    // Ascend: the caret line scrolls back into view, to exactly 0 at the top.
+    events.handleEditCommand(EditCommand::MoveUp);  // line 3 still visible
+    CHECK(input->textScrollY == doctest::Approx(25));
+    events.handleEditCommand(EditCommand::MoveUp);  // line 2: 20 < 25 -> 20
+    CHECK(input->textScrollY == doctest::Approx(20));
+    events.handleEditCommand(EditCommand::MoveUp);
+    CHECK(input->textScrollY == doctest::Approx(10));
+    events.handleEditCommand(EditCommand::MoveUp);
+    CHECK(input->textScrollY == doctest::Approx(0));
+
+    // An external value replacement resets the vertical scroll like the
+    // horizontal one (the new text shows from its head).
+    events.handleEditCommand(EditCommand::SelectAll);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->textScrollY > 0);
+    h.reconciler().reconcile(h.fiber(), Box(
+                                            Input().value("x\ny").multiline().fontSize(10).width(100).height(25)
+                                        )
+                                            .width(200)
+                                            .height(200));
+    CHECK(input->displayText == "x\ny");
+    CHECK(input->textScrollY == doctest::Approx(0));
+}
+
+TEST_CASE("Multiline - paste keeps newlines, normalized to LF") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMultilineInput(h, "");
+    events.focusNode(input);
+
+    // \r\n collapses to \n, a lone \r maps to \n, \n stays: the newlines are
+    // KEPT (the single-line strip does not apply — see the C5 paste test).
+    test::TestClipboard clip("a\r\nb\rc\nd");
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &clip) == true);
+    CHECK(input->displayText == "a\nb\nc\nd");
+    CHECK(input->caret == input->displayText.size());
+    CHECK(events.consumeTextLayoutChanged() == true);  // line count changed: relayout
+}
+
+TEST_CASE("Multiline - soft-wrap affinity: a boundary caret belongs to the earlier line; Home/End are visual") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // "aaaa bbbb" wraps at the 84px span into runs [0,4) and [5,9) — byte 4
+    // is the soft break (the space is dropped by the wrap).
+    InputNode* input = mountMultilineInput(h, "aaaa bbbb");
+    events.focusNode(input);
+
+    // The pinned affinity: caret AT the soft boundary resolves to the END of
+    // the EARLIER line (line 0, x=40), one byte further to the next line's start.
+    input->caret = 4;
+    input->clearSelection();
+    CHECK(input->caretPlacement(&m).line == 0);
+    CHECK(input->caretPlacement(&m).x == doctest::Approx(40));
+    input->caret = 5;
+    input->clearSelection();
+    CHECK(input->caretPlacement(&m).line == 1);
+    CHECK(input->caretPlacement(&m).x == doctest::Approx(0));
+
+    // Home/End work the VISUAL line: End from inside line 0 stops at the wrap
+    // point; a MoveRight crosses it; End then spans line 1; Home returns to
+    // line 1's start (not the paragraph start).
+    input->caret = 1;
+    input->clearSelection();
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->caret == 4);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 5);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->caret == 9);
+    events.handleEditCommand(EditCommand::MoveLineStart);
+    CHECK(input->caret == 5);
+}
+
+TEST_CASE("Multiline - a Host edit relayouts the grown input with no app reconcile") {
+    test::FnMeasurer m = tenPxPerByte();
+    EventTestHost host([] {
+        return Box(
+                   Input().value("ab").multiline().fontSize(10).width(100).setKey("area")
+               )
+            .width(200)
+            .height(200);
+    });
+    host.setTextMeasurer(&m);
+    host.update(200, 200);
+    auto* input = static_cast<InputNode*>(host.root()->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    CHECK(input->layout.height == doctest::Approx(10));
+
+    // No onChange is wired, so nothing marks the host dirty — the text-layout
+    // latch alone must reach calculateLayout on the next update.
+    host.focus(input);
+    host.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(host.handleEditCommand(EditCommand::InsertNewline) == true);
+    UpdateResult r = host.update(200, 200);
+    CHECK(r.layoutChanged == true);
+    CHECK(r.needsRepaint == true);
+    CHECK(input->layout.height == doctest::Approx(20));
+}
+
+TEST_CASE("Multiline - a measurer swap re-measures multiline inputs") {
+    // At 10px/char "aa bb cc" (80px) fits the 84px span in ONE line; at
+    // 20px/char it wraps to three. The swap must re-dirty the input's measure
+    // node (markMeasureNodesDirty gates on the measure func, not on Text).
+    test::FnMeasurer ten = tenPxPerByte();
+    test::FnMeasurer twenty(
+        [](const std::string& t, float, float) { return Size{static_cast<float>(t.size()) * 20.0f, 10.0f}; });
+    EventTestHost host([] {
+        return Box(
+                   Input().value("aa bb cc").multiline().fontSize(10).width(100).setKey("area")
+               )
+            .width(200)
+            .height(200);
+    });
+    host.setTextMeasurer(&ten);
+    host.update(200, 200);
+    auto* input = static_cast<InputNode*>(host.root()->children[0].get());
+    CHECK(input->layout.height == doctest::Approx(10));
+
+    host.setTextMeasurer(&twenty);
+    host.update(200, 200);
+    CHECK(input->layout.height == doctest::Approx(30));
 }

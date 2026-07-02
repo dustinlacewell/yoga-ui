@@ -24,8 +24,8 @@ using namespace showcase;
 
 // The editing command a key maps to, if any — routed to the focused Input only
 // after handleKeyDown reports the key unconsumed (the Tab precedent: app
-// handlers see the raw key first). Return stays on handleSubmit (single-line
-// inputs); InsertNewline routing arrives with multiline (C6).
+// handlers see the raw key first). Return maps to InsertNewline below (core
+// decides: multiline inserts '\n', single-line fires onSubmit).
 static std::optional<EditCommand> editCommandFor(SDL_Keycode key) {
     switch (key) {
     case SDLK_LEFT:
@@ -251,7 +251,7 @@ int main(int argc, char* argv[]) {
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         running = false;
                     } else if (event.key.keysym.sym == SDLK_RETURN) {
-                        host.handleSubmit();
+                        host.handleEditCommand(EditCommand::InsertNewline);
                     }
                     uint16_t mods = toKeyMod(static_cast<SDL_Keymod>(event.key.keysym.mod));
                     // Tab traversal and the editing keys live in the platform

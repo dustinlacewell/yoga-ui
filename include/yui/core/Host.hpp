@@ -423,10 +423,6 @@ public:
                            [&] { return eventHandler_.handleEditCommand(cmd, extend, clipboard_); });
     }
 
-    void handleSubmit() noexcept {
-        guardedVoid("Host::handleSubmit", [&] { eventHandler_.handleSubmit(); });
-    }
-
     InputNode* getFocusedInput() const { return eventHandler_.getFocusedInput(); }
     Node* getFocusedNode() const { return eventHandler_.getFocusedNode(); }
 
@@ -483,15 +479,16 @@ public:
     }
 
 private:
-    // Recursively dirty every measure-func node (Text) in a subtree so the next
-    // layout pass re-measures it. Used when the text measurer is swapped: all
-    // cached measurements were produced by the old measurer / fallback and are
-    // stale. Only Text nodes carry a Yoga measure func, and YGNodeMarkDirty asserts
-    // a measure func exists — so guard on the node type.
+    // Recursively dirty every measure-func node (Text, multiline Input) in a
+    // subtree so the next layout pass re-measures it. Used when the text
+    // measurer is swapped: all cached measurements were produced by the old
+    // measurer / fallback and are stale. Gate on the measure func itself —
+    // YGNodeMarkDirty asserts one exists, and the func's presence is exactly
+    // what makes a node's measurement measurer-dependent.
     static void markMeasureNodesDirty(Node* node) {
         if (!node)
             return;
-        if (node->type() == PrimitiveType::Text && node->yogaNode)
+        if (node->yogaNode && YGNodeHasMeasureFunc(node->yogaNode))
             YGNodeMarkDirty(node->yogaNode);
         for (auto& child : node->children)
             markMeasureNodesDirty(child.get());

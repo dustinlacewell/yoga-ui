@@ -162,6 +162,12 @@ struct InputProps : LayoutProps, EventProps {
     std::string value;  // Controlled value - set via onChange callback
     std::optional<std::string> placeholder;
     std::optional<bool> password;
+    // Multiline (textarea) mode: the value soft-wraps at the content width,
+    // Enter inserts '\n' (single-line Enter fires onSubmit instead), and the
+    // input grows to fit its wrapped lines via a Yoga measure func. password
+    // WINS over multiline (a masked textarea is unsupported — stars have no
+    // line structure): a node with both renders as a single-line password.
+    std::optional<bool> multiline;
     std::optional<float> fontSize;
     std::optional<uint32_t> color;
     std::optional<std::string> font;  // registered font face (see TextProps::font)

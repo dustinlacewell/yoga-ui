@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -144,6 +145,21 @@ public:
     BoxProps props;
 };
 
+// Last wrap result of a text-bearing node, keyed by (measurer, maxWidth);
+// content/font/size changes invalidate it at their update site, and a measurer
+// swap misses on the key. Yoga may probe several widths during one layout —
+// only the last is kept; a miss just recomputes. The measurer key is POINTER
+// identity — the same sanctioned limitation as the measurer liveness design in
+// Measure.hpp: a destroyed measurer whose address is reused by a new one can
+// false-hit until any content/font/size change. Shared by TextNode and the
+// multiline InputNode so both cache the one wrap layout and paint agree on.
+struct WrapCache {
+    const ITextMeasurer* measurer = nullptr;
+    float maxWidth = 0;
+    bool valid = false;
+    std::vector<render::TextRun> runs;
+};
+
 class TextNode : public Node {
 public:
     explicit TextNode(YGConfigRef config);
@@ -163,20 +179,8 @@ private:
     static YGSize measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float height,
                               YGMeasureMode heightMode);
 
-    // Last wrap result, keyed by (measurer, maxWidth); text/fontSize/font/wrap
-    // prop changes invalidate it in updateProps, and a measurer swap misses on
-    // the key. mutable: filled from const paths (Yoga's measure callback, the
-    // const draw walk). Yoga may probe several widths during one layout — only
-    // the last is kept; a miss just recomputes. The measurer key is POINTER
-    // identity — the same sanctioned limitation as the measurer liveness design
-    // in Measure.hpp: a destroyed measurer whose address is reused by a new one
-    // can false-hit until any text/font/size/wrap change.
-    struct WrapCache {
-        const ITextMeasurer* measurer = nullptr;
-        float maxWidth = 0;
-        bool valid = false;
-        std::vector<render::TextRun> runs;
-    };
+    // mutable: filled from const paths (Yoga's measure callback, the const
+    // draw walk). Invalidated by text/fontSize/font/wrap changes in updateProps.
     mutable WrapCache wrapCache_;
 };
 
@@ -218,7 +222,24 @@ public:
     // the caret stays inside the content box. Maintained by
     // scrollCaretIntoView from the edit path; the renderer subtracts it from
     // both the text run's and the caret's x. Always 0 while the text fits.
+    // For a multiline input it applies within the caret's LINE (wrapping keeps
+    // lines inside the content width, so it is ~0 in practice).
     float textScrollX = 0;
+
+    // Vertical follow-scroll (px), the textScrollX mirror for multiline: how
+    // far the wrapped lines are shifted UP so the caret's line stays inside
+    // the content box. Maintained by scrollCaretIntoView; always 0 for a
+    // single-line input and whenever the lines fit (the auto-grown case).
+    float textScrollY = 0;
+
+    // Sticky goal column for vertical caret navigation (text-space x within a
+    // line). The FIRST MoveUp/MoveDown records the caret's x here; consecutive
+    // vertical moves keep steering toward it, so passing through a short line
+    // does not lose the column. Invalidated (reset) by ANY other consumed
+    // command, typed text, a click, or a drag — the next vertical move then
+    // re-records from the caret's new position. Owned by the edit path
+    // (EventHandler); the node just carries the state between commands.
+    std::optional<float> verticalNavGoalX;
 
     // Caret blink state, advanced by update(dt) while focused. The renderer
     // draws the caret iff focused && caretVisible — no wall clock involved.
@@ -273,12 +294,72 @@ public:
     // non-space, so a class change is always a code-point start. Empty ⇒ {0,0}.
     std::pair<size_t, size_t> wordRangeAt(size_t i) const;
 
+    // --- Text geometry (multiline) ---
+    // Active iff multiline() (see InputProps::multiline; password wins
+    // single-line). Lines are the wrapped runs of displayText — the SAME
+    // render::wrapText the Yoga measure func sizes with and the renderer
+    // paints, so caret geometry, layout, and paint share one line structure.
+
+    // Is this input in multiline (textarea) mode? password && multiline is
+    // unsupported (stars have no line structure): password wins single-line.
+    bool multiline() const { return props.multiline.value_or(false) && !props.password.value_or(false); }
+
+    // The soft-wrap constraint: the content width minus the text pad on both
+    // sides (where the text actually draws). Reads the layout synced by the
+    // LAST calculateLayout, like the rest of the edit-path geometry.
+    float wrapWidth() const;
+
+    // The wrapped lines of displayText at maxWidth under `m` (nullptr ⇒ the
+    // fallback heuristic), cached like TextNode::wrappedRuns; text edits and
+    // prop changes invalidate via markTextChanged/updateProps.
+    const std::vector<render::TextRun>& displayRuns(float maxWidth, const ITextMeasurer* m) const;
+
+    // Where the caret sits in the wrapped line structure: its line index and
+    // its x within that line (measured from the line's own start — the origin
+    // the renderer draws each line from). Soft-wrap affinity: a caret exactly
+    // ON a soft-break boundary belongs to the END of the EARLIER line (a
+    // documented simplification — there is one caret state per byte offset,
+    // not an affinity bit). Single-line degenerates to {0, caretPrefixWidth}.
+    struct CaretPlacement {
+        size_t line = 0;
+        float x = 0;
+    };
+    CaretPlacement caretPlacement(const ITextMeasurer* m) const;
+
+    // Width of the text from the START of wrapped line `line` to byte
+    // boundary `i` (clamped into the line's range) — the multiline analog of
+    // prefixWidthAt, measured from the line's own origin because each line
+    // draws as its own run at the text pad. Caret placement, the per-line
+    // selection edges, and the vertical-move column all measure through it.
+    float prefixWidthInLine(size_t line, size_t i, const ITextMeasurer* m) const;
+
+    // The caret boundary nearest textX WITHIN wrapped line `line` (clamped
+    // into range): the indexAtPoint midpoint rule applied to one line, with
+    // widths measured from the line's start. Multiline only (multiline text
+    // is never masked). Vertical moves target (goalX, line ∓ 1) through this.
+    size_t indexAtLineX(size_t line, float textX, const ITextMeasurer* m) const;
+
+    // Point form of the click mapping: pick the line from textY (clamped to
+    // the first/last line, so clicks above/below the text land on the edge
+    // lines), then the boundary within it. textY is text-space (window y
+    // minus the content-box top, plus textScrollY). Single-line ignores
+    // textY and delegates to the 1-D indexAtPoint.
+    size_t indexAtPoint(float textX, float textY, const ITextMeasurer* m) const;
+
+    // Text content changed under the caret (edit path or an external value
+    // replacement): drop the cached wrap, and for a measure-func (multiline)
+    // input mark the Yoga node dirty so the next layout re-measures the line
+    // count. Single-line inputs have no measure func (YGNodeMarkDirty asserts
+    // without one), so this is gated on the func's presence.
+    void markTextChanged();
+
     // Follow the caret with textScrollX so it stays inside the visible text
     // span (the content box minus kInputTextPad on each side), clamped so no
     // dead space opens past the last glyph. Called from the edit path after
     // every caret/text mutation. Timing: reads the layout synced by the LAST
     // calculateLayout — edit events arrive between frames, after layout ran,
-    // so the content box is current for the state being edited.
+    // so the content box is current for the state being edited. Multiline
+    // follows BOTH axes: x within the caret's line, textScrollY for the line.
     void scrollCaretIntoView(const ITextMeasurer* m);
 
     // Advance the blink phase by dt. Returns true when visibility toggled
@@ -292,6 +373,21 @@ public:
     }
 
 private:
+    // Install/remove the Yoga measure func as multiline toggles (updateProps).
+    // Only a multiline input measures — single-line sizing stays prop-driven,
+    // so existing inputs see ZERO layout change.
+    void syncMeasureFunc();
+    static YGSize measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float height,
+                              YGMeasureMode heightMode);
+
+    // The line containing byte boundary `i`: the FIRST run with i <= run.end
+    // (the soft-wrap affinity rule — see caretPlacement).
+    size_t lineOf(size_t i, const std::vector<render::TextRun>& runs) const;
+
+    // mutable: filled from const paths (the measure callback, the draw walk).
+    // Invalidated by markTextChanged and updateProps.
+    mutable WrapCache wrapCache_;
+
     float blinkPhaseMs_ = 0;
 };
 

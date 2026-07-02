@@ -322,8 +322,8 @@ static void charCallback(GLFWwindow*, unsigned int codepoint) {
 
 // The editing command a key maps to, if any — routed to the focused Input only
 // after handleKeyDown reports the key unconsumed (the Tab precedent: app
-// handlers see the raw key first). Enter stays on handleSubmit (single-line
-// inputs); InsertNewline routing arrives with multiline (C6).
+// handlers see the raw key first). Enter maps to InsertNewline below (core
+// decides: multiline inserts '\n', single-line fires onSubmit).
 static std::optional<EditCommand> editCommandFor(int key) {
     switch (key) {
     case GLFW_KEY_LEFT:
@@ -351,7 +351,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             return;
         } else if (key == GLFW_KEY_ENTER) {
-            g_host->handleSubmit();
+            g_host->handleEditCommand(EditCommand::InsertNewline);
         }
     }
     uint16_t keyMod = toKeyMod(mods);

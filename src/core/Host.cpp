@@ -152,8 +152,12 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
             }
         }
 
-        // Re-layout on RENDER tree
-        if (renderRoot_ && (fullReconcile || componentsReconciled)) {
+        // Re-layout on RENDER tree. Structural changes relayout, and so does a
+        // multiline-Input text edit (the edit path marked the input's measure
+        // node dirty and latched this flag — an app with no onChange reconcile
+        // still sees the input grow/shrink with its lines).
+        bool textLayoutChanged = eventHandler_.consumeTextLayoutChanged();
+        if (renderRoot_ && (fullReconcile || componentsReconciled || textLayoutChanged)) {
             renderRoot_->calculateLayout(width, height);
             result.layoutChanged = true;
         }

@@ -47,9 +47,9 @@ public:
     bool handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept;
 
     // Text input for the focused Input — replaces the selection if any, else
-    // inserts at the caret.
+    // inserts at the caret. (Enter routes through EditCommand::InsertNewline:
+    // core decides — multiline inserts '\n', single-line fires onSubmit.)
     void handleTextInput(const std::string& text) noexcept;
-    void handleSubmit() noexcept;
 
     // Apply an editing command to the focused Input. Returns true iff a focused
     // Input consumed it (no focused Input -> false, so platform shims can route
@@ -124,6 +124,14 @@ public:
     // repaint is cheap; a missed one is the stale-hover-style defect.
     bool consumeVisualStateChanged() noexcept { return std::exchange(visualStateChanged_, false); }
 
+    // Read-and-clear the text-layout latch: true iff an edit changed a
+    // MULTILINE Input's content since the last consume. Such an edit changes
+    // the input's measured line count (its yoga node was marked dirty), so the
+    // next Host::update() must re-run layout even with no reconcile pending —
+    // the multiline sibling of the visual-state latch above. Single-line edits
+    // never set it (prop-driven sizing: repaint only).
+    bool consumeTextLayoutChanged() noexcept { return std::exchange(textLayoutChanged_, false); }
+
     // Override the depth at which the recursive event-path walks (hit-test,
     // dispatch bubble, key-target search) stop and diagnose instead of recursing
     // further. Defaults to kMaxTreeDepth. Exists so tests can exercise the guard
@@ -186,10 +194,21 @@ private:
     void dragScrollbarThumb(Node* captor, float x, float y);
 
     // One captured move of a text drag-select on a focused Input captor: map
-    // the pointer x through the SAME window→text mapping the press used
+    // the pointer (x, y) through the SAME window→text mapping the press used
     // (handleMouseDown) and move ONLY the caret — the anchor stays where the
-    // press put it, so the selection [anchor, caret) tracks the drag.
-    void dragSelectText(InputNode* input, float x);
+    // press put it, so the selection [anchor, caret) tracks the drag. The y
+    // matters only for a multiline input (line selection follows the drag).
+    void dragSelectText(InputNode* input, float x, float y);
+
+    // A text edit changed `input`'s content: invalidate its wrap/measure state
+    // and, for a multiline (measured) input, latch the relayout the next
+    // update must run. The ONE post-edit hook every content mutation routes
+    // through (handleTextInput + handleEditCommand).
+    void noteTextEdited(InputNode* input) {
+        input->markTextChanged();
+        if (input->multiline())
+            textLayoutChanged_ = true;
+    }
 
     // Advance the multi-click machine at a press: a press within the interval /
     // radius of the previous click (same button) extends the chain, anything
@@ -409,6 +428,9 @@ private:
     // Visual-state latch: a hover/press/focus/text-edit transition occurred
     // since the last consumeVisualStateChanged (see markVisualStateChanged).
     bool visualStateChanged_ = false;
+    // Text-layout latch: a multiline Input's content changed since the last
+    // consumeTextLayoutChanged (see noteTextEdited) — layout must re-run.
+    bool textLayoutChanged_ = false;
 };
 
 }  // namespace yui
