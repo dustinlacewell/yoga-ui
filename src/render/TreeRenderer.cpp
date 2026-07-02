@@ -4,7 +4,6 @@
 #include <yui/render/TextWrap.hpp>
 #include <yui/render/TreeRenderer.hpp>
 
-#include <chrono>
 #include <exception>
 #include <string>
 
@@ -19,15 +18,6 @@ void report(const ErrorHandler& onError, std::string_view where, const std::exce
     try {
         onError(where, eOrNull);
     } catch (...) {}
-}
-
-// Wall-clock caret blink phase: (ms % period) < onMs => visible. Same cadence
-// both backends used before extraction.
-bool caretBlinkOn() {
-    namespace rd = render_defaults;
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-                  .count();
-    return (ms % rd::kCaretBlinkPeriodMs) < rd::kCaretBlinkOnMs;
 }
 
 // The run an Input displays and its color: the (possibly password-masked)
@@ -178,7 +168,9 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
                              font);
     }
 
-    if (node->focused && caretBlinkOn())
+    // Blink is node state driven by update(dt), not a wall clock — the renderer
+    // just paints what the node says (see InputNode::updateBlink).
+    if (node->focused && node->caretVisible)
         drawCaret(*node, run, r, s, font);
 }
 

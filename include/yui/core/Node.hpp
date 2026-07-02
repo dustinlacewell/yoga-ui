@@ -45,6 +45,16 @@ struct LayoutResult {
     float contentWidth() const { return width - insetLeft - insetRight; }
 };
 
+// Result of one frame's animation advance, folded up the subtree walk by
+// Node::update. `animating` means keep pumping update() (an animation is in
+// progress); `needsRepaint` means THIS advance changed pixels. The two are
+// distinct: a smooth scroll repaints every animated frame, but a blinking
+// caret animates every frame while repainting only on the visible↔hidden edge.
+struct AnimationResult {
+    bool animating = false;
+    bool needsRepaint = false;
+};
+
 // Base class for all rendered nodes
 class Node {
 public:
@@ -99,8 +109,8 @@ public:
     // Calculate layout for this subtree
     void calculateLayout(float availableWidth, float availableHeight);
 
-    // Update animations (smooth scrolling, etc). Returns true if any animation is active.
-    bool update(float dt);
+    // Advance animations (smooth scrolling, caret blink) for this subtree.
+    AnimationResult update(float dt);
 
 protected:
     // The yoga node is created against the host's config so its measure
@@ -164,6 +174,23 @@ public:
 
     // Display text - synced from props.value, modified during editing
     std::string displayText;
+
+    // Caret blink state, advanced by update(dt) while focused. The renderer
+    // draws the caret iff focused && caretVisible — no wall clock involved.
+    bool caretVisible = true;
+
+    // Advance the blink phase by dt. Returns true when visibility toggled
+    // (the repaint edge). Called from Node::update only while focused.
+    bool updateBlink(float dt);
+
+    // Restart the blink cycle so the caret shows immediately on focus gain.
+    void resetCaretBlink() {
+        blinkPhaseMs_ = 0;
+        caretVisible = true;
+    }
+
+private:
+    float blinkPhaseMs_ = 0;
 };
 
 class ScrollNode : public Node {

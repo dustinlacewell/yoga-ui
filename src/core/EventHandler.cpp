@@ -50,7 +50,9 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     // Remember the press target (+ button) so the matching release fires a click
     // only on the node that ALSO received the press. Recorded even when target is
     // null so a press on empty space can't leave a stale prior press to match a
-    // later release.
+    // later release. A change of pressed node is a visual transition.
+    if (target != livePressedNode())
+        markVisualStateChanged();
     setPressedNode(target, button);
 
     if (!target)
@@ -71,6 +73,9 @@ bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton butto
     // The press this release must match (null if the pressed node was reconciled
     // away or the button differs). Read once, then clear: a press pairs with at
     // most one release, and a stale press must not match a later unrelated one.
+    // Clearing a recorded press is a visual transition (pressed -> released).
+    if (livePressedNode())
+        markVisualStateChanged();
     Node* pressed = (livePressedNode() && pressedButton_ == button) ? pressedNode_ : nullptr;
     setPressedNode(nullptr);
 
@@ -420,6 +425,9 @@ void EventHandler::updateHover(Node* newHovered) {
     if (newHovered == oldNode)
         return;
 
+    // Past the equality check: the hovered node IS changing — a visual transition.
+    markVisualStateChanged();
+
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
     // Cut enter/leave at the lowest common ancestor: nodes shared by the old and
@@ -471,6 +479,9 @@ void EventHandler::updateFocus(Node* clicked) {
     if (newFocus == liveFocusedInput())
         return;
 
+    // Past the equality check: focus IS changing — a visual transition.
+    markVisualStateChanged();
+
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
     // Clear focused flag and fire onFocus(false) on old. The flag commits before
@@ -487,9 +498,11 @@ void EventHandler::updateFocus(Node* clicked) {
 
     setFocusedInput(newFocus);
 
-    // Set focused flag and fire onFocus(true) on new
+    // Set focused flag and fire onFocus(true) on new. Restart the blink cycle
+    // so the caret starts visible on focus gain.
     if (focusedInput_) {
         focusedInput_->focused = true;
+        focusedInput_->resetCaretBlink();
         if (focusedInput_->props.onFocus) {
             fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
         }
@@ -501,6 +514,9 @@ void EventHandler::focusInput(InputNode* node) {
     // the incoming node and short-circuit a legitimate focus change.
     if (node == liveFocusedInput())
         return;
+
+    // Past the equality check: focus IS changing — a visual transition.
+    markVisualStateChanged();
 
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
@@ -515,9 +531,10 @@ void EventHandler::focusInput(InputNode* node) {
 
     setFocusedInput(node);
 
-    // Focus new
+    // Focus new. Restart the blink cycle so the caret starts visible.
     if (focusedInput_) {
         focusedInput_->focused = true;
+        focusedInput_->resetCaretBlink();
         if (focusedInput_->props.onFocus) {
             fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
         }

@@ -54,6 +54,14 @@ public:
     // Programmatically focus an input node (used by autoFocus)
     void focusInput(InputNode* node);
 
+    // Read-and-clear the visual-state latch: true iff a hover, press, or focus
+    // TRANSITION occurred since the last consume. Latched (not returned per
+    // event) because handle*() may run between update() calls — the flag
+    // persists until the next Host::update() folds it into needsRepaint. Any
+    // transition marks, without per-node style introspection: a false-positive
+    // repaint is cheap; a missed one is the stale-hover-style defect.
+    bool consumeVisualStateChanged() noexcept { return std::exchange(visualStateChanged_, false); }
+
     // Override the depth at which the recursive event-path walks (hit-test,
     // dispatch bubble, key-target search) stop and diagnose instead of recursing
     // further. Defaults to kMaxTreeDepth. Exists so tests can exercise the guard
@@ -179,6 +187,11 @@ private:
         return hoveredNode_;
     }
 
+    // Set the visual-state latch. Called ONLY on actual hover/press/focus
+    // transitions (never on a non-transition mouse move); consumed by
+    // consumeVisualStateChanged.
+    void markVisualStateChanged() noexcept { visualStateChanged_ = true; }
+
     // Which keyboard handler a routing search is looking for.
     enum class KeyPhase { Down, Up };
 
@@ -223,6 +236,9 @@ private:
     mutable Node* pressedNode_ = nullptr;
     mutable std::weak_ptr<bool> pressedNodeAlive_;
     MouseButton pressedButton_ = MouseButton::Left;
+    // Visual-state latch: a hover/press/focus transition occurred since the
+    // last consumeVisualStateChanged (see markVisualStateChanged).
+    bool visualStateChanged_ = false;
 };
 
 }  // namespace yui

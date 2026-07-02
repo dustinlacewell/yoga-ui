@@ -5,7 +5,6 @@
 #include <yui/core/VNode.hpp>
 #include <yui/render/TreeRenderer.hpp>
 
-#include <chrono>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -122,18 +121,6 @@ void checkRect(const render::Rect& r, float x, float y, float w, float h) {
     CHECK(r.y == doctest::Approx(y));
     CHECK(r.w == doctest::Approx(w));
     CHECK(r.h == doctest::Approx(h));
-}
-
-// Caret blink is wall-clock this commit (made injectable in a later commit).
-// Spin until we are comfortably inside the on-phase — with a 100ms margin, the
-// microseconds-long render below cannot cross the blink edge.
-void waitForCaretOnPhase() {
-    using namespace std::chrono;
-    for (;;) {
-        auto ms = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-        if ((ms % rd::kCaretBlinkPeriodMs) < rd::kCaretBlinkOnMs - 100)
-            return;
-    }
 }
 
 }  // namespace
@@ -394,11 +381,12 @@ TEST_CASE("renderTree: password input masks the display run") {
 }
 
 // ---------------------------------------------------------------------------
-// Caret: a fillRect past the measured run when focused and in the blink
-// on-phase; never present when unfocused.
+// Caret: a fillRect past the measured run when focused and the blink phase says
+// visible; never present when unfocused. Blink is node state driven by
+// update(dt), so the tests step the phase deterministically — no wall clock.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("renderTree: focused input in blink on-phase draws the caret fillRect") {
+TEST_CASE("renderTree: focused input draws the caret; blink phase hides it deterministically") {
     FakeBackend backend;
     MeasureHarness h;
     h.setMeasurer(&backend);
@@ -406,9 +394,8 @@ TEST_CASE("renderTree: focused input in blink on-phase draws the caret fillRect"
     auto tree = Input().value("abc").fontSize(10).width(100).height(30);
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(100, 30);
-    root->focused = true;
+    root->focused = true;  // fresh blink state: caret starts visible
 
-    waitForCaretOnPhase();
     render::renderTree(root, backend, {});
 
     // bg fill + caret fill: the caret is the second FillRect, drawn last.
@@ -422,6 +409,19 @@ TEST_CASE("renderTree: focused input in blink on-phase draws the caret fillRect"
     checkRect(caret->rect, caretX, rd::kCaretInset, rd::kCaretWidth, 30 - 2 * rd::kCaretInset);
     CHECK(caret->color == rd::kDefaultTextColor);
     CHECK(caret->radius == doctest::Approx(0));
+
+    // Step the blink phase past the on-window (530ms of a 1000ms period): the
+    // caret hides, so only the background fill remains.
+    root->update(0.6f);
+    backend.calls.clear();
+    render::renderTree(root, backend, {});
+    CHECK(backend.count(Call::Kind::FillRect) == 1);
+
+    // Step across the period boundary: visible again.
+    root->update(0.6f);  // phase 1200ms -> 200ms, inside the on-window
+    backend.calls.clear();
+    render::renderTree(root, backend, {});
+    CHECK(backend.count(Call::Kind::FillRect) == 2);
 }
 
 TEST_CASE("renderTree: unfocused input never draws a caret") {
@@ -451,9 +451,8 @@ TEST_CASE("renderTree: caret sits at the text pad when only a placeholder shows"
     auto tree = Input().placeholder("hint").fontSize(10).width(100).height(30);
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(100, 30);
-    root->focused = true;
+    root->focused = true;  // fresh blink state: caret visible
 
-    waitForCaretOnPhase();
     render::renderTree(root, backend, {});
 
     REQUIRE(backend.count(Call::Kind::FillRect) == 2);

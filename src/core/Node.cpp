@@ -313,23 +313,36 @@ void Node::calculateLayout(float availableWidth, float availableHeight) {
     layoutScrollContent(this);
 }
 
-bool Node::update(float dt) {
-    bool animating = false;
+AnimationResult Node::update(float dt) {
+    AnimationResult result;
 
     if (type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(this);
         if (scrollNode->updateSmooth(dt)) {
-            animating = true;
+            // The offsets moved this frame, so an animated scroll repaints
+            // every frame it is still animating.
+            result.animating = true;
+            result.needsRepaint = true;
+        }
+    }
+
+    if (type() == PrimitiveType::Input) {
+        auto* input = static_cast<InputNode*>(this);
+        if (input->focused) {
+            // The blink phase advances every focused frame (animating), but
+            // pixels change only when visibility toggles (the repaint edge).
+            result.animating = true;
+            result.needsRepaint |= input->updateBlink(dt);
         }
     }
 
     for (auto& child : children) {
-        if (child->update(dt)) {
-            animating = true;
-        }
+        AnimationResult childResult = child->update(dt);
+        result.animating |= childResult.animating;
+        result.needsRepaint |= childResult.needsRepaint;
     }
 
-    return animating;
+    return result;
 }
 
 static void layoutScrollContent(Node* node) {
@@ -455,6 +468,15 @@ void InputNode::updateProps(PropsVariant&& p) {
     // Read displayText from the MOVED-IN member (props.value), not the moved-from
     // source (newProps.value is now empty).
     displayText = props.value;
+}
+
+bool InputNode::updateBlink(float dt) {
+    namespace rd = render_defaults;
+    blinkPhaseMs_ = std::fmod(blinkPhaseMs_ + dt * 1000.0f, static_cast<float>(rd::kCaretBlinkPeriodMs));
+    bool nowVisible = blinkPhaseMs_ < static_cast<float>(rd::kCaretBlinkOnMs);
+    bool toggled = nowVisible != caretVisible;
+    caretVisible = nowVisible;
+    return toggled;
 }
 
 // --- ScrollNode ---

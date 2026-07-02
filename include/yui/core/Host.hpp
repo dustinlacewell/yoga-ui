@@ -431,7 +431,17 @@ private:
         // handler can only fire after the first mount, and the first mount goes
         // through update() (which records the dimensions), so a deferred update
         // never reaches here with unset dimensions.
-        update(lastWidth_, lastHeight_);
+        //
+        // The drained update has no platform caller to observe its result, so the
+        // dirt it consumed (reconcile repaint, relayout, the event handler's
+        // visual-state latch) must not vanish here: OR-fold it into carriedResult_,
+        // which the next explicit update() reports and clears. OR-accumulate
+        // because several dispatches may drain before that update; a drain that
+        // early-returned folds all-false (a no-op).
+        UpdateResult drained = update(lastWidth_, lastHeight_);
+        carriedResult_.needsRepaint |= drained.needsRepaint;
+        carriedResult_.layoutChanged |= drained.layoutChanged;
+        carriedResult_.animating |= drained.animating;
     }
 
     // Backstop wrappers for the noexcept event entrypoints: run the body under the
@@ -539,6 +549,11 @@ protected:
     // Set when an update() was deferred during dispatch; drained same-frame once
     // dispatch fully unwinds.
     bool pendingUpdate_ = false;
+    // Result bits a drained (deferred) update reported with no platform caller to
+    // see them (see drainPendingUpdate). Folded into the next normally-completing
+    // update() and cleared there, so an internal drain never makes dirt vanish.
+    // Only the three signal bits carry; status is unused.
+    UpdateResult carriedResult_;
 
     // Last early-return status reported through the sink. update() only emits a
     // diagnostic when the status changes, so a persistent misconfiguration is

@@ -80,9 +80,14 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
     } inUpdateGuard(inUpdate_);
 
     try {
-        // Update animations every frame
+        // Advance animations every frame. `anim.needsRepaint` reports what this
+        // frame's advance visibly changed; `animating` alone does not imply a
+        // repaint (a blinking caret animates every frame but changes pixels only
+        // on the visible/hidden edge — see AnimationResult).
+        AnimationResult anim;
         if (renderRoot_) {
-            result.animating = renderRoot_->update(dt);
+            anim = renderRoot_->update(dt);
+            result.animating = anim.animating;
         }
 
         // Check if size changed
@@ -144,8 +149,20 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
             result.layoutChanged = true;
         }
 
-        // Set needsRepaint if anything visual changed
-        result.needsRepaint = fullReconcile || componentsReconciled || result.animating;
+        // Set needsRepaint if anything visual changed: structural changes, this
+        // frame's animation deltas, or a hover/press/focus transition the event
+        // handler latched since the last update (consumed exactly here, so a
+        // transition dispatched between updates is never lost).
+        bool eventVisualChange = eventHandler_.consumeVisualStateChanged();
+        result.needsRepaint = fullReconcile || componentsReconciled || anim.needsRepaint || eventVisualChange;
+
+        // Surface the dirt a drained (deferred) update consumed but had no
+        // platform caller to report to (see drainPendingUpdate). Reported once:
+        // cleared on report.
+        result.needsRepaint |= carriedResult_.needsRepaint;
+        result.layoutChanged |= carriedResult_.layoutChanged;
+        result.animating |= carriedResult_.animating;
+        carriedResult_ = {};
     } catch (const std::exception& e) {
         reportError("Host::update", &e);
     } catch (...) {

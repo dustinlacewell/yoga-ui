@@ -1145,6 +1145,204 @@ TEST_CASE("Depth guard - dispatchEvent bubble truncates on a deep ancestor chain
     (void)deepestClicked;
 }
 
+// ============================================================================
+// UpdateResult truthfulness: hover/press/focus transitions latch needsRepaint
+// until the next update() consumes them; a focused input's caret blink surfaces
+// animating every frame and needsRepaint on the visible/hidden edge.
+// ============================================================================
+
+namespace {
+// Three side-by-side 50x50 hit targets: box "a" [0,50), box "b" [50,100),
+// an Input [100,150); [150,200) hits only the root Row.
+VNode repaintFixture() {
+    return Row(Box().width(50).height(50).setKey("a"),
+               Box().width(50).height(50).setKey("b"),
+               Input().width(50).height(50).setKey("in"))
+        .width(200)
+        .height(50);
+}
+}  // namespace
+
+TEST_CASE("UpdateResult - hover/press/focus transitions latch needsRepaint until the next update") {
+    EventTestHost host(repaintFixture);
+
+    host.update(200, 50);                     // mount
+    auto settled = host.update(200, 50);      // steady state baseline
+    CHECK(settled.needsRepaint == false);
+
+    // Hover enters box "a": the transition latches, the NEXT update repaints.
+    host.handleMouseMove(25, 25);
+    CHECK(host.update(200, 50).needsRepaint == true);
+
+    // Moving within the same node is not a transition: no repaint.
+    host.handleMouseMove(30, 30);
+    CHECK(host.update(200, 50).needsRepaint == false);
+
+    // Press on "a" (no focus change): repaint.
+    host.handleMouseDown(25, 25, MouseButton::Left);
+    CHECK(host.update(200, 50).needsRepaint == true);
+
+    // Release clears the recorded press: repaint.
+    host.handleMouseUp(25, 25, MouseButton::Left);
+    CHECK(host.update(200, 50).needsRepaint == true);
+
+    // Idle again: nothing latched.
+    CHECK(host.update(200, 50).needsRepaint == false);
+
+    // Hover moves a -> b (node changed): repaint.
+    host.handleMouseMove(75, 25);
+    CHECK(host.update(200, 50).needsRepaint == true);
+
+    // Click into the input: focus gained -> repaint, and the focused caret animates.
+    host.handleMouseDown(125, 25, MouseButton::Left);
+    host.handleMouseUp(125, 25, MouseButton::Left);
+    REQUIRE(host.getFocusedInput() != nullptr);
+    auto focusFrame = host.update(200, 50);
+    CHECK(focusFrame.needsRepaint == true);
+    CHECK(focusFrame.animating == true);
+
+    // Click empty space: focus lost -> repaint, animation stops.
+    host.handleMouseDown(175, 25, MouseButton::Left);
+    host.handleMouseUp(175, 25, MouseButton::Left);
+    CHECK(host.getFocusedInput() == nullptr);
+    auto blurFrame = host.update(200, 50);
+    CHECK(blurFrame.needsRepaint == true);
+    CHECK(blurFrame.animating == false);
+}
+
+TEST_CASE("UpdateResult - focused caret blinks: animating each frame, needsRepaint on the edge") {
+    EventTestHost host(repaintFixture);
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+
+    // Focus the input by clicking it. The blink cycle restarts on focus gain,
+    // so the caret starts visible.
+    host.handleMouseDown(125, 25, MouseButton::Left);
+    host.handleMouseUp(125, 25, MouseButton::Left);
+    InputNode* input = host.getFocusedInput();
+    REQUIRE(input != nullptr);
+    CHECK(input->caretVisible == true);
+
+    // Frame 1 (dt 0.3s -> phase 300ms, inside the 530ms on-window): no blink
+    // edge; the repaint here is the latched focus/press transitions.
+    auto r1 = host.update(200, 50, 0.3f);
+    CHECK(r1.animating == true);
+    CHECK(r1.needsRepaint == true);
+    CHECK(input->caretVisible == true);
+
+    // Frame 2 (phase 600ms > 530ms): caret hides — the edge repaints.
+    auto r2 = host.update(200, 50, 0.3f);
+    CHECK(r2.animating == true);
+    CHECK(r2.needsRepaint == true);
+    CHECK(input->caretVisible == false);
+
+    // Frame 3 (phase 900ms): still hidden — animating, but nothing to repaint.
+    auto r3 = host.update(200, 50, 0.3f);
+    CHECK(r3.animating == true);
+    CHECK(r3.needsRepaint == false);
+    CHECK(input->caretVisible == false);
+
+    // Frame 4 (phase 1200ms -> wraps to 200ms): visible again — edge repaints.
+    auto r4 = host.update(200, 50, 0.3f);
+    CHECK(r4.animating == true);
+    CHECK(r4.needsRepaint == true);
+    CHECK(input->caretVisible == true);
+
+    // Park the caret hidden, blur, refocus: the cycle restarts visible.
+    host.update(200, 50, 0.4f);  // phase 600ms -> hidden
+    CHECK(input->caretVisible == false);
+    host.handleMouseDown(175, 25, MouseButton::Left);  // blur (empty space)
+    host.handleMouseUp(175, 25, MouseButton::Left);
+    CHECK(host.getFocusedInput() == nullptr);
+    CHECK(host.update(200, 50).animating == false);
+    host.handleMouseDown(125, 25, MouseButton::Left);  // refocus
+    host.handleMouseUp(125, 25, MouseButton::Left);
+    REQUIRE(host.getFocusedInput() == input);
+    CHECK(input->caretVisible == true);  // reset on focus gain, before any update
+}
+
+TEST_CASE("UpdateResult - autoFocus input animates from the mount frame on") {
+    // autoFocus routes through EventHandler::focusInput during the mount
+    // reconcile; the focused input must animate on every subsequent update and
+    // the focus transition must never leak a stale latch.
+    EventTestHost host([]() {
+        return Row(Input().width(50).height(50).autoFocus().setKey("in")).width(200).height(50);
+    });
+
+    auto mountFrame = host.update(200, 50);
+    CHECK(mountFrame.needsRepaint == true);
+    REQUIRE(host.getFocusedInput() != nullptr);
+
+    // Steady state: still animating (blinking), but no repaint without an edge.
+    auto idle = host.update(200, 50, 0.01f);
+    CHECK(idle.animating == true);
+    CHECK(idle.needsRepaint == false);
+}
+
+TEST_CASE("UpdateResult - a handler's deferred update() cannot eat the visual-state latch") {
+    // A hover handler that calls host.update() mid-dispatch defers; the drain at
+    // the tail of handleMouseMove runs a full update whose result nobody sees.
+    // That drained update consumes the hover transition's visual-state latch —
+    // the dirt must be carried forward so the platform's NEXT update() still
+    // reports needsRepaint (regression: it reported false, freezing embedders
+    // that honor UpdateResult).
+    Host* hostPtr = nullptr;
+    EventTestHost host([&]() {
+        return Box().width(50).height(50).onHover([&](bool entered) {
+            if (entered)
+                hostPtr->update(200, 50);
+        });
+    });
+    hostPtr = &host;
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+
+    host.handleMouseMove(25, 25);  // hover enters; handler defers; drain consumes
+
+    auto next = host.update(200, 50);
+    CHECK(next.needsRepaint == true);  // the drained dirt resurfaces here
+
+    auto after = host.update(200, 50);
+    CHECK(after.needsRepaint == false);  // reported once, then cleared
+}
+
+TEST_CASE("UpdateResult - a deferred update's reconcile repaint is carried to the next update") {
+    // The pre-existing facet of the same defect: a handler mutates state and
+    // defers an update; the drain reconciles (tree changes, relayout) but its
+    // result — fullReconcile repaint, layoutChanged — is discarded. Keyboard
+    // path on purpose: handleKeyDown touches no hover/press/focus latch, so the
+    // repaint below can ONLY come from the carried reconcile.
+    Host* hostPtr = nullptr;
+    int count = 1;
+    EventTestHost host([&]() {
+        std::vector<Child> kids;
+        for (int i = 0; i < count; ++i)
+            kids.push_back(Box().width(20).height(20).setKey(std::to_string(i)));
+        return Box(std::move(kids)).width(200).height(50).onKeyDown([&](int, uint16_t, bool) {
+            ++count;
+            hostPtr->update(200, 50);  // deferred, drained after dispatch
+        });
+    });
+    hostPtr = &host;
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+    REQUIRE(host.root()->children.size() == 1u);
+
+    host.handleKeyDown(65, 0);
+    REQUIRE(host.root()->children.size() == 2u);  // the drain reconciled same-frame
+
+    auto next = host.update(200, 50);
+    CHECK(next.needsRepaint == true);   // carried from the drained reconcile
+    CHECK(next.layoutChanged == true);  // the drain relayouted; that must surface too
+
+    auto after = host.update(200, 50);
+    CHECK(after.needsRepaint == false);
+    CHECK(after.layoutChanged == false);
+}
+
 TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing onClick") {
     int errorCount = 0;
 

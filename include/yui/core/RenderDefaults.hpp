@@ -58,8 +58,9 @@ inline constexpr float kCaretInset = 3.0f;
 // Stroke width of the blinking caret.
 inline constexpr float kCaretWidth = 1.0f;
 
-// Caret blink period (ms) and the on-fraction of that period. (ms % kPeriod)
-// below kOnMs => visible. Matches the original NanoVG cadence.
+// Caret blink period (ms) and the on-fraction of that period: phase below
+// kOnMs => visible. Advanced per-frame by InputNode::updateBlink while
+// focused. Matches the original NanoVG wall-clock cadence.
 inline constexpr long kCaretBlinkPeriodMs = 1000;
 inline constexpr long kCaretBlinkOnMs = 530;
 
