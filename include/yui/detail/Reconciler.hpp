@@ -119,8 +119,14 @@ private:
     CommitQueue commit_;
 
     // Run removed fibers' cleanups (child-first), then mounted/updated effects
-    // (mount order), then clear the queue. Called once per top-level pass.
+    // (mount order), then clear the queue. Called once per top-level pass on
+    // NORMAL exit.
     void drainCommit();
+    // Clear the queue WITHOUT running any user callbacks. Called on EXCEPTION
+    // exit from a pass: the tree is half-built, so effects/cleanups must not run
+    // (they may touch fibers whose subtree failed to mount), and no raw pointer
+    // may be left in commit_ for a later drain to fault on.
+    void discardCommit();
     // Record child-first cleanup order for a removed subtree (does NOT transfer
     // ownership — reconcileChildren moves the owning unique_ptr into removedRoots).
     void enqueueCleanups(Fiber* fiber);

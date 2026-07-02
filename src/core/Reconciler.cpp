@@ -150,7 +150,13 @@ struct FiberLookup {
 // ============================================================================
 
 std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
-    auto fiber = mountImpl(vnode);
+    std::unique_ptr<Fiber> fiber;
+    try {
+        fiber = mountImpl(vnode);
+    } catch (...) {
+        discardCommit();  // half-built tree: drop the queue, never fault a later drain
+        throw;
+    }
     drainCommit();
     return fiber;
 }
@@ -281,13 +287,6 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
         }
     }
 
-    // Defer effects to the commit phase. mountHost (below) runs during the pass and
-    // binds this fiber's element refs; the deferred effect drains after the whole
-    // pass, so a mount effect reading a useElementRef sees it already bound (defect
-    // C, mount side). The fiber stays owned by the live tree, so a raw pointer is
-    // safe in the effects queue.
-    commit_.effects.push_back(fiber.get());
-
     // Mount the result — render parent is the SAME as ours (component is invisible)
     if (!result.isEmpty) {
         auto childFiber = mountHost(result, 0, renderParent, renderIndex);
@@ -296,6 +295,17 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
             fiber->children.push_back(std::move(childFiber));
         }
     }
+
+    // Defer effects to the commit phase, AFTER children mount successfully. If a
+    // child mount throws (bad_alloc / Yoga / createNode / …), this fiber is
+    // destroyed as the exception unwinds, so its raw pointer must never have been
+    // enqueued — pushing here (the success path only) guarantees that. mountHost
+    // above ran during the pass and bound this fiber's element refs; the deferred
+    // effect drains after the whole pass, so a mount effect reading a useElementRef
+    // sees it already bound (defect C, mount side). The fiber stays owned by the
+    // live tree, so a raw pointer is safe in the effects queue. Order is preserved:
+    // a component's effect drains after ALL of the pass's mounts regardless.
+    commit_.effects.push_back(fiber.get());
 
     return fiber;
 }
@@ -316,7 +326,12 @@ std::unique_ptr<Fiber> Reconciler::mountChild(const Child& child, size_t sourceP
 // ============================================================================
 
 void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
-    reconcileImpl(fiber, vnode);
+    try {
+        reconcileImpl(fiber, vnode);
+    } catch (...) {
+        discardCommit();  // half-built tree: drop the queue, never fault a later drain
+        throw;
+    }
     drainCommit();
 }
 
@@ -535,7 +550,13 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
 // ============================================================================
 
 bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
-    bool anyReconciled = reconcileDirtyComponentsImpl(fiber);
+    bool anyReconciled;
+    try {
+        anyReconciled = reconcileDirtyComponentsImpl(fiber);
+    } catch (...) {
+        discardCommit();  // half-built tree: drop the queue, never fault a later drain
+        throw;
+    }
     drainCommit();
     return anyReconciled;
 }
@@ -909,6 +930,20 @@ void Reconciler::drainCommit() {
     for (Fiber* f : commit_.effects) {
         if (f) f->runPendingEffects();
     }
+    commit_.effects.clear();
+}
+
+void Reconciler::discardCommit() {
+    // A pass threw partway through, leaving the tree half-built. Running user
+    // effects/cleanups now is dangerous (they may touch fibers whose subtree
+    // failed to mount), and — critically — the effects/cleanupOrder vectors may
+    // hold raw pointers to fibers already destroyed by the unwinding pass. Clear
+    // everything WITHOUT invoking any callback. removedRoots owns its subtrees, so
+    // clearing it frees them; their deferred cleanups are discarded — the safe
+    // choice for a failed pass. This guarantees no dangling pointer survives into
+    // the next top-level pass's drain.
+    commit_.cleanupOrder.clear();
+    commit_.removedRoots.clear();
     commit_.effects.clear();
 }
 

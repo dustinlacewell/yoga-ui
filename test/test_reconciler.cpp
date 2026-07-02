@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <memory>
+#include <stdexcept>
+#include <yui/core/ComponentContext.hpp>
 #include <yui/detail/Reconciler.hpp>
 
 using namespace yui;
@@ -627,4 +629,39 @@ TEST_CASE("Yoga children are synced") {
 
     CHECK(YGNodeGetChild(root->yogaNode, 0) == root->children[0]->yogaNode);
     CHECK(YGNodeGetChild(root->yogaNode, 1) == root->children[1]->yogaNode);
+}
+
+TEST_CASE("A throw during a mount pass does not leave the commit queue dangling (UAF)") {
+    // Regression for the commit-phase UAF: mountComponent enqueued the component's
+    // effect (a raw pointer into the LIVE tree) BEFORE mounting its children. If a
+    // child mount threw, the exception unwound and destroyed that fresh component
+    // fiber, then propagated PAST the public wrapper's drainCommit() — leaving the
+    // freed pointer parked in commit_.effects. The NEXT top-level pass drained it
+    // and ran runPendingEffects() on freed memory.
+    //
+    // Throw seam: the auto-focus callback fires from mountHost while mounting an
+    // Input(autoFocus). It runs mid-mount, so throwing from it reproduces the exact
+    // "child mount throws" unwind that carried a live-tree raw pointer in the queue.
+    Reconciler reconciler;
+
+    bool armed = true;
+    reconciler.setAutoFocusCallback([&](InputNode*) {
+        if (armed) throw std::runtime_error("autofocus boom");
+    });
+
+    auto Comp = [](ComponentContext&) -> VNode { return Input().autoFocus(); };
+
+    // Pass 1: mount throws mid-mount. The wrapper must discard commit_ as it
+    // unwinds, so no freed pointer survives.
+    CHECK_THROWS_AS(reconciler.mount(Box({Component(Comp)})), std::runtime_error);
+
+    // Pass 2: a fresh mount. If pass 1 left the destroyed component fiber in
+    // commit_.effects, this drain would call runPendingEffects() on freed memory.
+    // Disarm so pass 2 completes cleanly.
+    armed = false;
+    std::unique_ptr<Fiber> fiber;
+    CHECK_NOTHROW(fiber = reconciler.mount(Box({Component(Comp)})));
+    REQUIRE(fiber != nullptr);
+    REQUIRE(reconciler.renderRoot() != nullptr);
+    CHECK(reconciler.renderRoot()->type() == PrimitiveType::Box);
 }
