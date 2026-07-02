@@ -1386,9 +1386,8 @@ TEST_CASE("EditCommand - not consumed without a focused Input; unimplemented com
 
     // Commands whose implementations land in later commits (see EditCommand.hpp)
     // report unconsumed and touch nothing.
-    for (EditCommand cmd : {EditCommand::MoveUp, EditCommand::MoveDown, EditCommand::SelectAll,
-                            EditCommand::Cut, EditCommand::Copy, EditCommand::Paste,
-                            EditCommand::InsertNewline}) {
+    for (EditCommand cmd : {EditCommand::MoveUp, EditCommand::MoveDown, EditCommand::Cut,
+                            EditCommand::Copy, EditCommand::Paste, EditCommand::InsertNewline}) {
         CHECK(events.handleEditCommand(cmd) == false);
     }
     CHECK(input->displayText == "abc");
@@ -1674,6 +1673,256 @@ TEST_CASE("Mouse-down modifiers thread into the dispatched event") {
     // ... and defaults to KeyMod_None when the platform passes nothing.
     events.handleMouseDown(root, 50, 50, MouseButton::Left);
     CHECK(seen == KeyMod_None);
+}
+
+// ============================================================================
+// Selection (6c C3): the selection is [min(anchor,caret), max(anchor,caret))
+// with the CARET as the moving end. Extended (Shift) moves and shift+click
+// move only the caret; unextended arrows collapse to the selection's edge;
+// SelectAll spans the value; edits replace the selection.
+// ============================================================================
+
+TEST_CASE("Selection - shift+arrows extend and shrink; the caret is the moving end") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+
+    // Caret to 2, no selection yet.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+
+    // Extend right: the anchor stays at 2, only the caret moves -> [2,3).
+    CHECK(events.handleEditCommand(EditCommand::MoveRight, true) == true);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 3);
+    CHECK(input->hasSelection());
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 3);
+
+    // Again: grows to [2,4).
+    events.handleEditCommand(EditCommand::MoveRight, true);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 4);
+
+    // Extend left SHRINKS from the caret end: back to [2,3).
+    events.handleEditCommand(EditCommand::MoveLeft, true);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 3);
+
+    // Extending past the anchor swaps the ends: caret 1 < anchor 2 -> [1,2).
+    events.handleEditCommand(EditCommand::MoveLeft, true);
+    events.handleEditCommand(EditCommand::MoveLeft, true);
+    CHECK(input->caret == 1);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->selBegin() == 1);
+    CHECK(input->selEnd() == 2);
+
+    // Shift+End extends to the end from the still-fixed anchor: [2,5).
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 5);
+}
+
+TEST_CASE("Selection - an unextended arrow collapses to the selection's edge, not past it") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+
+    // Caret to `from`, then extend to `to` (the caret ends as the moving end).
+    auto select = [&](int from, int to) {
+        events.handleEditCommand(EditCommand::MoveLineStart);
+        for (int i = 0; i < from; ++i)
+            events.handleEditCommand(EditCommand::MoveRight);
+        for (int i = 0; i < to - from; ++i)
+            events.handleEditCommand(EditCommand::MoveRight, true);
+        for (int i = 0; i < from - to; ++i)
+            events.handleEditCommand(EditCommand::MoveLeft, true);
+    };
+
+    // Caret at the RIGHT end (anchor 2, caret 5): MoveLeft lands on the LEFT
+    // edge (2) — a raw step from the caret would have landed on 4.
+    select(2, 5);
+    events.handleEditCommand(EditCommand::MoveLeft);
+    CHECK(input->caret == 2);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(!input->hasSelection());
+
+    // Caret at the LEFT end (anchor 5, caret 2): MoveRight lands on the RIGHT
+    // edge (5) — a raw step from the caret would have landed on 3.
+    select(5, 2);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 5);
+    CHECK(!input->hasSelection());
+
+    // Home/End collapse to the line bounds regardless of the selection.
+    select(2, 5);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->caret == 5);
+    CHECK(!input->hasSelection());
+    select(2, 5);
+    events.handleEditCommand(EditCommand::MoveLineStart);
+    CHECK(input->caret == 0);
+    CHECK(!input->hasSelection());
+}
+
+TEST_CASE("Selection - SelectAll spans the whole value and is consumed") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    // "aéb": 4 bytes. Anchor lands at the front, the caret (moving end) at the back.
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "a\xC3\xA9" "b");
+
+    CHECK(events.handleEditCommand(EditCommand::SelectAll) == true);
+    CHECK(input->selectionAnchor == 0);
+    CHECK(input->caret == 4);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 4);
+}
+
+TEST_CASE("Selection - typing, Backspace, and Delete replace exactly the selection") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello!!");
+
+    std::string lastChange = "sentinel";
+    input->props.onChange = [&](const std::string& s) { lastChange = s; };
+
+    // Select [2,5) = "llo": caret to 2, then three extended rights.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    for (int i = 0; i < 3; ++i)
+        events.handleEditCommand(EditCommand::MoveRight, true);
+    REQUIRE(input->selBegin() == 2);
+    REQUIRE(input->selEnd() == 5);
+
+    SUBCASE("typing replaces the selection with the typed text") {
+        events.handleTextInput("X");
+        CHECK(input->displayText == "heX!!");
+        CHECK(input->caret == 3);
+        CHECK(input->selectionAnchor == 3);
+        CHECK(lastChange == "heX!!");
+    }
+
+    SUBCASE("Backspace erases the selection only — not also the char before it") {
+        events.handleEditCommand(EditCommand::DeleteBackward);
+        CHECK(input->displayText == "he!!");
+        CHECK(input->caret == 2);
+        CHECK(input->selectionAnchor == 2);
+        CHECK(lastChange == "he!!");
+    }
+
+    SUBCASE("Delete erases the selection only — not also the char after it") {
+        events.handleEditCommand(EditCommand::DeleteForward);
+        CHECK(input->displayText == "he!!");
+        CHECK(input->caret == 2);
+        CHECK(input->selectionAnchor == 2);
+        CHECK(lastChange == "he!!");
+    }
+}
+
+TEST_CASE("Shift+click extends the selection from the pre-click anchor") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello!");
+    Node* root = h.reconciler().renderRoot();
+
+    auto press = [&](float textX, uint16_t mods) {
+        events.handleMouseDown(root, rd::kInputTextPad + textX, 15, MouseButton::Left, mods);
+        events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
+    };
+
+    // Shift+click while the input is NOT yet focused collapses: focus is
+    // gained by this very press, so there is no prior gesture to extend.
+    press(16, KeyMod_Shift);  // past 'e' midpoint -> boundary 2
+    CHECK(events.getFocusedInput() == input);
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+
+    // Shift+click on the FOCUSED input: the anchor stays at 2, only the caret
+    // (the moving end) jumps to the clicked boundary -> [2,5).
+    press(46, KeyMod_Shift);  // past cell 4's midpoint (45) -> boundary 5
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 5);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 5);
+
+    // Shift+click left of the anchor crosses it: [0,2), anchor still 2.
+    press(0, KeyMod_Shift);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 0);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 2);
+
+    // A plain click collapses at the clicked boundary (the C2 behavior).
+    press(36, KeyMod_None);  // past cell 3's midpoint (35) -> boundary 4
+    CHECK(input->caret == 4);
+    CHECK(!input->hasSelection());
+}
+
+TEST_CASE("Selection - the follow-scroll tracks the extending caret (the moving end)") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // 12 chars * 10px = 120px in a 100px input: visible span = 84px.
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaa");
+    events.focusNode(input);
+
+    // Shift+End from 0: everything selected AND the caret end (x=120) is
+    // scrolled into view — the selection scrolls with the run.
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 12);
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // Shrinking back one keeps the caret inside the span (no jitter); shift+
+    // Home follows it back to 0 (the extend collapses onto the anchor there).
+    events.handleEditCommand(EditCommand::MoveLeft, true);
+    CHECK(input->textScrollX == doctest::Approx(36));
+    events.handleEditCommand(EditCommand::MoveLineStart, true);
+    CHECK(input->textScrollX == doctest::Approx(0));
+    CHECK(!input->hasSelection());  // caret landed on the anchor
+
+    // SelectAll's caret lands at the tail: the same follow applies.
+    events.handleEditCommand(EditCommand::SelectAll);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 12);
+    CHECK(input->textScrollX == doctest::Approx(36));
+}
+
+TEST_CASE("Selection - an external value clamps and snaps BOTH selection ends") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+
+    // Anchor 2, caret 5 (shift+End from 2).
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+    REQUIRE(input->selectionAnchor == 2);
+    REQUIRE(input->caret == 5);
+
+    // The onChange round-trip echo (same value) leaves both ends untouched.
+    reconciler.reconcile(fiber.get(), inputFixture("hello"));
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 5);
+
+    // External "aé" (3 bytes): the caret clamps to the new size (3) and the
+    // anchor — byte 2 is é's continuation byte — snaps backward to 1. The
+    // selection persists as [1,3) rather than collapsing.
+    reconciler.reconcile(fiber.get(), inputFixture("a\xC3\xA9"));
+    CHECK(input->caret == 3);
+    CHECK(input->selectionAnchor == 1);
+    CHECK(input->selBegin() == 1);
+    CHECK(input->selEnd() == 3);
 }
 
 TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") {

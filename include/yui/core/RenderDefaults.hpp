@@ -50,6 +50,10 @@ inline constexpr float kInputBorderRadius = 4.0f;
 // caret position computed by each backend lands at the same x.
 inline constexpr float kInputTextPad = 8.0f;
 
+// Selection highlight fill behind the selected text range (0xRRGGBBAA): the
+// focus-border hue at ~40% alpha, so the glyphs drawn over it stay readable.
+inline constexpr uint32_t kSelectionColor = 0x4A9FFF66u;
+
 // --- Focus caret ---
 
 // Vertical inset of the blinking caret from the Input's top/bottom edges.

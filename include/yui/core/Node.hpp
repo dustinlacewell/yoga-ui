@@ -7,6 +7,7 @@
 #include "../layout/Placement.hpp"  // layout::Rect (scrollbar geometry, scrollIntoView)
 #include "../render/TextWrap.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -199,10 +200,18 @@ public:
     // the front until End/arrows reposition. Intentional.
     size_t caret = 0;
 
-    // Selection anchor (byte offset, same boundary invariant). Kept equal to
-    // `caret` by every C1 operation; selection (C3) lets the two diverge to
-    // span [min, max).
+    // Selection anchor (byte offset, same boundary invariant). The selection
+    // is [selBegin(), selEnd()) between the anchor and the caret; anchor ==
+    // caret means no selection. Convention: the CARET is the MOVING end —
+    // extend-moves and shift+click move the caret while the anchor stays put,
+    // so the follow-scroll (which tracks the caret) keeps the end the user is
+    // dragging visible.
     size_t selectionAnchor = 0;
+
+    bool hasSelection() const { return selectionAnchor != caret; }
+    size_t selBegin() const { return std::min(selectionAnchor, caret); }
+    size_t selEnd() const { return std::max(selectionAnchor, caret); }
+    void clearSelection() { selectionAnchor = caret; }
 
     // Horizontal follow-scroll (px): how far the text run is shifted LEFT so
     // the caret stays inside the content box. Maintained by
@@ -229,10 +238,15 @@ public:
     // renderer's display run reads through this.
     std::string displayRun() const;
 
-    // Width of the display run before the caret's byte offset — the caret's x
-    // in text space. For a password the prefix is one star per code point of
-    // the raw prefix (the caret lives in star space, matching what is drawn).
-    float caretPrefixWidth(const ITextMeasurer* m) const;
+    // Width of the display run before byte offset `i` (clamped into range) —
+    // an x in text space. THE prefix measurement: caret placement, selection
+    // highlight edges, and click mapping all measure through it, so they can
+    // never disagree. For a password the prefix is one star per code point of
+    // the raw prefix (star space, matching what is drawn).
+    float prefixWidthAt(size_t i, const ITextMeasurer* m) const;
+
+    // The caret's x in text space: the prefix width at the caret.
+    float caretPrefixWidth(const ITextMeasurer* m) const { return prefixWidthAt(caret, m); }
 
     // The caret byte offset (into displayText) nearest to `textX`. Midpoint
     // rule: the caret lands BEFORE a code point when textX <= that code

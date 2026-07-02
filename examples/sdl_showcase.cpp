@@ -263,8 +263,12 @@ int main(int argc, char* argv[]) {
                                 host.focusPrev();
                             else
                                 host.focusNext();
+                        } else if (event.key.keysym.sym == SDLK_a && (mods & KeyMod_Ctrl)) {
+                            host.handleEditCommand(EditCommand::SelectAll);
                         } else if (auto cmd = editCommandFor(event.key.keysym.sym)) {
-                            host.handleEditCommand(*cmd);
+                            // Shift extends the selection: moves shift only the
+                            // caret, leaving the anchor (deletes ignore the flag).
+                            host.handleEditCommand(*cmd, (mods & KeyMod_Shift) != 0);
                         }
                     }
                     break;

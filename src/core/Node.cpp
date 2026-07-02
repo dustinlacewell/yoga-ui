@@ -503,12 +503,14 @@ void InputNode::updateProps(PropsVariant&& p) {
     // the app echoes the value we just reported straight back through props —
     // and the caret must NOT move then, or typing mid-string would snap it away
     // on every reconcile. Only a value that actually differs (an external
-    // reset) replaces the text, clamping caret/anchor into range and snapping
-    // backward to a UTF-8 code-point boundary (a caret never sits mid-code-point).
+    // reset) replaces the text, clamping caret AND anchor into range — each
+    // independently, so a selection survives where the new text allows — and
+    // snapping backward to a UTF-8 code-point boundary (neither end ever sits
+    // mid-code-point).
     if (props.value != displayText) {
         displayText = props.value;
         caret = utf8::snapToCodePoint(displayText, caret);
-        selectionAnchor = caret;
+        selectionAnchor = utf8::snapToCodePoint(displayText, selectionAnchor);
         // The replaced text's scroll is meaningless against the new run: drop
         // it, then re-follow the preserved caret into view. Without the
         // re-follow, a caret preserved deep in a now-LONGER value would sit
@@ -554,10 +556,10 @@ std::string InputNode::displayRun() const {
     return displayText;
 }
 
-float InputNode::caretPrefixWidth(const ITextMeasurer* m) const {
+float InputNode::prefixWidthAt(size_t i, const ITextMeasurer* m) const {
     std::string display = displayRun();
     std::string_view raw(displayText);
-    size_t end = std::min(caret, raw.size());
+    size_t end = std::min(i, raw.size());
     // In star space a prefix of N code points is N one-byte stars.
     size_t dispEnd = props.password.value_or(false) ? utf8::codePointCount(raw.substr(0, end)) : end;
     return runWidth(inputFont(*this), std::string_view(display).substr(0, dispEnd), m);

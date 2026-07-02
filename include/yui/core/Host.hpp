@@ -389,7 +389,8 @@ public:
     // Route an editing command (see EditCommand.hpp for which commands are live
     // in which commit) to the focused Input. Returns true iff consumed, so a
     // shim can fall through when nothing is focused. `extend` is the Shift-held
-    // selection modifier — accepted now, implemented with selection (C3).
+    // selection modifier: Move* commands move only the caret, leaving the
+    // anchor to span the selection.
     bool handleEditCommand(EditCommand cmd, bool extend = false) noexcept {
         return guardedBool("Host::handleEditCommand", [&] { return eventHandler_.handleEditCommand(cmd, extend); });
     }

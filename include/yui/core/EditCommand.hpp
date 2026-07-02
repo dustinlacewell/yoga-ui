@@ -9,11 +9,11 @@ namespace yui {
 //
 // The full command set is declared up front so the enum is stable across the
 // text-editing commits, but implementations land incrementally:
-//   - C1 (this commit): MoveLeft, MoveRight, MoveLineStart, MoveLineEnd,
+//   - C1 (landed):    MoveLeft, MoveRight, MoveLineStart, MoveLineEnd,
 //     DeleteBackward, DeleteForward.
-//   - C3 (selection):   SelectAll (and the `extend` flag on moves).
-//   - C5 (clipboard):   Cut, Copy, Paste.
-//   - C6 (multiline):   MoveUp, MoveDown, InsertNewline.
+//   - C3 (landed):    SelectAll (and the `extend` flag on moves).
+//   - C5 (clipboard): Cut, Copy, Paste.
+//   - C6 (multiline): MoveUp, MoveDown, InsertNewline.
 // An unimplemented command is NOT consumed (handleEditCommand returns false),
 // so shims can fall through until its commit arrives.
 enum class EditCommand {

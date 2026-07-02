@@ -46,15 +46,16 @@ public:
     bool handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat = false) noexcept;
     bool handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept;
 
-    // Text input for the focused Input — inserts at the caret.
+    // Text input for the focused Input — replaces the selection if any, else
+    // inserts at the caret.
     void handleTextInput(const std::string& text) noexcept;
     void handleSubmit() noexcept;
 
     // Apply an editing command to the focused Input. Returns true iff a focused
     // Input consumed it (no focused Input -> false, so platform shims can route
-    // the key elsewhere). `extend` (Shift-held moves) is accepted now but
-    // ignored until selection lands (C3); `clipboard` is accepted now but
-    // unused until Cut/Copy/Paste land (C5).
+    // the key elsewhere). `extend` (Shift-held) makes Move* commands move only
+    // the caret, leaving the selection anchor to span the selection;
+    // `clipboard` is accepted now but unused until Cut/Copy/Paste land (C5).
     bool handleEditCommand(EditCommand cmd, bool extend = false, IClipboard* clipboard = nullptr) noexcept;
 
     // Get the currently hovered node (for cursor changes, etc.). Validates the

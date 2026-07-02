@@ -72,7 +72,11 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     if (beginScrollbarGesture(target, x, y, button))
         return true;
 
-    // Update focus on click
+    // Update focus on click. The pre-click focused node is read FIRST: the
+    // shift+click extension below applies only to an input that was already
+    // focused before this press (a focus-gaining click has no selection
+    // gesture to extend).
+    Node* focusedBefore = liveFocusedNode();
     updateFocus(target);
 
     // Chain the multi-click counter before recording the press, so the events
@@ -97,15 +101,21 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     // glyph boundary (the mouse analog of the arrow keys). The window x maps
     // into text space by removing the content-box origin and text pad, then
     // adding back the follow-scroll (the textX contract on
-    // InputNode::indexAtPoint). Collapses the selection anchor onto the caret;
-    // shift+click extension reads `mods` when selection lands (C3).
+    // InputNode::indexAtPoint). A plain click collapses the anchor onto the
+    // caret; SHIFT+click on the ALREADY-focused input leaves the anchor put and
+    // moves only the caret (the moving end), extending the selection to the
+    // clicked boundary — the same anchor-fixed/caret-moves machinery as the
+    // extended arrow moves.
     if (target->type() == PrimitiveType::Input) {
         auto* input = static_cast<InputNode*>(target);
         layout::Rect abs = absoluteRect(input);
+        const ITextMeasurer* m = measurerOf(input);
         float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
-        input->caret = input->indexAtPoint(textX, measurerOf(input));
-        input->selectionAnchor = input->caret;
+        input->caret = input->indexAtPoint(textX, m);
+        if (!((mods & KeyMod_Shift) && focusedBefore == target))
+            input->clearSelection();
         input->resetCaretBlink();  // the placed caret shows immediately
+        input->scrollCaretIntoView(m);
         markVisualStateChanged();
     }
 
@@ -886,7 +896,14 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     // Optimistic advance for immediate feedback. The display state commits first;
     // only the onChange notification is isolated, so a throwing handler preserves
     // the on-screen feedback (per the decided contract) instead of rolling it back.
-    // Insertion is AT the caret (== append when the caret sits at the end).
+    // Typing over a selection REPLACES it: the selected range goes, the text
+    // lands at its start. Otherwise insertion is AT the caret (== append when
+    // the caret sits at the end).
+    if (focused->hasSelection()) {
+        size_t begin = focused->selBegin();
+        focused->displayText.erase(begin, focused->selEnd() - begin);
+        focused->caret = begin;
+    }
     focused->displayText.insert(focused->caret, text);
     focused->caret += text.size();
     focused->selectionAnchor = focused->caret;
@@ -918,23 +935,46 @@ struct EditOutcome {
     bool textChanged = false;
 };
 
-// Apply one editing command to an Input's text/caret state. Single-line
-// semantics: MoveLineStart/End span the whole value. Every caret move collapses
-// the selection anchor onto the caret — extend-selection (Shift) lands with
-// selection in C3, so `extend` is not consulted here yet. A move already at its
-// bound is still consumed: the key targeted the focused input either way.
-EditOutcome applyEditCommand(InputNode& input, EditCommand cmd) {
+// Apply one editing command to an Input's text/caret/selection state.
+// Single-line semantics: MoveLineStart/End span the whole value. The CARET is
+// the MOVING end (see InputNode::selectionAnchor): an extended (Shift) move
+// changes only the caret, leaving the anchor to span the selection. A move
+// already at its bound is still consumed: the key targeted the focused input
+// either way.
+EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend) {
     std::string& s = input.displayText;
+    // Land the caret: an unextended move collapses the anchor onto it, an
+    // extended one leaves the anchor as the selection's fixed end.
     auto moveTo = [&](size_t pos) {
         input.caret = pos;
-        input.selectionAnchor = pos;
+        if (!extend)
+            input.selectionAnchor = pos;
+    };
+    // Erase the selected range; caret and anchor collapse onto its start.
+    auto eraseSelection = [&] {
+        size_t begin = input.selBegin();
+        s.erase(begin, input.selEnd() - begin);
+        input.caret = begin;
+        input.selectionAnchor = begin;
     };
     switch (cmd) {
+    // DOM collapse rule (the subtle part): an UNEXTENDED horizontal arrow
+    // with an active selection collapses the selection to the corresponding
+    // EDGE — MoveLeft to selBegin, MoveRight to selEnd — and moves NO further.
+    // The arrow "lands" the selection rather than stepping past its edge;
+    // only a collapsed caret (or an extended move) actually steps a code
+    // point. Standard editor behavior.
     case EditCommand::MoveLeft:
-        moveTo(utf8::prevCodePoint(s, input.caret));
+        if (!extend && input.hasSelection())
+            moveTo(input.selBegin());
+        else
+            moveTo(utf8::prevCodePoint(s, input.caret));
         return {true, false};
     case EditCommand::MoveRight:
-        moveTo(utf8::nextCodePoint(s, input.caret));
+        if (!extend && input.hasSelection())
+            moveTo(input.selEnd());
+        else
+            moveTo(utf8::nextCodePoint(s, input.caret));
         return {true, false};
     case EditCommand::MoveLineStart:
         moveTo(0);
@@ -942,27 +982,43 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd) {
     case EditCommand::MoveLineEnd:
         moveTo(s.size());
         return {true, false};
+    case EditCommand::SelectAll:
+        // Anchor at the front, caret (the moving end) at the back, so the
+        // follow-scroll reveals the tail — matching editor convention.
+        input.selectionAnchor = 0;
+        input.caret = s.size();
+        return {true, false};
     case EditCommand::DeleteBackward: {
+        // With a selection, delete exactly the selection — NOT also the code
+        // point before it (that's what a second keypress is for).
+        if (input.hasSelection()) {
+            eraseSelection();
+            return {true, true};
+        }
         if (input.caret == 0)
             return {true, false};
         // Erase the whole code point before the caret, never a lone byte, so
         // multi-byte characters delete cleanly and leave valid UTF-8 behind.
         size_t start = utf8::prevCodePoint(s, input.caret);
         s.erase(start, input.caret - start);
-        moveTo(start);
+        input.caret = start;
+        input.selectionAnchor = start;  // a delete always leaves a collapsed caret
         return {true, true};
     }
     case EditCommand::DeleteForward: {
+        if (input.hasSelection()) {
+            eraseSelection();
+            return {true, true};
+        }
         if (input.caret >= s.size())
             return {true, false};
         s.erase(input.caret, utf8::nextCodePoint(s, input.caret) - input.caret);
         return {true, true};
     }
-    // Declared ahead of their commits (see EditCommand.hpp): SelectAll is C3,
-    // Cut/Copy/Paste are C5, MoveUp/MoveDown/InsertNewline are C6 (multiline).
+    // Declared ahead of their commits (see EditCommand.hpp): Cut/Copy/Paste
+    // are C5, MoveUp/MoveDown/InsertNewline are C6 (multiline).
     case EditCommand::MoveUp:
     case EditCommand::MoveDown:
-    case EditCommand::SelectAll:
     case EditCommand::Cut:
     case EditCommand::Copy:
     case EditCommand::Paste:
@@ -974,7 +1030,7 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd) {
 
 }  // namespace
 
-bool EventHandler::handleEditCommand(EditCommand cmd, bool /*extend — C3 (selection)*/,
+bool EventHandler::handleEditCommand(EditCommand cmd, bool extend,
                                      IClipboard* /*clipboard — C5 (cut/copy/paste)*/) noexcept {
     // Same liveness gate as handleTextInput: no focused (live) Input means no
     // edit — and NOT consumed, so the shim can route the key elsewhere.
@@ -982,7 +1038,7 @@ bool EventHandler::handleEditCommand(EditCommand cmd, bool /*extend — C3 (sele
     if (!focused)
         return false;
 
-    EditOutcome outcome = applyEditCommand(*focused, cmd);
+    EditOutcome outcome = applyEditCommand(*focused, cmd, extend);
     if (!outcome.handled)
         return false;
 

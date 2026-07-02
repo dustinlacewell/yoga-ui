@@ -345,8 +345,12 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
                     g_host->focusPrev();
                 else
                     g_host->focusNext();
+            } else if (key == GLFW_KEY_A && (keyMod & KeyMod_Ctrl)) {
+                g_host->handleEditCommand(EditCommand::SelectAll);
             } else if (auto cmd = editCommandFor(key)) {
-                g_host->handleEditCommand(*cmd);
+                // Shift extends the selection: moves shift only the caret,
+                // leaving the anchor (deletes ignore the flag).
+                g_host->handleEditCommand(*cmd, (keyMod & KeyMod_Shift) != 0);
             }
         }
     } else if (action == GLFW_RELEASE) {

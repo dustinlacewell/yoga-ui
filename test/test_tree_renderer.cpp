@@ -549,6 +549,7 @@ TEST_CASE("renderTree: password mask is one star per code point, not per byte") 
     root->focused = true;  // fresh blink state: caret starts visible
     auto* in = static_cast<InputNode*>(root);
     in->caret = in->displayText.size();  // pin at END (the caret index defaults to 0)
+    in->clearSelection();                // the edit path always collapses the anchor too
 
     render::renderTree(root, backend, {});
 
@@ -596,6 +597,7 @@ TEST_CASE("renderTree: focused input draws the caret; blink phase hides it deter
     root->focused = true;  // fresh blink state: caret starts visible
     auto* in = static_cast<InputNode*>(root);
     in->caret = in->displayText.size();  // pin at END (the caret index defaults to 0)
+    in->clearSelection();                // the edit path always collapses the anchor too
 
     render::renderTree(root, backend, {});
 
@@ -684,6 +686,7 @@ TEST_CASE("renderTree: caret draws at the measured prefix before its byte index"
     // FakeBackend measures 10px per byte, so caret-x is pad + 10 * caret.
     auto caretXAt = [&](size_t caret) {
         in->caret = caret;
+        in->clearSelection();  // the edit path always collapses the anchor too
         backend.calls.clear();
         render::renderTree(root, backend, {});
         const Call* c = backend.nthOf(Call::Kind::FillRect, 1);
@@ -713,6 +716,7 @@ TEST_CASE("renderTree: password caret positions in star space (code points, not 
 
     auto caretXAt = [&](size_t caret) {
         in->caret = caret;
+        in->clearSelection();  // the edit path always collapses the anchor too
         backend.calls.clear();
         render::renderTree(root, backend, {});
         const Call* c = backend.nthOf(Call::Kind::FillRect, 1);
@@ -745,6 +749,7 @@ TEST_CASE("renderTree: overflowing input text and caret are clipped to the conte
     root->focused = true;  // fresh blink state: caret visible
     auto* in = static_cast<InputNode*>(root);
     in->caret = in->displayText.size();  // at END: the prefix is the full 120px run
+    in->clearSelection();                // the edit path always collapses the anchor too
     // What the edit path does after every caret move: follow-scroll so the
     // caret sits at the right edge of the visible span (content minus the
     // text pad both sides = 84px): textScrollX = 120 - 84 = 36.
@@ -783,6 +788,7 @@ TEST_CASE("renderTree: textScrollX zero leaves short-text geometry untouched") {
     root->focused = true;
     auto* in = static_cast<InputNode*>(root);
     in->caret = in->displayText.size();
+    in->clearSelection();  // the edit path always collapses the anchor too
     in->scrollCaretIntoView(&backend);
     CHECK(in->textScrollX == doctest::Approx(0));
 
@@ -851,4 +857,186 @@ TEST_CASE("renderTree: padded input clips and positions text in its content box"
     REQUIRE(run != nullptr);
     CHECK(run->x == doctest::Approx(5 + rd::kInputTextPad));
     CHECK(run->y == doctest::Approx(5 + (30 - 10) / 2.0f));  // centered in the content box
+}
+
+// ---------------------------------------------------------------------------
+// Selection highlight (6c C3): a kSelectionColor fill behind the selected
+// range, drawn inside the content clip between the box chrome and the text
+// run. Both edges measure through the SAME prefix source as the caret
+// (InputNode::prefixWidthAt — star space for a password), shift by the same
+// follow-scroll, and occupy the caret's vertical band.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: selection draws a highlight between chrome and the text run") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("abcdef").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;  // fresh blink state: caret visible
+    auto* in = static_cast<InputNode*>(root);
+    in->selectionAnchor = 1;
+    in->caret = 4;  // the moving end
+
+    render::renderTree(root, backend, {});
+
+    // bg fill / border stroke / clip / selection fill / text run / caret fill / unclip.
+    REQUIRE(backend.calls.size() == 7);
+    CHECK(backend.calls[2].kind == Call::Kind::PushClip);
+    CHECK(backend.calls[3].kind == Call::Kind::FillRect);  // highlight under the run
+    CHECK(backend.calls[4].kind == Call::Kind::TextRun);
+    CHECK(backend.calls[5].kind == Call::Kind::FillRect);  // caret over it
+    CHECK(backend.calls[6].kind == Call::Kind::PopClip);
+
+    // The highlight spans prefix(1)=10 .. prefix(4)=40 in the caret band.
+    const Call& sel = backend.calls[3];
+    checkRect(sel.rect, rd::kInputTextPad + 10, rd::kCaretInset, 30, 30 - 2 * rd::kCaretInset);
+    CHECK(sel.color == rd::kSelectionColor);
+
+    // The caret draws at the MOVING end (byte 4) and shares the band exactly.
+    const Call& caret = backend.calls[5];
+    CHECK(caret.rect.x == doctest::Approx(rd::kInputTextPad + 40 - rd::kCaretWidth / 2));
+    CHECK(caret.rect.y == doctest::Approx(sel.rect.y));
+    CHECK(caret.rect.h == doctest::Approx(sel.rect.h));
+}
+
+TEST_CASE("renderTree: a right-to-left selection draws the same rect; caret at the left end") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("abcdef").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;
+    auto* in = static_cast<InputNode*>(root);
+    in->selectionAnchor = 4;
+    in->caret = 1;  // extended leftward: the moving end is the LEFT edge
+
+    render::renderTree(root, backend, {});
+
+    // Same [1,4) highlight as the left-to-right selection...
+    const Call* sel = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(sel != nullptr);
+    CHECK(sel->color == rd::kSelectionColor);
+    checkRect(sel->rect, rd::kInputTextPad + 10, rd::kCaretInset, 30, 30 - 2 * rd::kCaretInset);
+
+    // ... but the caret marks the left end (byte 1), where the user is dragging.
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 2);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad + 10 - rd::kCaretWidth / 2));
+}
+
+TEST_CASE("renderTree: no selection draws no highlight — the C2 stream unchanged") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("abcdef").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;
+    auto* in = static_cast<InputNode*>(root);
+    in->caret = 4;
+    in->selectionAnchor = 4;  // anchor == caret: no selection
+
+    render::renderTree(root, backend, {});
+
+    // bg fill / border stroke / clip / text run / caret fill / unclip — exactly
+    // the pre-selection stream, and nothing painted in the selection color.
+    REQUIRE(backend.calls.size() == 6);
+    CHECK(backend.count(Call::Kind::FillRect) == 2);  // bg + caret only
+    for (const auto& c : backend.calls)
+        CHECK(c.color != rd::kSelectionColor);
+}
+
+TEST_CASE("renderTree: an unfocused input with a selection draws no highlight") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Same selection state as the focused case — only focus differs. The
+    // highlight is cursor chrome (like the caret): blur keeps the selection
+    // state but hides its chrome, so a blurred input shows no blue band.
+    auto tree = Input().value("abcdef").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    auto* in = static_cast<InputNode*>(root);
+    in->selectionAnchor = 1;
+    in->caret = 4;
+    REQUIRE(in->hasSelection());
+
+    SUBCASE("unfocused: no highlight and no caret — just the box chrome") {
+        // (root->focused stays false)
+        render::renderTree(root, backend, {});
+        CHECK(backend.count(Call::Kind::FillRect) == 1);  // bg only
+        for (const auto& c : backend.calls)
+            CHECK(c.color != rd::kSelectionColor);
+    }
+
+    SUBCASE("refocus restores the chrome: the highlight draws again") {
+        root->focused = true;
+        render::renderTree(root, backend, {});
+        const Call* sel = backend.nthOf(Call::Kind::FillRect, 1);
+        REQUIRE(sel != nullptr);
+        CHECK(sel->color == rd::kSelectionColor);
+    }
+}
+
+TEST_CASE("renderTree: password selection highlights star-space widths") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Raw "aéb" displays "***". Selecting [1,4) (é+b) covers stars 2..3:
+    // x = pad + 10 (one star before), width = 20 (two stars).
+    auto tree = Input().value("a\xC3\xA9" "b").password(true).fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;
+    auto* in = static_cast<InputNode*>(root);
+    in->selectionAnchor = 1;
+    in->caret = 4;
+
+    render::renderTree(root, backend, {});
+
+    const Call* sel = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(sel != nullptr);
+    CHECK(sel->color == rd::kSelectionColor);
+    CHECK(sel->rect.x == doctest::Approx(rd::kInputTextPad + 10));
+    CHECK(sel->rect.w == doctest::Approx(20));
+}
+
+TEST_CASE("renderTree: the selection highlight shifts by the follow-scroll with run and caret") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // 12 chars * 10px = 120px in a 100px box (span 84). Everything selected,
+    // caret at the end: the follow-scroll is 36 and the highlight rides left
+    // with the run (its head clipped away by the content clip).
+    auto tree = Input().value("aaaaaaaaaaaa").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;
+    auto* in = static_cast<InputNode*>(root);
+    in->selectionAnchor = 0;
+    in->caret = 12;
+    in->scrollCaretIntoView(&backend);
+    CHECK(in->textScrollX == doctest::Approx(36));
+
+    render::renderTree(root, backend, {});
+
+    const Call* sel = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(sel != nullptr);
+    CHECK(sel->color == rd::kSelectionColor);
+    CHECK(sel->rect.x == doctest::Approx(rd::kInputTextPad - 36));  // prefix(0) - scroll
+    CHECK(sel->rect.w == doctest::Approx(120));
+
+    // The caret (moving end) sits inside the box at pad + 120 - 36.
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 2);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad + 120 - 36 - rd::kCaretWidth / 2));
 }

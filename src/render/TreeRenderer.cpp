@@ -38,6 +38,19 @@ InputRun inputDisplayRun(const InputNode& node, uint32_t textColor) {
     return {std::string{}, textColor};
 }
 
+// The vertical band an Input's text-cursor chrome occupies within the content
+// box. Caret and selection highlight both draw exactly this band, so the two
+// always align.
+struct CaretBand {
+    float top;
+    float height;
+};
+
+CaretBand caretBand(const Rect& content) {
+    namespace rd = render_defaults;
+    return {content.y + rd::kCaretInset, content.h - 2 * rd::kCaretInset};
+}
+
 class TreeWalker {
 public:
     TreeWalker(IRenderBackend& backend, const ErrorHandler& onError) : backend_(backend), onError_(onError) {}
@@ -53,6 +66,7 @@ private:
     void drawCanvas(const CanvasNode* node, const Rect& r);
 
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
+    void drawSelection(const InputNode& node, const Rect& content);
     void drawCaret(const InputNode& node, const Rect& content, const ResolvedInputStyle& s);
 
     IRenderBackend& backend_;
@@ -202,6 +216,13 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
     // rides out. (textScrollX is 0 whenever the text fits — see
     // InputNode::scrollCaretIntoView — so a placeholder never shifts.)
     backend_.pushClip(content, s.borderRadius);
+    // Paint order: selection highlight under the glyphs, caret on top — the
+    // caret marks the selection's MOVING end (the one the user is dragging).
+    // The highlight is cursor chrome, so it gates on focus exactly like the
+    // caret: blur keeps the selection state (refocus restores it) but hides
+    // its chrome, so an unfocused input never shows a caretless blue band.
+    if (node->focused && node->hasSelection())
+        drawSelection(*node, content);
     if (!run.text.empty()) {
         backend_.drawTextRun(run.text, content.x + rd::kInputTextPad - node->textScrollX,
                              content.y + (content.h - s.fontSize) / 2, s.fontSize, run.color, font);
@@ -209,6 +230,18 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
     if (caretShown)
         drawCaret(*node, content, s);
     backend_.popClip();
+}
+
+void TreeWalker::drawSelection(const InputNode& node, const Rect& content) {
+    namespace rd = render_defaults;
+    // Both edges use the SAME prefix measurement the caret and click mapping
+    // use (InputNode::prefixWidthAt — star space for a password), shifted by
+    // the same follow-scroll, so highlight, caret, and clicks always agree.
+    float begin = node.prefixWidthAt(node.selBegin(), &backend_);
+    float end = node.prefixWidthAt(node.selEnd(), &backend_);
+    CaretBand band = caretBand(content);
+    Rect sel{content.x + rd::kInputTextPad + begin - node.textScrollX, band.top, end - begin, band.height};
+    backend_.fillRect(sel, rd::kSelectionColor, 0);
 }
 
 void TreeWalker::drawCaret(const InputNode& node, const Rect& content, const ResolvedInputStyle& s) {
@@ -219,8 +252,8 @@ void TreeWalker::drawCaret(const InputNode& node, const Rect& content, const Res
     // no right-edge pin is needed here anymore.
     float caretX = content.x + rd::kInputTextPad + node.caretPrefixWidth(&backend_) - node.textScrollX;
 
-    Rect caret{caretX - rd::kCaretWidth / 2, content.y + rd::kCaretInset, rd::kCaretWidth,
-               content.h - 2 * rd::kCaretInset};
+    CaretBand band = caretBand(content);
+    Rect caret{caretX - rd::kCaretWidth / 2, band.top, rd::kCaretWidth, band.height};
     backend_.fillRect(caret, s.color, 0);
 }
 
