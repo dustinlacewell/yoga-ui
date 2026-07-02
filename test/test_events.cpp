@@ -1447,7 +1447,10 @@ TEST_CASE("Click positions the caret at the nearest boundary; midpoint ties go l
     InputNode* input = mountMeasuredInput(h, "hello");
     Node* root = h.reconciler().renderRoot();
 
+    // Independent PLAIN clicks: break the multi-click chain each time, or
+    // nearby rapid clicks would chain into double-click word selection (C4).
     auto clickAt = [&](float textX) {
+        events.advanceClock(0.6f);
         events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
         events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
         return input->caret;
@@ -1478,7 +1481,9 @@ TEST_CASE("Click lands on code-point boundaries in multibyte text") {
     InputNode* input = mountMeasuredInput(h, "a\xC3\xA9" "b");
     Node* root = h.reconciler().renderRoot();
 
+    // Independent PLAIN clicks (see the chain-break note in the tie test).
     auto clickAt = [&](float textX) {
+        events.advanceClock(0.6f);
         events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
         events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
         return input->caret;
@@ -1502,7 +1507,9 @@ TEST_CASE("Click maps through star space to displayText offsets for passwords") 
     InputNode* input = mountMeasuredInput(h, "a\xC3\xA9" "b", true);
     Node* root = h.reconciler().renderRoot();
 
+    // Independent PLAIN clicks (see the chain-break note in the tie test).
     auto clickAt = [&](float textX) {
+        events.advanceClock(0.6f);
         events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
         events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
         return input->caret;
@@ -1923,6 +1930,254 @@ TEST_CASE("Selection - an external value clamps and snaps BOTH selection ends") 
     CHECK(input->selectionAnchor == 1);
     CHECK(input->selBegin() == 1);
     CHECK(input->selEnd() == 3);
+}
+
+// ============================================================================
+// Drag-select + multi-click selection (6c C4): a captured drag on a focused
+// Input moves only the caret (the anchor stays where the press put it);
+// double-click selects the wrap-tokenizer run under the click; triple-click
+// selects all (single-line: the whole value is the line).
+// ============================================================================
+
+TEST_CASE("Drag-select - the caret follows the pointer; the anchor stays at the press") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello!");
+    Node* root = h.reconciler().renderRoot();
+
+    // Press at boundary 2: the C2 collapse (caret = anchor = 2).
+    events.handleMouseDown(root, rd::kInputTextPad + 20, 15);
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+
+    // Drag right to boundary 6: the selection grows to [2,6).
+    events.handleMouseMove(root, rd::kInputTextPad + 60, 15);
+    CHECK(input->caret == 6);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 6);
+
+    // Retreat to boundary 4: shrinks to [2,4).
+    events.handleMouseMove(root, rd::kInputTextPad + 40, 15);
+    CHECK(input->caret == 4);
+    CHECK(input->selEnd() == 4);
+
+    // Cross the anchor to 0: begin/end swap around the fixed anchor — [0,2).
+    events.handleMouseMove(root, rd::kInputTextPad + 0, 15);
+    CHECK(input->caret == 0);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 2);
+
+    // Release: the selection persists — only a new plain click collapses it.
+    events.handleMouseUp(root, rd::kInputTextPad + 0, 15);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 2);
+}
+
+TEST_CASE("Drag-select - past the right edge follow-scrolls and clamps to the end") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // 12 chars * 10px = 120px in a 100px input: visible span = 84px.
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaa");
+    Node* root = h.reconciler().renderRoot();
+
+    events.handleMouseDown(root, rd::kInputTextPad + 0, 15);
+    CHECK(input->caret == 0);
+
+    // Far off the node AND the window: capture keeps routing moves to the
+    // input; indexAtPoint clamps to size and the follow-scroll chases the
+    // caret to the tail.
+    events.handleMouseMove(root, 500, 15);
+    CHECK(input->caret == 12);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 12);
+    CHECK(input->textScrollX == doctest::Approx(36));  // 120 - 84
+
+    events.handleMouseUp(root, 500, 15);
+    CHECK(input->selEnd() == 12);  // persists past the release
+}
+
+TEST_CASE("Drag-select - a sub-threshold wiggle stays a plain click, no selection") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello!");
+    Node* root = h.reconciler().renderRoot();
+
+    // Press at boundary 2 (textX 24 <= cell-2 midpoint 25); a 3px move (under
+    // kDragThresholdPx = 4) CROSSES that midpoint — if a zero-width drag were
+    // live it would move the caret to 3 — but no drag has latched.
+    events.handleMouseDown(root, rd::kInputTextPad + 24, 15);
+    CHECK(input->caret == 2);
+    events.handleMouseMove(root, rd::kInputTextPad + 27, 15);
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+
+    events.handleMouseUp(root, rd::kInputTextPad + 27, 15);
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+}
+
+TEST_CASE("Double-click selects the word under the click; a space click selects the space run") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello world");
+    Node* root = h.reconciler().renderRoot();
+
+    // Both presses at ONE window x (the multi-click radius is 4px); the x is
+    // derived from the CURRENT textScrollX so the target boundary is exact.
+    auto doubleClickAt = [&](float textX) {
+        float wx = rd::kInputTextPad + textX - input->textScrollX;
+        events.handleMouseDown(root, wx, 15);
+        events.handleMouseUp(root, wx, 15);
+        events.advanceClock(0.05f);
+        events.handleMouseDown(root, wx, 15);
+        events.handleMouseUp(root, wx, 15);
+    };
+
+    // In "world" (bytes [6,11)): the whole word, released selection intact.
+    doubleClickAt(85);  // boundary 8, inside "world"
+    CHECK(input->selectionAnchor == 6);
+    CHECK(input->caret == 11);
+    CHECK(input->selBegin() == 6);
+    CHECK(input->selEnd() == 11);
+
+    // In "hello": [0,5). (0.6s breaks the chain so this is a fresh double.)
+    events.advanceClock(0.6f);
+    doubleClickAt(25);  // boundary 2, inside "hello"
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 5);
+
+    // ON the space: the space RUN [5,6) — same-class-run semantics, matching
+    // the wrap tokenizer's space/non-space classes.
+    events.advanceClock(0.6f);
+    doubleClickAt(55);  // boundary 5, the space cell
+    CHECK(input->selectionAnchor == 5);
+    CHECK(input->caret == 6);
+}
+
+TEST_CASE("Double-click selects a multibyte word whole") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // "café run": é is 2 bytes (offsets 3-4), space at 5, "run" at [6,9).
+    InputNode* input = mountMeasuredInput(h, "caf\xC3\xA9 run");
+    Node* root = h.reconciler().renderRoot();
+
+    auto doubleClickAt = [&](float textX) {
+        float wx = rd::kInputTextPad + textX - input->textScrollX;
+        events.handleMouseDown(root, wx, 15);
+        events.handleMouseUp(root, wx, 15);
+        events.advanceClock(0.05f);
+        events.handleMouseDown(root, wx, 15);
+        events.handleMouseUp(root, wx, 15);
+    };
+
+    // On the é (cell [30,50) at 10px/byte): the whole "café" incl. both é
+    // bytes — the range ends on code-point boundaries.
+    doubleClickAt(35);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 5);
+
+    events.advanceClock(0.6f);
+    doubleClickAt(65);  // boundary 6, inside "run"
+    CHECK(input->selBegin() == 6);
+    CHECK(input->selEnd() == 9);
+}
+
+TEST_CASE("Triple-click selects all; extra chained clicks stay select-all") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello world");
+    Node* root = h.reconciler().renderRoot();
+
+    float wx = rd::kInputTextPad + 30;
+    auto click = [&] {
+        events.handleMouseDown(root, wx, 15);
+        events.handleMouseUp(root, wx, 15);
+        events.advanceClock(0.05f);
+    };
+
+    click();  // caret 3, collapsed
+    click();  // word "hello" [0,5)
+    click();  // triple: all — anchor front, caret back (the moving end)
+    CHECK(input->selectionAnchor == 0);
+    CHECK(input->caret == 11);
+
+    click();  // count 4: capped at triple — still select-all
+    CHECK(input->selectionAnchor == 0);
+    CHECK(input->caret == 11);
+    CHECK(input->selBegin() == 0);
+    CHECK(input->selEnd() == 11);
+}
+
+TEST_CASE("Shift+drag extends from the prior anchor, not the press point") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "abcdefgh");
+    Node* root = h.reconciler().renderRoot();
+
+    // Establish [2,5) via click at 2 + shift+click at 5 (the C3 gesture).
+    events.handleMouseDown(root, rd::kInputTextPad + 20, 15);
+    events.handleMouseUp(root, rd::kInputTextPad + 20, 15);
+    events.handleMouseDown(root, rd::kInputTextPad + 50, 15, MouseButton::Left, KeyMod_Shift);
+    events.handleMouseUp(root, rd::kInputTextPad + 50, 15);
+    REQUIRE(input->selectionAnchor == 2);
+    REQUIRE(input->caret == 5);
+
+    // Shift+press at 7 keeps the anchor at 2; the drag then moves the caret
+    // from there — the whole gesture extends the OLD selection to [2,8).
+    events.handleMouseDown(root, rd::kInputTextPad + 70, 15, MouseButton::Left, KeyMod_Shift);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 7);
+    events.handleMouseMove(root, rd::kInputTextPad + 80, 15);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(input->caret == 8);
+
+    events.handleMouseUp(root, rd::kInputTextPad + 80, 15);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 8);
+}
+
+TEST_CASE("Drag-select coexists with a user onDrag on the Input") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    int drags = 0;
+    Node* root = h.mount(Box(
+                             Input().value("hello!").fontSize(10).width(100).height(30).setKey("field")
+                                 .onDrag([&](const DragEvent&) { ++drags; })
+                         )
+                             .width(200)
+                             .height(100));
+    root->calculateLayout(200, 100);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+
+    // One captured move past the threshold: the built-in selection extends
+    // AND the app's onDrag fires — DOM-style coexistence, neither eats the other.
+    events.handleMouseDown(root, rd::kInputTextPad + 20, 15);
+    events.handleMouseMove(root, rd::kInputTextPad + 60, 15);
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 6);
+    CHECK(drags == 1);
+
+    events.handleMouseUp(root, rd::kInputTextPad + 60, 15);
+    CHECK(input->selEnd() == 6);
 }
 
 TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") {

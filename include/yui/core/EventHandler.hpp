@@ -184,6 +184,12 @@ private:
     // moves.
     void dragScrollbarThumb(Node* captor, float x, float y);
 
+    // One captured move of a text drag-select on a focused Input captor: map
+    // the pointer x through the SAME window→text mapping the press used
+    // (handleMouseDown) and move ONLY the caret — the anchor stays where the
+    // press put it, so the selection [anchor, caret) tracks the drag.
+    void dragSelectText(InputNode* input, float x);
+
     // Advance the multi-click machine at a press: a press within the interval /
     // radius of the previous click (same button) extends the chain, anything
     // else restarts clickCount_ at 1.

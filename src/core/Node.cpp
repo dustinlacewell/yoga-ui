@@ -590,6 +590,23 @@ size_t InputNode::indexAtPoint(float textX, const ITextMeasurer* m) const {
     return raw.size();
 }
 
+std::pair<size_t, size_t> InputNode::wordRangeAt(size_t i) const {
+    std::string_view s(displayText);
+    if (s.empty())
+        return {0, 0};
+    // The probed byte decides the run's class: the byte AT the boundary, or
+    // for the end boundary the byte before it (the trailing run).
+    size_t probe = std::min(i, s.size() - 1);
+    bool space = s[probe] == ' ';
+    size_t begin = probe;
+    while (begin > 0 && (s[begin - 1] == ' ') == space)
+        --begin;
+    size_t end = probe;
+    while (end < s.size() && (s[end] == ' ') == space)
+        ++end;
+    return {begin, end};
+}
+
 void InputNode::scrollCaretIntoView(const ITextMeasurer* m) {
     namespace rd = render_defaults;
     // The visible text span is the content box minus the text pad on BOTH

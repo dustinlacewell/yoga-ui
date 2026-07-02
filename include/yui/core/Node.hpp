@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <yoga/Yoga.h>
@@ -260,6 +261,17 @@ public:
     // two boundaries share one x, so a click there resolves to the earlier
     // (ties-left) — a click can land on either boundary but never between them.
     size_t indexAtPoint(float textX, const ITextMeasurer* m) const;
+
+    // The [begin, end) byte range of the same-class run — word (non-space) or
+    // space run — at caret boundary `i` (clamped): double-click word selection.
+    // "Same class" is the wrapText tokenization (space byte vs non-space byte,
+    // see render::wrapText's wrapSegment) — ONE word-boundary definition shared
+    // with wrapping, not a second one. A boundary between two runs takes the
+    // run STARTING at it (the byte AT `i`); the end boundary takes the trailing
+    // run. Byte-class scanning stops only on code-point boundaries by
+    // construction: ' ' is a one-byte code point and continuation bytes are
+    // non-space, so a class change is always a code-point start. Empty ⇒ {0,0}.
+    std::pair<size_t, size_t> wordRangeAt(size_t i) const;
 
     // Follow the caret with textScrollX so it stays inside the visible text
     // span (the content box minus kInputTextPad on each side), clamped so no

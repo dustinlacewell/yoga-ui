@@ -105,15 +105,34 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     // caret; SHIFT+click on the ALREADY-focused input leaves the anchor put and
     // moves only the caret (the moving end), extending the selection to the
     // clicked boundary — the same anchor-fixed/caret-moves machinery as the
-    // extended arrow moves.
+    // extended arrow moves. A chained LEFT press upgrades the gesture: the
+    // double-click selects the word (same-class run) under the boundary, the
+    // triple selects all (single-line: the whole value IS the line). Either
+    // way anchor and caret land here at press time; a drag that follows moves
+    // only the caret (dispatchCapturedMove), and the release never collapses.
     if (target->type() == PrimitiveType::Input) {
         auto* input = static_cast<InputNode*>(target);
         layout::Rect abs = absoluteRect(input);
         const ITextMeasurer* m = measurerOf(input);
         float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
-        input->caret = input->indexAtPoint(textX, m);
-        if (!((mods & KeyMod_Shift) && focusedBefore == target))
-            input->clearSelection();
+        size_t clickIndex = input->indexAtPoint(textX, m);
+        if (button == MouseButton::Left && clickCount_ >= 3) {
+            // Triple-click and beyond (chains cap at triple): select all,
+            // anchor front / caret back (the moving end) — matching
+            // EditCommand::SelectAll so the follow-scroll reveals the tail.
+            input->selectionAnchor = 0;
+            input->caret = input->displayText.size();
+        } else if (button == MouseButton::Left && clickCount_ == 2) {
+            // Word selection uses the wrap tokenizer's boundary classes
+            // (wordRangeAt): a click on whitespace selects the space run.
+            auto [wordBegin, wordEnd] = input->wordRangeAt(clickIndex);
+            input->selectionAnchor = wordBegin;
+            input->caret = wordEnd;
+        } else {
+            input->caret = clickIndex;
+            if (!((mods & KeyMod_Shift) && focusedBefore == target))
+                input->clearSelection();
+        }
         input->resetCaretBlink();  // the placed caret shows immediately
         input->scrollCaretIntoView(m);
         markVisualStateChanged();
@@ -231,6 +250,15 @@ bool EventHandler::dispatchCapturedMove(Node* captor, float x, float y) {
         clickCount_ = 0;
     }
     if (dragging_) {
+        // Text drag-select on a focused Input captor. Built-in selection and a
+        // user onDrag COEXIST (DOM-style): the selection updates here and the
+        // Drag event still dispatches below — mirroring how the press both
+        // places the caret and dispatches MouseDown. Runs only once the
+        // threshold latched, so a sub-threshold wiggle stays a plain click;
+        // never reached by a scrollbar gesture (early return above).
+        if (captor->type() == PrimitiveType::Input && captor->focused && pressedButton_ == MouseButton::Left)
+            dragSelectText(static_cast<InputNode*>(captor), x);
+
         Event drag;
         drag.type = Event::Type::Drag;
         drag.x = x;
@@ -309,6 +337,27 @@ void EventHandler::dragScrollbarThumb(Node* captor, float x, float y) {
     // snapped silently by updateSmooth (offset moves, animating stays false).
     if ((vertical ? scroll->targetScrollY : scroll->targetScrollX) != before)
         markVisualStateChanged();
+}
+
+void EventHandler::dragSelectText(InputNode* input, float x) {
+    // The same window→text mapping as the press (see handleMouseDown), against
+    // the CURRENT textScrollX — as the follow-scroll chases the caret, the same
+    // window x maps ever deeper into the run, so holding past the content edge
+    // keeps scrolling and extending (indexAtPoint clamps at 0/size). The anchor
+    // is untouched: after a plain press it is the press boundary, after a
+    // shift+press the pre-press anchor, after a double-click the word start —
+    // the drag always moves the caret by CHARACTER from there (word-granular
+    // double-click drag is deliberately not implemented in v1).
+    layout::Rect abs = absoluteRect(input);
+    const ITextMeasurer* m = measurerOf(input);
+    float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
+    size_t index = input->indexAtPoint(textX, m);
+    if (index == input->caret)
+        return;  // no boundary crossed: nothing changed, nothing to repaint
+    input->caret = index;
+    input->resetCaretBlink();  // the moving caret shows immediately
+    input->scrollCaretIntoView(m);
+    markVisualStateChanged();
 }
 
 void EventHandler::updateClickChain(float x, float y, MouseButton button) {
