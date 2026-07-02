@@ -381,7 +381,7 @@ void EventHandler::updateHover(Node* newHovered) {
     // flag toggle commits before the callback fires, and hoveredNode_ is assigned
     // unconditionally at the end — so a throwing onHover can never leave the node
     // flags out of sync with hoveredNode_.
-    Node* oldNode = hoveredNode_;
+    Node* oldNode = liveHoveredNode();
     while (oldNode) {
         oldNode->hovered = false;
 
@@ -458,7 +458,7 @@ void EventHandler::updateHover(Node* newHovered) {
         newNode = newNode->parent;
     }
 
-    hoveredNode_ = newHovered;
+    setHoveredNode(newHovered);
 }
 
 void EventHandler::updateFocus(Node* clicked) {

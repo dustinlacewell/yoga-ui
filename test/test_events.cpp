@@ -972,6 +972,46 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
     CHECK(lastChange == "a");
 }
 
+TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") {
+    // Mirrors the focused-input UAF regression for hoveredNode_. A reconcile can
+    // free the hovered node; with no node-removed callback wired the partial
+    // mitigation never runs, so without the liveness token getHoveredNode() would
+    // return a dangling pointer.
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box({
+                        Box().width(80).height(20).setKey("field").onHover([](bool) {}),
+                    })
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* child = root->children[0].get();
+    events.handleMouseMove(root, 40, 10);
+    CHECK(events.getHoveredNode() == child);
+    std::shared_ptr<bool> childAlive = child->alive;
+    CHECK(*childAlive == true);
+
+    // Reconcile the hovered child away (different primitive type forces removal).
+    // No node-removed callback is wired: hoveredNode_ is NOT cleared by the partial
+    // mitigation — exactly the dangling scenario.
+    auto next = Box({
+                        Text("x").width(80).height(20).setKey("field"),
+                    })
+                    .width(100)
+                    .height(100);
+    reconciler.reconcile(fiber.get(), next);
+
+    CHECK(*childAlive == false);
+
+    // The getter validates the token: no dangling pointer, reported as no-hover.
+    CHECK(events.getHoveredNode() == nullptr);
+}
+
 // ============================================================================
 // Depth-guard contract (handoff item #17): the event-path walks (hitTest,
 // dispatchEvent's bubble, findKeyTarget) descend/bubble one native stack frame

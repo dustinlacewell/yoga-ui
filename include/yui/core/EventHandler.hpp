@@ -38,8 +38,10 @@ public:
     void handleBackspace() noexcept;
     void handleSubmit() noexcept;
 
-    // Get the currently hovered node (for cursor changes, etc.)
-    Node* getHoveredNode() const { return hoveredNode_; }
+    // Get the currently hovered node (for cursor changes, etc.). Validates the
+    // liveness token first (mirrors getFocusedInput): a hovered node freed by a
+    // reconciliation is reported as no-hover rather than a dangling pointer.
+    Node* getHoveredNode() const { return liveHoveredNode(); }
 
     // Get the focused input node (for text input routing). Validates the
     // liveness token first: if the focused InputNode was freed by a
@@ -67,7 +69,7 @@ public:
     // Clears any references to this node
     void onNodeRemoved(Node* node) {
         if (hoveredNode_ == node) {
-            hoveredNode_ = nullptr;
+            setHoveredNode(nullptr);
         }
         if (focusedInput_ == node) {
             setFocusedInput(nullptr);
@@ -147,6 +149,29 @@ private:
         return pressedNode_;
     }
 
+    // Record the currently hovered node, capturing its liveness token in lockstep
+    // (mirrors setPressedNode/setFocusedInput). Lets liveHoveredNode() detect a
+    // hovered node freed outside onNodeRemoved (e.g. a reconcile with no
+    // node-removed callback wired) instead of dereferencing dangling memory.
+    void setHoveredNode(Node* node) {
+        hoveredNode_ = node;
+        hoveredNodeAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    }
+
+    // Return hoveredNode_ only if its node is still alive; otherwise clear the
+    // stale pointer and return nullptr (mirrors livePressedNode/liveFocusedInput).
+    Node* liveHoveredNode() const {
+        if (!hoveredNode_)
+            return nullptr;
+        auto alive = hoveredNodeAlive_.lock();
+        if (!alive || !*alive) {
+            hoveredNode_ = nullptr;
+            hoveredNodeAlive_.reset();
+            return nullptr;
+        }
+        return hoveredNode_;
+    }
+
     // Which keyboard handler a routing search is looking for.
     enum class KeyPhase { Down, Up };
 
@@ -175,7 +200,11 @@ private:
     // production; lowered by tests via setMaxTreeDepth to drive the guard with a
     // shallow tree.
     int maxTreeDepth_ = kMaxTreeDepth;
-    Node* hoveredNode_ = nullptr;
+    // mutable: liveHoveredNode() lazily clears a stale hover from const
+    // getHoveredNode(). hoveredNodeAlive_ observes the hovered node's liveness
+    // token (Node::alive) without owning it.
+    mutable Node* hoveredNode_ = nullptr;
+    mutable std::weak_ptr<bool> hoveredNodeAlive_;
     // mutable: liveFocusedInput() lazily clears a stale focus from const
     // getFocusedInput(). focusedInputAlive_ observes the focused node's
     // liveness token (Node::alive) without owning it.
