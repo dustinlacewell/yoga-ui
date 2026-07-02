@@ -575,6 +575,13 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
 
     const size_t preEffects = fiber->pendingEffects.size();  // 0 in steady state
 
+    // Clear dirty BEFORE the render, not after. If the render re-dirties itself
+    // (its own useState setter or a Store::set() targeting this fiber runs during
+    // the render body), that mid-render re-dirty must survive: leaving dirty as the
+    // render left it means a self-triggered update is picked up next frame instead
+    // of being clobbered by an unconditional post-success clear.
+    fiber->dirty.store(false, std::memory_order_relaxed);
+
     VNode result;
     bool threw = false;
     {
@@ -603,7 +610,13 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
         }
         fiber->subscriptionCleanups = std::move(oldSubs);
         fiber->pendingEffects.resize(preEffects);
-        return;  // dirty stays set; children untouched
+        // dirty was cleared before the render; re-arm so the failed pass is retried
+        // next frame. markComponentDirty is the established release store the
+        // host's acquire-load pairs with (do NOT call fiber->markDirty() — that
+        // would re-set dirty AND markComponentDirty, doubling the mark).
+        fiber->dirty.store(true, std::memory_order_relaxed);
+        if (fiber->host) fiber->host->markComponentDirty();
+        return;  // dirty re-armed; children untouched
     }
 
     // Render succeeded. Tear down stale subscriptions: run the old records whose
@@ -621,8 +634,11 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
         }
     }
 
-    // dirty is cleared here (after success), not before, so a failed pass leaves it set.
-    fiber->dirty.store(false, std::memory_order_relaxed);
+    // dirty is NOT touched here: it was cleared before the render, so leave it as
+    // the render left it. A render that re-dirtied itself (via markDirty()) also
+    // re-armed componentsDirty_ (release store), so next frame's single acquire-
+    // load pass picks it up. In steady state the render does not re-dirty, dirty
+    // stays cleared, componentsDirty_ is not re-armed, and the pass terminates.
 
     // Run pending effects
     fiber->runPendingEffects();

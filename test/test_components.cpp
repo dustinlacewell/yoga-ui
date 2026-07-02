@@ -1807,3 +1807,77 @@ TEST_CASE("Component - same lambda across renders preserves state (no false remo
     // State survived (would be 0 again if the fiber were spuriously remounted).
     CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "77");
 }
+
+// ─── Defect B: preserve a component's self-triggered update ───────────────────
+
+TEST_CASE("Component - self-triggered setState during render is not lost") {
+    // A render that calls its own setState (guarded to a cap so it terminates) must
+    // advance across frames. Pre-fix, dirty was cleared UNCONDITIONALLY after a
+    // successful render, clobbering the mid-render re-dirty the setter set — the
+    // update was silently dropped and the value froze one short of the cap.
+    TestHost host;
+    const int cap = 3;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        auto [n, setN] = ctx.useState<int>(0);
+        if (n < cap) setN(n + 1);  // re-dirty this fiber mid-render
+        return Text(std::to_string(n));
+    };
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        return Box({Component(Comp)});
+    }));
+
+    // Drive frames until it settles (bounded — a lost update would freeze early).
+    for (int i = 0; i < 10 && host.needsUpdate(); ++i) {
+        host.update(200, 200);
+    }
+    // First update() renders once (n=0 -> setN(1)); each later update() advances one.
+    host.update(200, 200);  // ensure fully drained
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == std::to_string(cap));
+    // Converged: no further update pending.
+    CHECK(host.needsUpdate() == false);
+}
+
+TEST_CASE("Component - Store::set targeting the rendering component is not lost") {
+    // A Store::set() that fires DURING the target component's own render (mid-render
+    // self re-dirty) must cause a re-render next frame, and later EXTERNAL sets must
+    // still reach it (membership not desynced by the clear-before-render change).
+    TestHost host;
+    Store<int> counter(0);
+    int renderCount = 0;
+    bool selfBump = true;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        renderCount++;
+        int v = counter.use();  // subscribe
+        if (selfBump && v == 0) {
+            // Fire a set() targeting this very store while this fiber renders.
+            counter.set(1);
+        }
+        return Text(std::to_string(v));
+    };
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        return Box({Component(Comp)});
+    }));
+
+    host.update(200, 200);          // render 1: v=0, self-sets to 1
+    CHECK(host.needsUpdate() == true);   // self-triggered update queued
+    host.update(200, 200);          // render 2: v=1
+    CHECK(renderCount == 2);
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "1");
+
+    // Later EXTERNAL set must still reach it (subscription intact).
+    selfBump = false;
+    counter.set(42);
+    CHECK(host.needsUpdate() == true);
+    host.update(200, 200);
+    CHECK(renderCount == 3);
+    rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "42");
+}
