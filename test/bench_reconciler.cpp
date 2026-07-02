@@ -516,7 +516,7 @@ void benchmarkMountBreakdown() {
             props.gap = 1.0f;
             for (int i = 0; i < 8191; i++) {
                 auto node = createNode(PrimitiveType::Box, nullptr);
-                node->updateProps(props);
+                node->updateProps(BoxProps{props});  // copy: props is reused across the loop
                 nodes.push_back(std::move(node));
             }
         });
@@ -529,7 +529,7 @@ void benchmarkMountBreakdown() {
                 auto node = createNode(PrimitiveType::Box, nullptr);
                 BoxProps props;
                 props.backgroundColor = 0x3366CCFF;
-                node->updateProps(props);
+                node->updateProps(std::move(props));
                 return node;
             }
             auto col = createNode(PrimitiveType::Box, nullptr);
@@ -537,7 +537,7 @@ void benchmarkMountBreakdown() {
             colProps.flexDirection = FlexDirection::Column;
             colProps.flexGrow = 1.0f;
             colProps.gap = 1.0f;
-            col->updateProps(colProps);
+            col->updateProps(std::move(colProps));
 
             auto row1 = createNode(PrimitiveType::Box, nullptr);
             auto row2 = createNode(PrimitiveType::Box, nullptr);
@@ -545,8 +545,8 @@ void benchmarkMountBreakdown() {
             rowProps.flexDirection = FlexDirection::Row;
             rowProps.flexGrow = 1.0f;
             rowProps.gap = 1.0f;
-            row1->updateProps(rowProps);
-            row2->updateProps(rowProps);
+            row1->updateProps(BoxProps{rowProps});  // copy: rowProps reused by row2
+            row2->updateProps(std::move(rowProps));
 
             // Build children
             auto c1 = buildNodeTree(d - 1);
@@ -605,7 +605,7 @@ void benchmarkMountBreakdown() {
 
         std::function<std::unique_ptr<Node>(const VNode&)> mountFromVNode = [&](const VNode& vnode) -> std::unique_ptr<Node> {
             auto node = createNode(vnode.type(), nullptr);
-            node->updateProps(vnode.props);
+            node->updateProps(PropsVariant{vnode.props});  // copy: const shared tree, reused
 
             size_t yogaIndex = 0;
             for (const auto& child : vnode.children) {

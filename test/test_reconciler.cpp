@@ -16,7 +16,7 @@ TEST_CASE("Mount creates node tree") {
         Text("B").setKey("b"),
     });
 
-    auto fiber = reconciler.mount(vnode);
+    auto fiber = reconciler.mount(std::move(vnode));
     auto* root = reconciler.renderRoot();
 
     CHECK(root != nullptr);
@@ -37,7 +37,7 @@ TEST_CASE("Mount skips empty nodes") {
         Text("B"),
     });
 
-    auto fiber = reconciler.mount(vnode);
+    auto fiber = reconciler.mount(std::move(vnode));
     auto* root = reconciler.renderRoot();
 
     CHECK(root->children.size() == 2);
@@ -50,7 +50,7 @@ TEST_CASE("Reconciler reuses node with same key") {
         Text("A").setKey("a"),
         Text("B").setKey("b"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     auto* nodeA = root->children[0].get();
@@ -61,7 +61,7 @@ TEST_CASE("Reconciler reuses node with same key") {
         Text("B").setKey("b"),
         Text("A").setKey("a"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     // Same node instances, different positions
     CHECK(root->children.size() == 2);
@@ -77,7 +77,7 @@ TEST_CASE("Reconciler handles duplicate sibling keys without crashing") {
         Text("A").setKey("dup"),
         Text("B").setKey("other"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     CHECK(root->children.size() == 2);
@@ -89,7 +89,7 @@ TEST_CASE("Reconciler handles duplicate sibling keys without crashing") {
         Text("X").setKey("dup"),
         Text("Y").setKey("dup"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     // No crash, and a sane two-child tree: one reused fiber + one fresh fiber.
     REQUIRE(root->children.size() == 2);
@@ -112,13 +112,13 @@ TEST_CASE("Reconciler removes unmatched nodes") {
         Text("A").setKey("a"),
         Text("B").setKey("b"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     auto tree2 = Column({
         Text("A").setKey("a"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(root->children.size() == 1);
     CHECK(root->children[0]->key == "a");
@@ -188,7 +188,7 @@ TEST_CASE("Reconciler updates props on reused node") {
     Reconciler reconciler;
 
     auto tree1 = Text("Hello").setKey("t");
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     auto* textNode = dynamic_cast<TextNode*>(root);
@@ -196,7 +196,7 @@ TEST_CASE("Reconciler updates props on reused node") {
     CHECK(textNode->props.text == "Hello");
 
     auto tree2 = Text("World").setKey("t").color(0xFF0000);
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(textNode->props.text == "World");
     CHECK(textNode->props.color == 0xFF0000);
@@ -208,7 +208,7 @@ TEST_CASE("Reconciler adds new nodes") {
     auto tree1 = Column({
         Text("A").setKey("a"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
     CHECK(root->children.size() == 1);
 
@@ -216,7 +216,7 @@ TEST_CASE("Reconciler adds new nodes") {
         Text("A").setKey("a"),
         Text("B").setKey("b"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(root->children.size() == 2);
     CHECK(root->children[1]->key == "b");
@@ -229,7 +229,7 @@ TEST_CASE("Reconciler matches by position when no keys") {
         Text("A"),
         Text("B"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     auto* nodeA = root->children[0].get();
@@ -240,7 +240,7 @@ TEST_CASE("Reconciler matches by position when no keys") {
         Text("A-updated"),
         Text("B-updated"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     // Same node instances (reused by position)
     CHECK(root->children[0].get() == nodeA);
@@ -257,7 +257,7 @@ TEST_CASE("Reconciler handles type change") {
     auto tree1 = Column({
         Text("Hello").setKey("item"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     auto* oldNode = root->children[0].get();
@@ -267,7 +267,7 @@ TEST_CASE("Reconciler handles type change") {
     auto tree2 = Column({
         Box().setKey("item"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     // New node created (different type)
     CHECK(root->children[0].get() != oldNode);
@@ -282,7 +282,7 @@ TEST_CASE("Reconciler handles ROOT type change without crashing") {
     auto tree1 = Box({
         Text("inner").setKey("inner"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     CHECK(root->type() == PrimitiveType::Box);
@@ -291,7 +291,7 @@ TEST_CASE("Reconciler handles ROOT type change without crashing") {
     // fix this called updateProps with the wrong props variant and threw
     // std::bad_variant_access; now it remounts.
     auto tree2 = Text("x");
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     auto* newRoot = reconciler.renderRoot();
     REQUIRE(newRoot != nullptr);
@@ -314,7 +314,7 @@ TEST_CASE("Reconciler handles ROOT type change and back, rebuilding children") {
         Text("A").setKey("a"),
         Text("B").setKey("b"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     CHECK(reconciler.renderRoot()->type() == PrimitiveType::Box);
     CHECK(reconciler.renderRoot()->children.size() == 2);
 
@@ -322,7 +322,7 @@ TEST_CASE("Reconciler handles ROOT type change and back, rebuilding children") {
     auto tree2 = Scroll(std::vector<Child>{
         Text("C").setKey("c"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
     auto* scrollRoot = reconciler.renderRoot();
     REQUIRE(scrollRoot != nullptr);
     CHECK(scrollRoot->type() == PrimitiveType::Scroll);
@@ -337,7 +337,7 @@ TEST_CASE("Reconciler handles ROOT type change and back, rebuilding children") {
         Text("D").setKey("d"),
         Text("E").setKey("e"),
     });
-    reconciler.reconcile(fiber.get(), tree3);
+    reconciler.reconcile(fiber.get(), std::move(tree3));
     auto* boxRoot = reconciler.renderRoot();
     REQUIRE(boxRoot != nullptr);
     CHECK(boxRoot->type() == PrimitiveType::Box);
@@ -350,7 +350,7 @@ TEST_CASE("Reconciler handles ROOT type change and back, rebuilding children") {
         Text("D2").setKey("d"),
         Text("E2").setKey("e"),
     });
-    reconciler.reconcile(fiber.get(), tree4);
+    reconciler.reconcile(fiber.get(), std::move(tree4));
     auto* textD = dynamic_cast<TextNode*>(reconciler.renderRoot()->children[0].get());
     REQUIRE(textD != nullptr);
     CHECK(textD->props.text == "D2");
@@ -364,7 +364,7 @@ TEST_CASE("Reconciler preserves position matching with empty nodes") {
         VNode::empty(),
         Text("B"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     CHECK(root->children.size() == 2);
@@ -376,7 +376,7 @@ TEST_CASE("Reconciler preserves position matching with empty nodes") {
         VNode::empty(),
         Text("B-updated"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(root->children.size() == 2);
     CHECK(root->children[0].get() == nodeA);
@@ -399,7 +399,7 @@ TEST_CASE("Reconciler handles multiple empty nodes") {
         VNode::empty(),
         Text("C"),
     });
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
 
     CHECK(root->children.size() == 3);
@@ -415,7 +415,7 @@ TEST_CASE("Reconciler handles multiple empty nodes") {
         VNode::empty(),
         Text("C2"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(root->children[0].get() == nodeA);
     CHECK(root->children[1].get() == nodeB);
@@ -614,7 +614,7 @@ TEST_CASE("Yoga children are synced") {
         Box().setKey("a"),
         Box().setKey("b"),
     });
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
 
     CHECK(YGNodeGetChildCount(root->yogaNode) == 2);
@@ -625,7 +625,7 @@ TEST_CASE("Yoga children are synced") {
         Box().setKey("b"),
         Box().setKey("a"),
     });
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
 
     CHECK(YGNodeGetChild(root->yogaNode, 0) == root->children[0]->yogaNode);
     CHECK(YGNodeGetChild(root->yogaNode, 1) == root->children[1]->yogaNode);

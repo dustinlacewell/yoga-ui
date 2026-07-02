@@ -53,8 +53,10 @@ public:
     bool hasIntKey() const { return intKey != NO_INT_KEY; }
     bool hasStringKey() const { return !key.empty(); }
 
-    // Props update (called by reconciler)
-    virtual void updateProps(const PropsVariant& props) = 0;
+    // Props update (called by reconciler). Takes the new props by rvalue: the
+    // VNode is fully consumable after reconcile (nothing reads it later), so the
+    // owned props are MOVED into the node instead of copied.
+    virtual void updateProps(PropsVariant&& props) = 0;
 
     // Tree structure
     std::vector<std::unique_ptr<Node>> children;
@@ -99,7 +101,7 @@ class BoxNode : public Node {
 public:
     explicit BoxNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Box; }
-    void updateProps(const PropsVariant& props) override;
+    void updateProps(PropsVariant&& props) override;
 
     BoxProps props;
 };
@@ -108,7 +110,7 @@ class TextNode : public Node {
 public:
     explicit TextNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Text; }
-    void updateProps(const PropsVariant& props) override;
+    void updateProps(PropsVariant&& props) override;
 
     TextProps props;
 
@@ -122,7 +124,7 @@ class InputNode : public Node {
 public:
     explicit InputNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Input; }
-    void updateProps(const PropsVariant& props) override;
+    void updateProps(PropsVariant&& props) override;
 
     InputProps props;
 
@@ -134,7 +136,7 @@ class ScrollNode : public Node {
 public:
     explicit ScrollNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Scroll; }
-    void updateProps(const PropsVariant& props) override;
+    void updateProps(PropsVariant&& props) override;
 
     ScrollProps props;
 
@@ -157,7 +159,7 @@ class CanvasNode : public Node {
 public:
     explicit CanvasNode(YGConfigRef config);
     PrimitiveType type() const override { return PrimitiveType::Canvas; }
-    void updateProps(const PropsVariant& props) override;
+    void updateProps(PropsVariant&& props) override;
 
     CanvasProps props;
 };

@@ -21,7 +21,7 @@ TEST_CASE("Hit test finds deepest node") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -45,7 +45,7 @@ TEST_CASE("Click handler fires") {
     bool clicked = false;
     auto tree = Box().width(100).height(100).onClick([&]() { clicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -64,7 +64,7 @@ TEST_CASE("Right click handler fires") {
     bool rightClicked = false;
     auto tree = Box().width(100).height(100).onRightClick([&]() { rightClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -85,7 +85,7 @@ TEST_CASE("Click bubbles to parent") {
                     .height(100)
                     .onClick([&]() { parentClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -111,7 +111,7 @@ TEST_CASE("Click consumption stops bubbling") {
                     .height(100)
                     .onClick([&]() { outerClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -136,7 +136,7 @@ TEST_CASE("onClick requires press and release on the same node") {
                     .flexDirection(FlexDirection::Row)
                     .width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -173,7 +173,7 @@ TEST_CASE("onClick fires on a handler ancestor when press and release share it")
                     .width(100).height(100)
                     .onClick([&]() { parentClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -189,7 +189,7 @@ TEST_CASE("Hover callbacks fire") {
     bool hovered = false;
     auto tree = Box().width(100).height(100).onHover([&](bool h) { hovered = h; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -216,7 +216,7 @@ TEST_CASE("Hover tracks deepest node") {
                     .height(100)
                     .onHover([&](bool h) { outerHovered = h; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -253,7 +253,7 @@ TEST_CASE("Hover - a sibling-to-sibling move does not re-fire the shared parent'
                     .height(100)
                     .onHover([&](bool) { ++parentHoverCalls; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -275,7 +275,7 @@ TEST_CASE("Text node receives events") {
     bool clicked = false;
     auto tree = Text("Click me").width(100).height(20).onClick([&]() { clicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 20);
 
@@ -295,7 +295,7 @@ TEST_CASE("Scroll event fires on Box with onScroll handler") {
         scrollY = dy;
     });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -316,7 +316,7 @@ TEST_CASE("Scroll bubbles to parent") {
                     .height(100)
                     .onScroll([&](float dx, float dy) { parentScrollY = dy; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -332,7 +332,7 @@ TEST_CASE("ScrollNode mounts correctly") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     CHECK(root->type() == PrimitiveType::Scroll);
@@ -343,7 +343,7 @@ TEST_CASE("ScrollNode layout works") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
 
@@ -359,7 +359,7 @@ TEST_CASE("ScrollNode has children") {
 
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -377,7 +377,7 @@ TEST_CASE("ScrollNode auto-scrolls content") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -399,7 +399,7 @@ TEST_CASE("ScrollNode clamps scroll offset") {
 
     auto tree = Scroll(Box().width(150).height(200)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -421,7 +421,7 @@ TEST_CASE("ScrollNode doesn't scroll when content fits") {
     // Content smaller than container
     auto tree = Scroll(Box().width(50).height(50)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -443,7 +443,7 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -471,7 +471,7 @@ TEST_CASE("ScrollNode child layout dimensions - fixed size child") {
     // Child with explicit dimensions larger than parent
     auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -511,7 +511,7 @@ TEST_CASE("ScrollNode with flexGrow child") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -548,7 +548,7 @@ TEST_CASE("ScrollNode scrolling works when content exceeds container") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -618,7 +618,7 @@ TEST_CASE("ScrollNode with Column child (no explicit height) - mimics real UI pa
                     .height(100)
                     .flexGrow(1);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 200);  // Available space larger than scroll
 
@@ -682,7 +682,7 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
                     .padding(4)
                     .gap(4);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     // Simulate module panel size (180x480)
     root->calculateLayout(180, 480);
@@ -730,7 +730,7 @@ TEST_CASE("Key - onKeyUp-only node receives KeyUp") {
         gotCode = code;
     });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -753,7 +753,7 @@ TEST_CASE("Key - node with both handlers receives KeyDown and KeyUp") {
                     .onKeyDown([&](int, uint16_t, bool) { downFired = true; })
                     .onKeyUp([&](int, uint16_t) { upFired = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -777,7 +777,7 @@ TEST_CASE("Key - onKeyDown receives the repeat flag") {
                         ++downCount;
                     });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -809,7 +809,7 @@ TEST_CASE("Key - KeyUp skips an onKeyDown-only node and reaches the onKeyUp node
     // (downNodeGotUp can never become true: downOnly has no onKeyUp.)
     (void)downNodeGotUp;
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -854,7 +854,7 @@ TEST_CASE("Exception - throwing onClick is isolated; bubble target still fires")
                     .height(100)
                     .onClick([&]() { parentClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -880,7 +880,7 @@ TEST_CASE("Exception - throwing onHover keeps hover state consistent") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
     Node* inner = root->children[0].get();
@@ -915,7 +915,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -942,7 +942,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
                     })
                     .width(100)
                     .height(100);
-    reconciler.reconcile(fiber.get(), next);
+    reconciler.reconcile(fiber.get(), std::move(next));
 
     // The InputNode is genuinely freed: ~Node cleared its liveness token. This is
     // the precondition the stale focusedInput_ must detect. (A sanitizer would
@@ -973,7 +973,7 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -1018,7 +1018,7 @@ TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") 
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -1036,7 +1036,7 @@ TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") 
                     })
                     .width(100)
                     .height(100);
-    reconciler.reconcile(fiber.get(), next);
+    reconciler.reconcile(fiber.get(), std::move(next));
 
     CHECK(*childAlive == false);
 
@@ -1091,7 +1091,7 @@ TEST_CASE("Depth guard - deep tree does not crash event dispatch and diagnoses")
     // findKeyTarget walks the whole thing.
     auto tree = buildDeepBoxChain(kTestDepthCap + 16);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     root->calculateLayout(100, 100);
@@ -1131,7 +1131,7 @@ TEST_CASE("Depth guard - dispatchEvent bubble truncates on a deep ancestor chain
     bool deepestClicked = false;
     auto tree = buildDeepBoxChain(kTestDepthCap + 16, [&]() { deepestClicked = true; });
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     REQUIRE(root != nullptr);
     root->calculateLayout(100, 100);

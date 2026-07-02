@@ -37,7 +37,7 @@ TEST_CASE("Text node uses intrinsic size") {
                     .width(200)
                     .alignItems(AlignItems::FlexStart);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(200, 100);
 
     // "Hello" = 5 chars * 10px = 50px width, 20px height
@@ -52,7 +52,7 @@ TEST_CASE("Text node respects explicit dimensions") {
 
     auto tree = Text("Hello").fontSize(20).width(100).height(40);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(200, 100);
 
     CHECK(root->layout.width == doctest::Approx(100));
@@ -71,7 +71,7 @@ TEST_CASE("Text node with flexGrow expands") {
                     .width(200)
                     .height(50);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(200, 50);
 
     CHECK(root->children[0]->layout.width == doctest::Approx(20));
@@ -84,7 +84,7 @@ TEST_CASE("Default fallback measure function (no measurer installed)") {
 
     auto tree = Text("Test").fontSize(12);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     // Fallback: 0.6 * fontSize per char. "Test" = 4 * (12 * 0.6) = 28.8
@@ -98,13 +98,13 @@ TEST_CASE("Text updates trigger relayout") {
     h.setMeasurer(&measurer);
 
     auto tree1 = Text("Hi").fontSize(16).setKey("txt");
-    auto* root = h.mount(tree1);
+    auto* root = h.mount(std::move(tree1));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     CHECK(root->layout.width == doctest::Approx(20));  // "Hi" = 2 * 10
 
     auto tree2 = Text("Hello World").fontSize(16).setKey("txt");
-    h.reconciler().reconcile(h.fiber(), tree2);
+    h.reconciler().reconcile(h.fiber(), std::move(tree2));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     CHECK(root->layout.width == doctest::Approx(110));  // "Hello World" = 11 * 10
@@ -225,7 +225,7 @@ TEST_CASE("B6: cleared measurer is not called; layout falls back") {
     h.setMeasurer(&counting);
 
     auto tree = Text("Test").fontSize(12).setKey("txt");
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     CHECK(root->layout.width == doctest::Approx(40));  // 4 * 10
@@ -236,7 +236,7 @@ TEST_CASE("B6: cleared measurer is not called; layout falls back") {
     int callsBefore = counting.calls();
 
     auto tree2 = Text("Testing").fontSize(12).setKey("txt");
-    h.reconciler().reconcile(h.fiber(), tree2);
+    h.reconciler().reconcile(h.fiber(), std::move(tree2));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     // The cleared measurer must not be touched again...

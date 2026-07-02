@@ -427,6 +427,10 @@ private:
         if (inDispatch_ || !pendingUpdate_)
             return;
         pendingUpdate_ = false;
+        // Invariant: lastWidth_/lastHeight_ were set by a prior update() call. A
+        // handler can only fire after the first mount, and the first mount goes
+        // through update() (which records the dimensions), so a deferred update
+        // never reaches here with unset dimensions.
         update(lastWidth_, lastHeight_);
     }
 

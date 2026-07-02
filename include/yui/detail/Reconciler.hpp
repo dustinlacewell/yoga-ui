@@ -33,11 +33,13 @@ public:
     // Mount a VNode tree -> creates fiber tree AND render tree.
     // Returns the root fiber. The render tree root is stored internally.
     // Top-level entry: drains the commit queue (mount effects) before returning.
-    std::unique_ptr<Fiber> mount(const VNode& vnode);
+    // Takes the VNode by rvalue: props are moved through the whole pipeline into
+    // the render nodes (the VNode is fully consumed by reconcile, never read after).
+    std::unique_ptr<Fiber> mount(VNode&& vnode);
 
     // Reconcile existing fiber tree against new VNode tree.
     // Top-level entry: drains the commit queue before returning.
-    void reconcile(Fiber* fiber, const VNode& vnode);
+    void reconcile(Fiber* fiber, VNode&& vnode);
 
     // Walk fiber tree and re-render any dirty components.
     // Returns true if any components were re-rendered.
@@ -52,28 +54,28 @@ public:
 
 private:
     // --- Top-level impls (no drain; the public wrappers drain) ---
-    std::unique_ptr<Fiber> mountImpl(const VNode& vnode);
-    void reconcileImpl(Fiber* fiber, const VNode& vnode);
+    std::unique_ptr<Fiber> mountImpl(VNode&& vnode);
+    void reconcileImpl(Fiber* fiber, VNode&& vnode);
     bool reconcileDirtyComponentsImpl(Fiber* fiber);
 
     // --- Mounting ---
-    std::unique_ptr<Fiber> mountHost(const VNode& vnode, size_t sourcePos,
+    std::unique_ptr<Fiber> mountHost(VNode&& vnode, size_t sourcePos,
                                      Node* renderParent, size_t& renderIndex);
 
-    std::unique_ptr<Fiber> mountComponent(const Component& comp, size_t sourcePos,
+    std::unique_ptr<Fiber> mountComponent(Component&& comp, size_t sourcePos,
                                           Node* renderParent, size_t& renderIndex);
 
-    std::unique_ptr<Fiber> mountChild(const Child& child, size_t sourcePos,
+    std::unique_ptr<Fiber> mountChild(Child&& child, size_t sourcePos,
                                       Node* renderParent, size_t& renderIndex);
 
     // --- Reconciliation ---
     // Tear down the existing root fiber/render node and rebuild from a new VNode
     // whose root primitive type differs from the current one. Mirrors the
     // remount-on-type-mismatch performed by the child path / rerenderComponent.
-    void remountRoot(Fiber* fiber, const VNode& vnode);
-    void reconcileHost(Fiber* fiber, const VNode& vnode);
-    void reconcileComponent(Fiber* fiber, const Component& comp);
-    void reconcileChildren(Fiber* parentFiber, const std::vector<Child>& children,
+    void remountRoot(Fiber* fiber, VNode&& vnode);
+    void reconcileHost(Fiber* fiber, VNode&& vnode);
+    void reconcileComponent(Fiber* fiber, Component&& comp);
+    void reconcileChildren(Fiber* parentFiber, std::vector<Child>&& children,
                            Node* renderParent);
 
     // --- Dirty component re-render ---

@@ -23,7 +23,7 @@ TEST_CASE("Basic layout calculation") {
     Reconciler reconciler;
 
     auto tree = Box().width(100).height(50);
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
 
     root->calculateLayout(100, 50);
@@ -44,7 +44,7 @@ TEST_CASE("flexGrow distributes space") {
                     .width(300)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(300, 100);
 
@@ -62,7 +62,7 @@ TEST_CASE("padding affects child position") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -80,7 +80,7 @@ TEST_CASE("Column layout stacks vertically") {
                        })
                     .width(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 200);
 
@@ -99,7 +99,7 @@ TEST_CASE("Row layout stacks horizontally") {
                     })
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
@@ -119,7 +119,7 @@ TEST_CASE("gap adds space between children") {
                     .gap(10)
                     .width(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 200);
 
@@ -138,7 +138,7 @@ TEST_CASE("justifyContent center") {
                     .height(100)
                     .justifyContent(JustifyContent::Center);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
@@ -155,7 +155,7 @@ TEST_CASE("alignItems center") {
                     .height(100)
                     .alignItems(AlignItems::Center);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
@@ -181,7 +181,7 @@ TEST_CASE("nested layout") {
                        })
                     .width(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -205,7 +205,7 @@ TEST_CASE("margin adds space outside element") {
                     .width(100)
                     .height(100);
 
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(100, 100);
 
@@ -223,7 +223,7 @@ TEST_CASE("layout persists after reconciliation") {
                      .width(200)
                      .height(100);
 
-    auto fiber = reconciler.mount(tree1);
+    auto fiber = reconciler.mount(std::move(tree1));
     auto* root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
@@ -237,7 +237,7 @@ TEST_CASE("layout persists after reconciliation") {
                      .width(200)
                      .height(100);
 
-    reconciler.reconcile(fiber.get(), tree2);
+    reconciler.reconcile(fiber.get(), std::move(tree2));
     root = reconciler.renderRoot();
     root->calculateLayout(200, 100);
 
@@ -257,7 +257,7 @@ TEST_CASE("Box wraps Text child (intrinsic sizing)") {
         .alignItems(AlignItems::Center)
         .setKey("box");
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(YGUndefined, YGUndefined);
 
     // "Hello" = 5 chars * 10px = 50px width, 16px height
@@ -279,7 +279,7 @@ TEST_CASE("Box wraps Text child in Column with FlexStart") {
             .setKey("box")
     }).width(200).alignItems(AlignItems::FlexStart);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(200, YGUndefined);
 
     // Box should wrap text, not stretch to column width
@@ -309,7 +309,7 @@ TEST_CASE("Box wraps Text in Column - real app scenario") {
     .padding(4)
     .gap(4);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -344,7 +344,7 @@ TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
     .padding(4)
     .gap(4);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -383,7 +383,7 @@ TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus patte
     .padding(4)
     .gap(4);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(180, 480);
 
     auto* statusBox = root->children[0].get();
@@ -424,7 +424,7 @@ TEST_CASE("Header Box without explicit width - stretches and centers text") {
     .padding(4)
     .gap(4);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     root->calculateLayout(180, 480);
 
     auto* header = root->children[0].get();
@@ -480,7 +480,7 @@ TEST_CASE("SessionScreen full structure - missing status box") {
     .padding(4)
     .gap(4);
 
-    auto* root = h.mount(tree);
+    auto* root = h.mount(std::move(tree));
     // Simulate real app dimensions
     root->calculateLayout(180, 480);
 

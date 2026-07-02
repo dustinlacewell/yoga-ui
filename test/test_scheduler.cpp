@@ -47,7 +47,7 @@ TEST_CASE("Reconciler drives reconciliation against a DirtyScheduler stub") {
     reconciler.setHost(&sched);  // takes a DirtyScheduler*, no concrete Host needed
 
     auto tree = Box({Text("a").setKey("a")});
-    auto fiber = reconciler.mount(tree);
+    auto fiber = reconciler.mount(std::move(tree));
 
     REQUIRE(fiber != nullptr);
     CHECK(reconciler.renderRoot() != nullptr);
@@ -58,7 +58,7 @@ TEST_CASE("Reconciler drives reconciliation against a DirtyScheduler stub") {
     // host purely through the interface (the stub owns the new root; the
     // reconciler's own renderRoot_ is left empty, exactly the with-host branch).
     auto changed = Text("now-text");
-    reconciler.reconcile(fiber.get(), changed);
+    reconciler.reconcile(fiber.get(), std::move(changed));
 
     CHECK(sched.replacedRoot == 1);
     CHECK(reconciler.renderRoot() == nullptr);  // root handed off to the scheduler

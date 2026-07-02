@@ -348,10 +348,12 @@ static void layoutScrollContent(Node* node) {
 
 BoxNode::BoxNode(YGConfigRef config) : Node(config) {}
 
-void BoxNode::updateProps(const PropsVariant& p) {
-    const auto& newProps = std::get<BoxProps>(p);
+void BoxNode::updateProps(PropsVariant&& p) {
+    // Compute the change predicate against the CURRENT member props BEFORE the
+    // move overwrites them, then move the new props in.
+    auto& newProps = std::get<BoxProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
-    props = newProps;
+    props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
@@ -363,15 +365,16 @@ TextNode::TextNode(YGConfigRef config) : Node(config) {
     setupMeasureFunc();
 }
 
-void TextNode::updateProps(const PropsVariant& p) {
-    const auto& newProps = std::get<TextProps>(p);
+void TextNode::updateProps(PropsVariant&& p) {
+    // Compute both predicates against the CURRENT member props BEFORE the move.
+    auto& newProps = std::get<TextProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
     // The font affects measured width as much as the text/size do; without it in
     // the predicate a `.font()`-only change would not re-mark the Yoga node dirty
     // and would keep a stale measurement (the mis-sized-glyph class of bug).
     bool textChanged = newProps.text != props.text || newProps.fontSize != props.fontSize
                        || newProps.font != props.font;
-    props = newProps;
+    props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
@@ -412,13 +415,15 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
 
 InputNode::InputNode(YGConfigRef config) : Node(config) {}
 
-void InputNode::updateProps(const PropsVariant& p) {
-    const auto& newProps = std::get<InputProps>(p);
+void InputNode::updateProps(PropsVariant&& p) {
+    auto& newProps = std::get<InputProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
-    props = newProps;
+    props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
+    // Read displayText from the MOVED-IN member (props.value), not the moved-from
+    // source (newProps.value is now empty).
     displayText = props.value;
 }
 
@@ -428,10 +433,10 @@ ScrollNode::ScrollNode(YGConfigRef config) : Node(config) {
     YGNodeStyleSetOverflow(yogaNode, YGOverflowScroll);
 }
 
-void ScrollNode::updateProps(const PropsVariant& p) {
-    const auto& newProps = std::get<ScrollProps>(p);
+void ScrollNode::updateProps(PropsVariant&& p) {
+    auto& newProps = std::get<ScrollProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
-    props = newProps;
+    props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
@@ -484,10 +489,10 @@ bool ScrollNode::updateSmooth(float dt) {
 
 CanvasNode::CanvasNode(YGConfigRef config) : Node(config) {}
 
-void CanvasNode::updateProps(const PropsVariant& p) {
-    const auto& newProps = std::get<CanvasProps>(p);
+void CanvasNode::updateProps(PropsVariant&& p) {
+    auto& newProps = std::get<CanvasProps>(p);
     bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
-    props = newProps;
+    props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }

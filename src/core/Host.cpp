@@ -131,10 +131,10 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
                                    "Host::update: root rendered empty");
 
             if (!fiberRoot_) {
-                fiberRoot_ = reconciler_->mount(vnode);
+                fiberRoot_ = reconciler_->mount(std::move(vnode));
                 renderRoot_ = reconciler_->takeRenderRoot();
             } else {
-                reconciler_->reconcile(fiberRoot_.get(), vnode);
+                reconciler_->reconcile(fiberRoot_.get(), std::move(vnode));
             }
         }
 

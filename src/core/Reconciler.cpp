@@ -55,9 +55,11 @@ static bool hasStringKey(const Child& child) {
         [](const auto& c) { return c.hasStringKey(); }, child);
 }
 
-static std::string getStringKey(const Child& child) {
+static const std::string& getStringKey(const Child& child) {
+    // Return a reference into the Child (which outlives the call); callers only
+    // read it, so no copy is made.
     return std::visit(
-        [](const auto& c) -> std::string { return c.key; }, child);
+        [](const auto& c) -> const std::string& { return c.key; }, child);
 }
 
 // Component identity: (target_type, target function-pointer address). The
@@ -149,10 +151,10 @@ struct FiberLookup {
 // Mounting
 // ============================================================================
 
-std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
+std::unique_ptr<Fiber> Reconciler::mount(VNode&& vnode) {
     std::unique_ptr<Fiber> fiber;
     try {
-        fiber = mountImpl(vnode);
+        fiber = mountImpl(std::move(vnode));
     } catch (...) {
         discardCommit();  // half-built tree: drop the queue, never fault a later drain
         throw;
@@ -161,7 +163,7 @@ std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
     return fiber;
 }
 
-std::unique_ptr<Fiber> Reconciler::mountImpl(const VNode& vnode) {
+std::unique_ptr<Fiber> Reconciler::mountImpl(VNode&& vnode) {
     if (vnode.isEmpty) {
         return nullptr;
     }
@@ -169,10 +171,11 @@ std::unique_ptr<Fiber> Reconciler::mountImpl(const VNode& vnode) {
     // The root is always a host node. Mount it without a render parent
     // (the render root is stored in renderRoot_).
     auto rootNode = createNode(vnode.type(), config_);
-    rootNode->updateProps(vnode.props);
+    // Peek identity/ref (const reads) BEFORE moving props into the node.
     rootNode->key = vnode.key;
     rootNode->intKey = vnode.intKey;
     bindRefSlot(rootNode.get(), vnode);
+    rootNode->updateProps(std::move(vnode.props));
 
     auto fiber = std::make_unique<Fiber>();
     fiber->tag = Fiber::Tag::Host;
@@ -186,10 +189,10 @@ std::unique_ptr<Fiber> Reconciler::mountImpl(const VNode& vnode) {
     // Mount children into the root render node
     size_t renderIndex = 0;
     for (size_t i = 0; i < vnode.children.size(); ++i) {
-        const auto& child = vnode.children[i];
+        auto& child = vnode.children[i];
         if (isChildEmpty(child)) continue;
 
-        auto childFiber = mountChild(child, i, fiber->renderNode, renderIndex);
+        auto childFiber = mountChild(std::move(child), i, fiber->renderNode, renderIndex);
         if (childFiber) {
             childFiber->parent = fiber.get();
             fiber->children.push_back(std::move(childFiber));
@@ -199,7 +202,7 @@ std::unique_ptr<Fiber> Reconciler::mountImpl(const VNode& vnode) {
     return fiber;
 }
 
-std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePos,
+std::unique_ptr<Fiber> Reconciler::mountHost(VNode&& vnode, size_t sourcePos,
                                               Node* renderParent, size_t& renderIndex) {
     if (vnode.isEmpty) return nullptr;
 
@@ -211,18 +214,19 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
 
     // Create render node
     auto node = createNode(vnode.type(), config_);
-    node->updateProps(vnode.props);
     node->key = vnode.key;
     node->intKey = vnode.intKey;
     bindRefSlot(node.get(), vnode);
-    fiber->renderNode = node.get();
 
-    // Check for autoFocus before moving ownership
+    // Peek autoFocus (a const read of the props) BEFORE moving props into the node.
     bool wantsAutoFocus = false;
     if (vnode.type() == PrimitiveType::Input) {
         const auto& inputProps = std::get<InputProps>(vnode.props);
         wantsAutoFocus = inputProps.autoFocus.value_or(false);
     }
+
+    node->updateProps(std::move(vnode.props));
+    fiber->renderNode = node.get();
 
     // Insert into render tree
     insertRenderNode(renderParent, std::move(node), renderIndex);
@@ -236,10 +240,10 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     // Mount children — this fiber's renderNode is the render parent for children
     size_t childRenderIndex = 0;
     for (size_t i = 0; i < vnode.children.size(); ++i) {
-        const auto& child = vnode.children[i];
+        auto& child = vnode.children[i];
         if (isChildEmpty(child)) continue;
 
-        auto childFiber = mountChild(child, i, fiber->renderNode, childRenderIndex);
+        auto childFiber = mountChild(std::move(child), i, fiber->renderNode, childRenderIndex);
         if (childFiber) {
             childFiber->parent = fiber.get();
             fiber->children.push_back(std::move(childFiber));
@@ -249,22 +253,23 @@ std::unique_ptr<Fiber> Reconciler::mountHost(const VNode& vnode, size_t sourcePo
     return fiber;
 }
 
-std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t sourcePos,
+std::unique_ptr<Fiber> Reconciler::mountComponent(Component&& comp, size_t sourcePos,
                                                     Node* renderParent, size_t& renderIndex) {
     auto fiber = std::make_unique<Fiber>();
     fiber->tag = Fiber::Tag::Component;
     fiber->key = comp.key;
     fiber->intKey = comp.intKey;
     fiber->sourcePosition = sourcePos;
-    fiber->componentFn = comp.fn;
+    // Stamp identity and copy debugName from comp BEFORE moving comp.fn (identity
+    // is derived from the function target, which the move would empty).
     {
         CompId id = componentIdOf(comp.fn);
         fiber->componentType = id.type;
         fiber->componentTargetPtr = id.ptr;
     }
-    fiber->host = host_;
-
     fiber->debugName = comp.debugName;  // unconditional: feeds always-on hook diagnostics
+    fiber->componentFn = std::move(comp.fn);
+    fiber->host = host_;
 
     // Call the component function. If it throws, discard this never-published
     // fiber (its subscriptions self-unsubscribe via ~Fiber's cleanup path) and
@@ -275,7 +280,7 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
         FiberRenderContext fiberCtx(fiber.get());
         ComponentContext ctx(fiber.get(), host_);
         try {
-            result = comp.fn(ctx);
+            result = fiber->componentFn(ctx);
         } catch (const std::exception& e) {
             fiber->runCleanups();  // unsubscribe anything the partial render registered
             reportError("mountComponent", &e);
@@ -289,7 +294,7 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
 
     // Mount the result — render parent is the SAME as ours (component is invisible)
     if (!result.isEmpty) {
-        auto childFiber = mountHost(result, 0, renderParent, renderIndex);
+        auto childFiber = mountHost(std::move(result), 0, renderParent, renderIndex);
         if (childFiber) {
             childFiber->parent = fiber.get();
             fiber->children.push_back(std::move(childFiber));
@@ -310,14 +315,14 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
     return fiber;
 }
 
-std::unique_ptr<Fiber> Reconciler::mountChild(const Child& child, size_t sourcePos,
+std::unique_ptr<Fiber> Reconciler::mountChild(Child&& child, size_t sourcePos,
                                                 Node* renderParent, size_t& renderIndex) {
     if (isChildEmpty(child)) return nullptr;
 
     if (std::holds_alternative<VNode>(child)) {
-        return mountHost(std::get<VNode>(child), sourcePos, renderParent, renderIndex);
+        return mountHost(std::move(std::get<VNode>(child)), sourcePos, renderParent, renderIndex);
     } else {
-        return mountComponent(std::get<Component>(child), sourcePos, renderParent, renderIndex);
+        return mountComponent(std::move(std::get<Component>(child)), sourcePos, renderParent, renderIndex);
     }
 }
 
@@ -325,9 +330,9 @@ std::unique_ptr<Fiber> Reconciler::mountChild(const Child& child, size_t sourceP
 // Reconciliation
 // ============================================================================
 
-void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
+void Reconciler::reconcile(Fiber* fiber, VNode&& vnode) {
     try {
-        reconcileImpl(fiber, vnode);
+        reconcileImpl(fiber, std::move(vnode));
     } catch (...) {
         discardCommit();  // half-built tree: drop the queue, never fault a later drain
         throw;
@@ -335,7 +340,7 @@ void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
     drainCommit();
 }
 
-void Reconciler::reconcileImpl(Fiber* fiber, const VNode& vnode) {
+void Reconciler::reconcileImpl(Fiber* fiber, VNode&& vnode) {
     if (!fiber || vnode.isEmpty) return;
 
     // Must be a host fiber
@@ -346,19 +351,20 @@ void Reconciler::reconcileImpl(Fiber* fiber, const VNode& vnode) {
     // wrong props variant and throw, so remount instead — mirroring the child
     // path / rerenderComponent, which remount on type mismatch.
     if (fiber->renderNode->type() != vnode.type()) {
-        remountRoot(fiber, vnode);
+        remountRoot(fiber, std::move(vnode));
         return;
     }
 
-    // Update props on the render node
-    fiber->renderNode->updateProps(vnode.props);
+    // Bind the ref (peeks vnode.ref) BEFORE the props/children are moved out.
     bindRefSlot(fiber->renderNode, vnode);
+    // Update props on the render node (moves props out of the VNode)
+    fiber->renderNode->updateProps(std::move(vnode.props));
 
     // Reconcile children
-    reconcileChildren(fiber, vnode.children, fiber->renderNode);
+    reconcileChildren(fiber, std::move(vnode.children), fiber->renderNode);
 }
 
-void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
+void Reconciler::remountRoot(Fiber* fiber, VNode&& vnode) {
     // Transactional: build the NEW tree fully before destroying the old one. If
     // mount() fails for any reason (a callback throwing, bad_alloc, …) we return
     // with the old root still fully intact — no dangling renderRoot_, no
@@ -374,7 +380,7 @@ void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
     // the tree stays intact and the next frame does not fault on a null renderRoot_.
     std::unique_ptr<Fiber> fresh;
     try {
-        fresh = mount(vnode);           // populates renderRoot_ with the new tree
+        fresh = mount(std::move(vnode));  // populates renderRoot_ with the new tree
     } catch (...) {
         renderRoot_ = std::move(oldRenderRoot);
         throw;
@@ -414,34 +420,36 @@ void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
     }
 }
 
-void Reconciler::reconcileHost(Fiber* fiber, const VNode& vnode) {
+void Reconciler::reconcileHost(Fiber* fiber, VNode&& vnode) {
     if (!fiber || !fiber->isHost() || !fiber->renderNode) return;
 
-    // Update props
-    fiber->renderNode->updateProps(vnode.props);
-    bindRefSlot(fiber->renderNode, vnode);
-
-    // Update identity
+    // Update identity + bind ref (peeks) BEFORE moving props/children out.
     fiber->key = vnode.key;
     fiber->intKey = vnode.intKey;
+    bindRefSlot(fiber->renderNode, vnode);
+
+    // Update props (moves props out of the VNode)
+    fiber->renderNode->updateProps(std::move(vnode.props));
 
     // Reconcile children
-    reconcileChildren(fiber, vnode.children, fiber->renderNode);
+    reconcileChildren(fiber, std::move(vnode.children), fiber->renderNode);
 }
 
-void Reconciler::reconcileComponent(Fiber* fiber, const Component& comp) {
+void Reconciler::reconcileComponent(Fiber* fiber, Component&& comp) {
     if (!fiber || !fiber->isComponent()) return;
-    fiber->componentFn = comp.fn;
+    // Stamp identity and copy debugName BEFORE moving comp.fn (identity derives
+    // from the function target, which the move empties).
     {
         CompId id = componentIdOf(comp.fn);
         fiber->componentType = id.type;
         fiber->componentTargetPtr = id.ptr;
     }
     fiber->debugName = comp.debugName;
+    fiber->componentFn = std::move(comp.fn);
     rerenderComponent(fiber);
 }
 
-void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>& children,
+void Reconciler::reconcileChildren(Fiber* parentFiber, std::vector<Child>&& children,
                                     Node* renderParent) {
     // Build lookup from existing fiber children
     FiberLookup lookup;
@@ -464,7 +472,10 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
     std::vector<PlannedSlot> plan;
 
     for (size_t i = 0; i < children.size(); ++i) {
-        const auto& child = children[i];
+        // `child` is now a mutable reference — but every PEEK below (isChildEmpty,
+        // lookup.find, hasIntKey/getIntKey, hasStringKey/getStringKey) runs BEFORE
+        // any move, so nothing reads a moved-from Child.
+        auto& child = children[i];
         if (isChildEmpty(child)) continue;
 
         size_t existingIndex = lookup.find(child, i, parentFiber->children, reused);
@@ -476,15 +487,15 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
             auto& existingFiber = parentFiber->children[existingIndex];
             existingFiber->sourcePosition = i;
 
-            // Update keys
+            // Update keys (peeks, before the move)
             if (hasIntKey(child)) existingFiber->intKey = getIntKey(child);
             if (hasStringKey(child)) existingFiber->key = getStringKey(child);
 
-            // Reconcile based on type
+            // Reconcile based on type — move the payload out of the Child.
             if (std::holds_alternative<VNode>(child)) {
-                reconcileHost(existingFiber.get(), std::get<VNode>(child));
+                reconcileHost(existingFiber.get(), std::move(std::get<VNode>(child)));
             } else {
-                reconcileComponent(existingFiber.get(), std::get<Component>(child));
+                reconcileComponent(existingFiber.get(), std::move(std::get<Component>(child)));
             }
 
             plan.push_back(PlannedSlot{existingIndex, nullptr});
@@ -498,7 +509,7 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
 
             // Use end-of-list renderIndex — we'll rebuild render children after
             size_t dummyRenderIndex = renderParent->children.size();
-            auto newFiber = mountChild(child, i, renderParent, dummyRenderIndex);
+            auto newFiber = mountChild(std::move(child), i, renderParent, dummyRenderIndex);
             if (newFiber) {
                 newFiber->parent = parentFiber;
                 plan.push_back(PlannedSlot{SIZE_MAX, std::move(newFiber)});
@@ -721,14 +732,15 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
         auto& existingChild = fiber->children[0];
         if (existingChild->isHost() && existingChild->renderNode &&
             existingChild->renderNode->type() == result.type()) {
-            reconcileHost(existingChild.get(), result);
+            // result.type() peeked above; safe to move the payload in now.
+            reconcileHost(existingChild.get(), std::move(result));
         } else {
             unmountFiber(existingChild.get(), renderParent);
             commit_.removedRoots.push_back(std::move(existingChild));
             fiber->children.clear();
 
             size_t renderIndex = findRenderIndex(fiber);
-            auto newChild = mountHost(result, 0, renderParent, renderIndex);
+            auto newChild = mountHost(std::move(result), 0, renderParent, renderIndex);
             if (newChild) {
                 newChild->parent = fiber;
                 fiber->children.push_back(std::move(newChild));
@@ -736,7 +748,7 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
         }
     } else {
         size_t renderIndex = findRenderIndex(fiber);
-        auto newChild = mountHost(result, 0, renderParent, renderIndex);
+        auto newChild = mountHost(std::move(result), 0, renderParent, renderIndex);
         if (newChild) {
             newChild->parent = fiber;
             fiber->children.push_back(std::move(newChild));

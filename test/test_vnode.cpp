@@ -2,7 +2,19 @@
 
 #include <yui/core/VNode.hpp>
 
+#include <type_traits>
+
 using namespace yui;
+
+// The move-props-through-reconcile seam only pays off if VNode/Child/PropsVariant
+// have NOEXCEPT moves: a throwing move makes std::vector<VNode>/std::vector<Child>
+// reallocation fall back to COPY, silently defeating the whole optimization. These
+// static_asserts fail the build if any implicit move ctor becomes throwing.
+static_assert(std::is_nothrow_move_constructible_v<VNode>, "VNode move must be noexcept");
+static_assert(std::is_nothrow_move_constructible_v<Child>, "Child move must be noexcept");
+static_assert(std::is_nothrow_move_constructible_v<PropsVariant>, "PropsVariant move must be noexcept");
+static_assert(std::is_nothrow_move_assignable_v<PropsVariant>, "PropsVariant move-assign must be noexcept");
+static_assert(std::is_nothrow_move_constructible_v<Component>, "Component move must be noexcept");
 
 TEST_CASE("Box factory creates box node") {
     VNode node = Box();

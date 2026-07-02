@@ -53,9 +53,11 @@ public:
     Reconciler& reconciler() { return reconciler_; }
     YGConfigRef config() const { return config_.get(); }
 
-    // Mount a tree and return the render root (owned by the reconciler).
-    Node* mount(const VNode& tree) {
-        fiber_ = reconciler_.mount(tree);
+    // Mount a tree and return the render root (owned by the reconciler). Takes
+    // the tree by value and moves it into the reconciler's rvalue mount(), so
+    // callers passing a named lvalue still compile (the copy stops here).
+    Node* mount(VNode tree) {
+        fiber_ = reconciler_.mount(std::move(tree));
         return reconciler_.renderRoot();
     }
 
