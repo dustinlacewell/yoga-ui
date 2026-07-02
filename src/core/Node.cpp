@@ -451,7 +451,7 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
     float maxWidth = (!wrapOn || widthMode == YGMeasureModeUndefined) ? 0 : width;
     // Measure in the node's requested font face (empty ⇒ default) so the measured
     // size matches what drawText will render with.
-    const std::string& font = textNode->props.font.value_or(std::string{});
+    std::string_view font = textNode->props.font ? std::string_view(*textNode->props.font) : std::string_view{};
 
     // The host's text measurer lives in the per-host Yoga config context. Recover
     // it from this node's config; wrappedRuns falls back to the heuristic when

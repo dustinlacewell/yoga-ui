@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace yui {
 class CanvasNode;
@@ -30,9 +31,12 @@ struct Rect {
 class IRenderBackend : public ITextMeasurer {
 public:
     // Frame bracket around one renderTree walk. endFrame() restores every
-    // embedder-observable backend state touched during the frame, including a
-    // clip stack left unbalanced when the walk's exception backstop fired
-    // mid-frame.
+    // embedder-observable backend state the frame's primitives touched,
+    // including a clip stack left unbalanced when the walk's exception backstop
+    // fired mid-frame — so an embedder can interleave its own drawing around a
+    // render() without re-asserting state. What that covers is backend-specific
+    // and documented at each renderer's render() (NVG: the nanovg state stack,
+    // no direct GL calls; SDL: draw color, blend mode, clip rect, target).
     virtual void beginFrame() = 0;
     virtual void endFrame() = 0;
 
@@ -53,8 +57,11 @@ public:
     // One pre-wrapped run, top-left anchored at (x, y). `font` names a
     // registered face (empty => the backend default), the same contract as
     // ITextMeasurer::measure — so a run draws in the face it was measured in.
+    // The run stays std::string because SDL_ttf requires a null-terminated
+    // UTF-8 string (and the walk materializes each run anyway); the font is a
+    // view, resolved against the backend's registry without allocating.
     virtual void drawTextRun(const std::string& run, float x, float y, float fontSize, uint32_t color,
-                             const std::string& font) = 0;
+                             std::string_view font) = 0;
 
     // Hand the node's opaque draw context to the user callback with the origin
     // translated to (r.x, r.y). Must isolate a throwing callback: report it,

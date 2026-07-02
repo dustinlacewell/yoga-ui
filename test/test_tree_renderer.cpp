@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace yui;
@@ -77,14 +78,14 @@ public:
     void popClip() override { calls.push_back(Call(Call::Kind::PopClip)); }
 
     void drawTextRun(const std::string& run, float x, float y, float fontSize, uint32_t color,
-                     const std::string& font) override {
+                     std::string_view font) override {
         Call c(Call::Kind::TextRun);
         c.text = run;
         c.x = x;
         c.y = y;
         c.fontSize = fontSize;
         c.color = color;
-        c.font = font;
+        c.font = std::string(font);
         calls.push_back(std::move(c));
     }
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <exception>
 #include <string>
+#include <string_view>
 
 namespace yui::render {
 namespace {
@@ -55,7 +56,7 @@ private:
 
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
     void drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
-                   const std::string& font);
+                   std::string_view font);
 
     IRenderBackend& backend_;
     const ErrorHandler& onError_;
@@ -119,7 +120,9 @@ void TreeWalker::drawText(const TextNode* node, float x, float y) {
     if (p.text.empty())
         return;
     auto s = resolveText(p, node->hovered, node->focused);
-    const std::string font = p.font.value_or(std::string{});
+    // A view over the prop (empty ⇒ default face): no per-node-per-frame
+    // std::string temporary on the draw path.
+    std::string_view font = p.font ? std::string_view(*p.font) : std::string_view{};
 
     // Wrap and draw in the CONTENT box: Yoga hands the measure callback the
     // content width (available minus the node's own padding+border), so paint
@@ -168,7 +171,7 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
     if (s.borderWidth > 0)
         backend_.strokeRect(r, s.borderColor, s.borderRadius, s.borderWidth);
 
-    const std::string font = node->props.font.value_or(std::string{});
+    std::string_view font = node->props.font ? std::string_view(*node->props.font) : std::string_view{};
     InputRun run = inputDisplayRun(*node, s.color);
     // Blink is node state driven by update(dt), not a wall clock — the renderer
     // just paints what the node says (see InputNode::updateBlink).
@@ -193,7 +196,7 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
 }
 
 void TreeWalker::drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
-                           const std::string& font) {
+                           std::string_view font) {
     namespace rd = render_defaults;
     float caretX = content.x + rd::kInputTextPad;
     // Advance past the rendered text; the run is the masked display string, so

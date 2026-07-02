@@ -34,7 +34,7 @@ void NvgRenderer::registerFont(const std::string& name, int existingHandle) {
         fonts_[name] = existingHandle;
 }
 
-void NvgRenderer::selectFont(const std::string& name) const {
+void NvgRenderer::selectFont(std::string_view name) const {
     // Named face if registered; otherwise the renderer default (fontId_, else
     // nanovg's "default"). Keeps draw and measure on the SAME face for a node.
     if (!name.empty()) {
@@ -65,7 +65,7 @@ float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_
     }
 
     nvgFontSize(vg_, fontSize);
-    selectFont(std::string(font));
+    selectFont(font);
     // Explicit align: measurement must never inherit whatever align the last
     // draw left on the shared context. The return value is the advance
     // (align-independent), never the string's ink bounds.
@@ -79,7 +79,7 @@ FontMetrics NvgRenderer::fontMetrics(float fontSize, std::string_view font) cons
     }
 
     nvgFontSize(vg_, fontSize);
-    selectFont(std::string(font));
+    selectFont(font);
     float ascender = 0, descender = 0, lineHeight = 0;
     nvgTextMetrics(vg_, &ascender, &descender, &lineHeight);
     // nanovg reports the descender negative (below baseline); FontMetrics
@@ -151,7 +151,7 @@ void NvgRenderer::popClip() {
 }
 
 void NvgRenderer::drawTextRun(const std::string& run, float x, float y, float fontSize, uint32_t color,
-                              const std::string& font) {
+                              std::string_view font) {
     nvgFontSize(vg_, fontSize);
     selectFont(font);
     nvgFillColor(vg_, toNvgColor(color));

@@ -2,9 +2,11 @@
 
 #include "../core/ErrorHandler.hpp"
 #include "../core/Node.hpp"
+#include "../detail/TransparentStringHash.hpp"
 #include "../render/Backend.hpp"
 
 #include <exception>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,6 +31,13 @@ public:
     // Render a node tree: frame bracket around the neutral walk. noexcept
     // backstop: rendering runs inside the platform's draw callback (a C
     // boundary), so a throw must never escape.
+    //
+    // Embedder contract: call between your nvgBeginFrame/nvgEndFrame. After
+    // render() returns, the nanovg context state (transform, scissor, paints,
+    // font, text align) is exactly as it was on entry — beginFrame/endFrame
+    // bracket the walk in one frame-wide nvgSave/nvgRestore. yui issues no GL
+    // calls of its own: GL state changes only inside nanovg's deferred flush,
+    // at the embedder's own nvgEndFrame.
     void render(Node* root) noexcept;
 
     // ITextMeasurer primitives, backed by this renderer's nanovg context/font.
@@ -55,7 +64,7 @@ public:
     void pushClip(const render::Rect& r, float radius) override;
     void popClip() override;
     void drawTextRun(const std::string& run, float x, float y, float fontSize, uint32_t color,
-                     const std::string& font) override;
+                     std::string_view font) override;
     void drawCanvas(const CanvasNode& node, const render::Rect& r) override;
 
 private:
@@ -68,7 +77,7 @@ private:
     // Select the nanovg face for a (possibly empty) font name: a registered name
     // → its handle; empty/unknown → the default (fontId_, else nvg "default").
     // Shared by drawTextRun/measure so draw and measure never diverge.
-    void selectFont(const std::string& name) const;
+    void selectFont(std::string_view name) const;
 
     NVGcontext* vg_;
     int fontId_;
@@ -80,8 +89,9 @@ private:
 
     // Named font registry (name → nanovg handle). Resolved by selectFont; the
     // handles are owned by vg_ and die with it. Read-only in measure()/selectFont
-    // (const), populated only by registerFont.
-    std::unordered_map<std::string, int> fonts_;
+    // (const), populated only by registerFont. Transparent hash/equality so the
+    // per-frame selectFont(string_view) lookup never allocates a key.
+    std::unordered_map<std::string, int, yui::detail::TransparentStringHash, std::equal_to<>> fonts_;
 };
 
 }  // namespace nvg

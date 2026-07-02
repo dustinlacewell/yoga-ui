@@ -46,7 +46,7 @@ inline FontMetrics fallbackFontMetrics(float fontSize, std::string_view font = {
 // fallbackFontMetrics, so the fallback wraps exactly like a real measurer.
 // maxWidth (0 = no limit) is the wrapping constraint. Defined out-of-line in
 // src/render/Measure.cpp.
-Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth, const std::string& font = {});
+Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth, std::string_view font = {});
 
 // Backend-provided text measurement. A host installs one of these via
 // Host::setTextMeasurer; it is reached from a node's measure callback through
@@ -84,7 +84,7 @@ struct ITextMeasurer {
     // measure and paint agree by construction. Width is the widest wrapped run;
     // height is (#runs * lineHeight). Defined out-of-line in
     // src/render/Measure.cpp.
-    Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const;
+    Size measure(const std::string& text, float fontSize, float maxWidth, std::string_view font) const;
 
     // Advance width of ONE run — no wrapping, and `run` must not contain
     // newlines. This is the primitive the shared wrapping layer is built on;

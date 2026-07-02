@@ -1,6 +1,7 @@
 #include "yui/sdl/SdlRenderer.hpp"
 
 #include "yui/render/TreeRenderer.hpp"
+#include "yui/sdl/detail/GfxClamp.hpp"
 #include "yui/sdl/detail/SdlScopes.hpp"
 
 #include <algorithm>
@@ -30,7 +31,7 @@ SdlRenderer::SdlRenderer(SDL_Renderer* renderer, const std::string& fontPath, in
     // name (what an unset Text/Input `.font` resolves to).
     fonts_[std::string{}] = FontFace{fontPath, {}};
     // Pre-load the default base font.
-    getFont(std::string{}, baseFontSize);
+    getFont(std::string_view{}, baseFontSize);
 }
 
 void SdlRenderer::registerFont(const std::string& name, const std::string& path) {
@@ -57,14 +58,14 @@ SdlRenderer::~SdlRenderer() {
     fonts_.clear();
 }
 
-TTF_Font* SdlRenderer::getFont(const std::string& font, int size) const {
+TTF_Font* SdlRenderer::getFont(std::string_view font, int size) const {
     if (size < 1)
         size = 1;
 
     // Resolve the named face; fall back to the default ("") for empty/unknown.
     auto faceIt = fonts_.find(font);
     if (faceIt == fonts_.end())
-        faceIt = fonts_.find(std::string{});
+        faceIt = fonts_.find(std::string_view{});
     if (faceIt == fonts_.end())
         return nullptr;
     const FontFace& face = faceIt->second;
@@ -84,7 +85,7 @@ float SdlRenderer::measureRun(std::string_view run, float fontSize, std::string_
     if (run.empty())
         return 0;
 
-    TTF_Font* fontPtr = getFont(std::string(font), static_cast<int>(fontSize + 0.5f));
+    TTF_Font* fontPtr = getFont(font, static_cast<int>(fontSize + 0.5f));
     if (!fontPtr)
         return fallbackMeasureRun(run, fontSize, font);
 
@@ -96,7 +97,7 @@ float SdlRenderer::measureRun(std::string_view run, float fontSize, std::string_
 }
 
 FontMetrics SdlRenderer::fontMetrics(float fontSize, std::string_view font) const {
-    TTF_Font* fontPtr = getFont(std::string(font), static_cast<int>(fontSize + 0.5f));
+    TTF_Font* fontPtr = getFont(font, static_cast<int>(fontSize + 0.5f));
     if (!fontPtr)
         return fallbackFontMetrics(fontSize, font);
 
@@ -117,6 +118,10 @@ void SdlRenderer::render(Node* root) noexcept {
 
 void SdlRenderer::beginFrame() {
     clipStack_.clear();
+    // Capture the embedder's draw state; every primitive overwrites color and
+    // blend mode as it goes, and endFrame puts these back.
+    SDL_GetRenderDrawColor(renderer_, &preFrame_.r, &preFrame_.g, &preFrame_.b, &preFrame_.a);
+    SDL_GetRenderDrawBlendMode(renderer_, &preFrame_.blend);
 }
 
 void SdlRenderer::endFrame() {
@@ -125,6 +130,10 @@ void SdlRenderer::endFrame() {
     while (!clipStack_.empty()) {
         popClip();
     }
+    // Hand the renderer back with the draw state it arrived with (the embedder
+    // contract on render()).
+    SDL_SetRenderDrawColor(renderer_, preFrame_.r, preFrame_.g, preFrame_.b, preFrame_.a);
+    SDL_SetRenderDrawBlendMode(renderer_, preFrame_.blend);
 }
 
 void SdlRenderer::fillRect(const render::Rect& r, uint32_t color, float radius) {
@@ -165,7 +174,7 @@ void SdlRenderer::popClip() {
 }
 
 void SdlRenderer::drawTextRun(const std::string& run, float x, float y, float fontSize, uint32_t color,
-                              const std::string& font) {
+                              std::string_view font) {
     if (run.empty())
         return;
 
@@ -243,25 +252,33 @@ void SdlRenderer::drawRoundedRect(float x, float y, float w, float h, float radi
     Uint8 b = (color >> 8) & 0xFF;
     Uint8 a = color & 0xFF;
 
-    Sint16 x1 = static_cast<Sint16>(x);
-    Sint16 y1 = static_cast<Sint16>(y);
-    Sint16 x2 = static_cast<Sint16>(x + w);
-    Sint16 y2 = static_cast<Sint16>(y + h);
-    Sint16 rad = static_cast<Sint16>(std::min(radius, std::min(w, h) / 2));
+    Sint16 rad = detail::clampToGfxCoord(std::min(radius, std::min(w, h) / 2));
+
+    if (rad <= 0 && filled) {
+        // Square fills take SDL's float rect path: exclusive right/bottom edges
+        // match nanovg (SDL2_gfx is endpoint-inclusive, one pixel larger), and
+        // float coordinates sidestep the Sint16 range entirely.
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, r, g, b, a);
+        SDL_FRect rect{x, y, w, h};
+        SDL_RenderFillRectF(renderer_, &rect);
+        return;
+    }
+
+    // The SDL2_gfx paths take Sint16 coordinates; saturate (clampToGfxCoord)
+    // rather than let the cast wrap coordinates beyond ±32767 (tall scrolled
+    // content, large canvases) back into view as garbage geometry.
+    Sint16 x1 = detail::clampToGfxCoord(x);
+    Sint16 y1 = detail::clampToGfxCoord(y);
+    Sint16 x2 = detail::clampToGfxCoord(x + w);
+    Sint16 y2 = detail::clampToGfxCoord(y + h);
 
     if (rad <= 0) {
-        // No radius - use simple rect
-        if (filled) {
-            boxRGBA(renderer_, x1, y1, x2, y2, r, g, b, a);
-        } else {
-            rectangleRGBA(renderer_, x1, y1, x2, y2, r, g, b, a);
-        }
+        rectangleRGBA(renderer_, x1, y1, x2, y2, r, g, b, a);
+    } else if (filled) {
+        roundedBoxRGBA(renderer_, x1, y1, x2, y2, rad, r, g, b, a);
     } else {
-        if (filled) {
-            roundedBoxRGBA(renderer_, x1, y1, x2, y2, rad, r, g, b, a);
-        } else {
-            roundedRectangleRGBA(renderer_, x1, y1, x2, y2, rad, r, g, b, a);
-        }
+        roundedRectangleRGBA(renderer_, x1, y1, x2, y2, rad, r, g, b, a);
     }
 }
 
