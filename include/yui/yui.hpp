@@ -1,6 +1,7 @@
 #pragma once
 
 // Core
+#include <yui/core/Clipboard.hpp>
 #include <yui/core/ComponentContext.hpp>
 #include <yui/core/EditCommand.hpp>
 #include <yui/core/Event.hpp>

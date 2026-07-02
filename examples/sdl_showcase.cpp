@@ -112,6 +112,7 @@ class SdlHost : public Host {
 public:
     SdlHost(SDL_Renderer* renderer, const std::string& fontPath) : renderer_(renderer, fontPath, 14) {
         setTextMeasurer(&renderer_);
+        setClipboard(&clipboard_);
         setRender(buildUI);
     }
 
@@ -121,6 +122,7 @@ public:
     }
 
     sdl::SdlRenderer renderer_;
+    sdl::SdlClipboard clipboard_;
 };
 
 // ============================================================================
@@ -265,6 +267,12 @@ int main(int argc, char* argv[]) {
                                 host.focusNext();
                         } else if (event.key.keysym.sym == SDLK_a && (mods & KeyMod_Ctrl)) {
                             host.handleEditCommand(EditCommand::SelectAll);
+                        } else if (event.key.keysym.sym == SDLK_c && (mods & KeyMod_Ctrl)) {
+                            host.handleEditCommand(EditCommand::Copy);
+                        } else if (event.key.keysym.sym == SDLK_x && (mods & KeyMod_Ctrl)) {
+                            host.handleEditCommand(EditCommand::Cut);
+                        } else if (event.key.keysym.sym == SDLK_v && (mods & KeyMod_Ctrl)) {
+                            host.handleEditCommand(EditCommand::Paste);
                         } else if (auto cmd = editCommandFor(event.key.keysym.sym)) {
                             // Shift extends the selection: moves shift only the
                             // caret, leaving the anchor (deletes ignore the flag).

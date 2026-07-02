@@ -12,7 +12,7 @@ namespace yui {
 //   - C1 (landed):    MoveLeft, MoveRight, MoveLineStart, MoveLineEnd,
 //     DeleteBackward, DeleteForward.
 //   - C3 (landed):    SelectAll (and the `extend` flag on moves).
-//   - C5 (clipboard): Cut, Copy, Paste.
+//   - C5 (landed):    Cut, Copy, Paste (through the IClipboard seam).
 //   - C6 (multiline): MoveUp, MoveDown, InsertNewline.
 // An unimplemented command is NOT consumed (handleEditCommand returns false),
 // so shims can fall through until its commit arrives.

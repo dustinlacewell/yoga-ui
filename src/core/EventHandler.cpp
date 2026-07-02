@@ -1,5 +1,6 @@
 #include <yui/core/EventHandler.hpp>
 
+#include <yui/core/Clipboard.hpp>
 #include <yui/core/NodeRef.hpp>  // absoluteRect (scrollbar-local press coords)
 #include <yui/core/RenderDefaults.hpp>
 #include <yui/core/Utf8.hpp>
@@ -989,8 +990,9 @@ struct EditOutcome {
 // the MOVING end (see InputNode::selectionAnchor): an extended (Shift) move
 // changes only the caret, leaving the anchor to span the selection. A move
 // already at its bound is still consumed: the key targeted the focused input
-// either way.
-EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend) {
+// either way. `clipboard` is what Cut/Copy/Paste read/write; nullptr means
+// none is installed (those commands report unconsumed).
+EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend, IClipboard* clipboard) {
     std::string& s = input.displayText;
     // Land the caret: an unextended move collapses the anchor onto it, an
     // extended one leaves the anchor as the selection's fixed end.
@@ -1064,13 +1066,62 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend) {
         s.erase(input.caret, utf8::nextCodePoint(s, input.caret) - input.caret);
         return {true, true};
     }
-    // Declared ahead of their commits (see EditCommand.hpp): Cut/Copy/Paste
-    // are C5, MoveUp/MoveDown/InsertNewline are C6 (multiline).
+    case EditCommand::Copy: {
+        // Nothing selected: nothing to copy — do NOT clobber the clipboard's
+        // current contents. Unconsumed, so a shim could route the key elsewhere.
+        if (!input.hasSelection())
+            return {};
+        // Password copy is REFUSED (browser parity): the key is consumed so it
+        // cannot leak elsewhere, but the secret never reaches the clipboard.
+        if (input.props.password.value_or(false))
+            return {true, false};
+        // No clipboard installed: unconsumed, same fall-through contract.
+        if (!clipboard)
+            return {};
+        clipboard->setText(s.substr(input.selBegin(), input.selEnd() - input.selBegin()));
+        return {true, false};
+    }
+    case EditCommand::Cut: {
+        // Password cut is refused whole (browser parity): neither the copy nor
+        // the delete half runs — the secret stays put and off the clipboard.
+        if (input.props.password.value_or(false))
+            return {true, false};
+        if (!input.hasSelection())
+            return {};
+        // No clipboard to receive the text ⇒ do NOT delete either: cutting into
+        // the void would destroy text with nowhere to put it. Unconsumed.
+        if (!clipboard)
+            return {};
+        // Copy-then-delete: the clipboard gets the selection, then the erase
+        // collapses caret and anchor onto its start.
+        clipboard->setText(s.substr(input.selBegin(), input.selEnd() - input.selBegin()));
+        eraseSelection();
+        return {true, true};
+    }
+    case EditCommand::Paste: {
+        if (!clipboard)
+            return {};
+        // Single-line sanitize: STRIP newlines (LF and CR) rather than mapping
+        // them to spaces — the standard single-line input behavior. Multiline
+        // routing arrives with C6.
+        std::string text = clipboard->getText();
+        std::erase_if(text, [](char c) { return c == '\n' || c == '\r'; });
+        // Pasting nothing is consumed but changes nothing — an empty paste is
+        // not a delete, so an active selection survives it.
+        if (text.empty())
+            return {true, false};
+        // Pasting over a selection REPLACES it (same rule as handleTextInput).
+        if (input.hasSelection())
+            eraseSelection();
+        s.insert(input.caret, text);
+        input.caret += text.size();
+        input.selectionAnchor = input.caret;
+        return {true, true};
+    }
+    // Declared ahead of their commit (see EditCommand.hpp):
+    // MoveUp/MoveDown/InsertNewline are C6 (multiline).
     case EditCommand::MoveUp:
     case EditCommand::MoveDown:
-    case EditCommand::Cut:
-    case EditCommand::Copy:
-    case EditCommand::Paste:
     case EditCommand::InsertNewline:
         return {};
     }
@@ -1079,15 +1130,14 @@ EditOutcome applyEditCommand(InputNode& input, EditCommand cmd, bool extend) {
 
 }  // namespace
 
-bool EventHandler::handleEditCommand(EditCommand cmd, bool extend,
-                                     IClipboard* /*clipboard — C5 (cut/copy/paste)*/) noexcept {
+bool EventHandler::handleEditCommand(EditCommand cmd, bool extend, IClipboard* clipboard) noexcept {
     // Same liveness gate as handleTextInput: no focused (live) Input means no
     // edit — and NOT consumed, so the shim can route the key elsewhere.
     InputNode* focused = liveFocusedInput();
     if (!focused)
         return false;
 
-    EditOutcome outcome = applyEditCommand(*focused, cmd, extend);
+    EditOutcome outcome = applyEditCommand(*focused, cmd, extend, clipboard);
     if (!outcome.handled)
         return false;
 

@@ -15,10 +15,10 @@
 
 namespace yui {
 
-// Platform clipboard seam — defined when Cut/Copy/Paste land (C5). Accepted by
-// handleEditCommand already so its signature is stable across the editing
-// commits.
-class IClipboard;
+// Platform clipboard seam (see Clipboard.hpp). Received per-call by
+// handleEditCommand and never stored here — lifetime management lives entirely
+// on the Host/IClipboard link.
+struct IClipboard;
 
 // Handles event dispatch and hit testing
 class EventHandler {
@@ -55,7 +55,8 @@ public:
     // Input consumed it (no focused Input -> false, so platform shims can route
     // the key elsewhere). `extend` (Shift-held) makes Move* commands move only
     // the caret, leaving the selection anchor to span the selection;
-    // `clipboard` is accepted now but unused until Cut/Copy/Paste land (C5).
+    // `clipboard` is the platform clipboard Cut/Copy/Paste read/write (nullptr
+    // means none is installed: those commands report unconsumed).
     bool handleEditCommand(EditCommand cmd, bool extend = false, IClipboard* clipboard = nullptr) noexcept;
 
     // Get the currently hovered node (for cursor changes, etc.). Validates the

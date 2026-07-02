@@ -216,11 +216,31 @@ Component TodoApp() {
     };
 }
 
+// GLFW system clipboard: the IClipboard seam over glfwGet/SetClipboardString.
+// Lives in the example, not yui/nvg — the nvg module is windowing-agnostic and
+// the clipboard belongs to the windowing layer (it needs a GLFWwindow*).
+class GlfwClipboard : public IClipboard {
+public:
+    explicit GlfwClipboard(GLFWwindow* window) : window_(window) {}
+
+    std::string getText() override {
+        // NULL when the clipboard is empty or holds non-text content.
+        const char* text = glfwGetClipboardString(window_);
+        return text ? std::string(text) : std::string();
+    }
+
+    void setText(const std::string& text) override { glfwSetClipboardString(window_, text.c_str()); }
+
+private:
+    GLFWwindow* window_;
+};
+
 // Host
 class TodoHost : public Host {
 public:
-    TodoHost(NVGcontext* vg, int fontId) : renderer_(vg, fontId) {
+    TodoHost(NVGcontext* vg, int fontId, GLFWwindow* window) : renderer_(vg, fontId), clipboard_(window) {
         setTextMeasurer(&renderer_);
+        setClipboard(&clipboard_);
         setRender(TodoApp());
     }
 
@@ -231,6 +251,7 @@ public:
 
 private:
     nvg::NvgRenderer renderer_;
+    GlfwClipboard clipboard_;
 };
 
 // Globals for callbacks
@@ -347,6 +368,12 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
                     g_host->focusNext();
             } else if (key == GLFW_KEY_A && (keyMod & KeyMod_Ctrl)) {
                 g_host->handleEditCommand(EditCommand::SelectAll);
+            } else if (key == GLFW_KEY_C && (keyMod & KeyMod_Ctrl)) {
+                g_host->handleEditCommand(EditCommand::Copy);
+            } else if (key == GLFW_KEY_X && (keyMod & KeyMod_Ctrl)) {
+                g_host->handleEditCommand(EditCommand::Cut);
+            } else if (key == GLFW_KEY_V && (keyMod & KeyMod_Ctrl)) {
+                g_host->handleEditCommand(EditCommand::Paste);
             } else if (auto cmd = editCommandFor(key)) {
                 // Shift extends the selection: moves shift only the caret,
                 // leaving the anchor (deletes ignore the flag).
@@ -425,7 +452,7 @@ int main() {
             s.todos.push_back({s.nextId++, "Have fun!", true});
         });
 
-        TodoHost host(vg, fontId);
+        TodoHost host(vg, fontId, window);
         g_host = &host;
 
         glfwSetCursorPosCallback(window, cursorPosCallback);

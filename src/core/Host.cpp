@@ -36,6 +36,11 @@ Host::~Host() {
     if (installedMeasurer_)
         installedMeasurer_->detachHost(this);
     installedMeasurer_ = nullptr;
+    // Same deregistration for the clipboard, so ~IClipboard never nulls a
+    // member of this freed host.
+    if (clipboard_)
+        clipboard_->detachHost(this);
+    clipboard_ = nullptr;
     *alive_ = false;
     if (fiberRoot_) {
         fiberRoot_->willUnmount();

@@ -1,3 +1,4 @@
+#include "TestClipboard.hpp"
 #include "TestMeasurer.hpp"
 #include "doctest.h"
 
@@ -3635,4 +3636,328 @@ TEST_CASE("Exception - a throwing onFocus during Tab keeps flags and slot consis
     CHECK(events.getFocusedNode() == b);
     CHECK(a->focused == false);
     CHECK(b->focused == true);
+}
+
+// ============================================================================
+// Clipboard (6c C5): Cut/Copy/Paste through the IClipboard seam. Password
+// copy/cut is refused; a null clipboard never destroys text; paste strips
+// newlines for the single-line input. The Host/IClipboard link's liveness
+// mirrors the ITextMeasurer teardown contract (see B6 in test_measure.cpp).
+// ============================================================================
+
+TEST_CASE("Clipboard - Copy places the selection on the clipboard; text and selection intact") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    test::TestClipboard clip;
+
+    // Select [2,5) = "llo": caret to 2, then extend to the end.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+
+    CHECK(events.handleEditCommand(EditCommand::Copy, false, &clip) == true);
+    CHECK(clip.text() == "llo");
+    // Copy neither edits nor collapses: the text and the selection survive.
+    CHECK(input->displayText == "hello");
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 5);
+}
+
+TEST_CASE("Clipboard - Copy with no selection is unconsumed and never clobbers the clipboard") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    test::TestClipboard clip("keep");
+
+    events.handleEditCommand(EditCommand::MoveRight);  // collapsed caret at 1
+    CHECK(events.handleEditCommand(EditCommand::Copy, false, &clip) == false);
+    CHECK(clip.text() == "keep");
+    CHECK(clip.sets() == 0);
+    CHECK(input->displayText == "hello");
+}
+
+TEST_CASE("Clipboard - password Copy and Cut are refused but consumed; Paste is allowed") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "secret");
+    input->props.password = true;
+    int changes = 0;
+    input->props.onChange = [&](const std::string&) { ++changes; };
+    test::TestClipboard clip("attacker");
+
+    events.handleEditCommand(EditCommand::SelectAll);
+
+    // Refused but CONSUMED (browser parity): the keystroke never leaks
+    // elsewhere, and the secret never reaches the clipboard.
+    CHECK(events.handleEditCommand(EditCommand::Copy, false, &clip) == true);
+    CHECK(clip.sets() == 0);
+    CHECK(clip.text() == "attacker");
+
+    // Cut refuses BOTH halves: no copy, and no delete either.
+    CHECK(events.handleEditCommand(EditCommand::Cut, false, &clip) == true);
+    CHECK(clip.sets() == 0);
+    CHECK(input->displayText == "secret");
+    CHECK(changes == 0);
+
+    // Pasting INTO a password is fine — only the outbound direction leaks.
+    // The refused Cut left the SelectAll selection intact, so paste replaces it.
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &clip) == true);
+    CHECK(input->displayText == "attacker");
+    CHECK(changes == 1);
+}
+
+TEST_CASE("Clipboard - no clipboard installed: Copy/Cut/Paste unconsumed, nothing destroyed") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+
+    // Select [2,5), then drive all three with the default null clipboard.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+
+    CHECK(events.handleEditCommand(EditCommand::Copy) == false);
+    // Cut with nowhere to put the text must NOT delete it.
+    CHECK(events.handleEditCommand(EditCommand::Cut) == false);
+    CHECK(events.handleEditCommand(EditCommand::Paste) == false);
+    CHECK(input->displayText == "hello");
+    CHECK(input->selBegin() == 2);
+    CHECK(input->selEnd() == 5);
+}
+
+TEST_CASE("Clipboard - Cut copies the selection, removes it, and fires onChange once") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    int changes = 0;
+    std::string lastChange;
+    input->props.onChange = [&](const std::string& s) {
+        ++changes;
+        lastChange = s;
+    };
+    test::TestClipboard clip;
+
+    // Select [2,5) = "llo".
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveLineEnd, true);
+
+    CHECK(events.handleEditCommand(EditCommand::Cut, false, &clip) == true);
+    CHECK(clip.text() == "llo");
+    CHECK(input->displayText == "he");
+    CHECK(input->caret == 2);
+    CHECK(input->selectionAnchor == 2);
+    CHECK(!input->hasSelection());
+    CHECK(changes == 1);
+    CHECK(lastChange == "he");
+}
+
+TEST_CASE("Clipboard - Cut with no selection is unconsumed and leaves the clipboard alone") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    test::TestClipboard clip("keep");
+
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(events.handleEditCommand(EditCommand::Cut, false, &clip) == false);
+    CHECK(clip.text() == "keep");
+    CHECK(clip.sets() == 0);
+    CHECK(input->displayText == "hello");
+}
+
+TEST_CASE("Clipboard - Paste inserts at the caret and fires onChange once") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    int changes = 0;
+    input->props.onChange = [&](const std::string&) { ++changes; };
+    test::TestClipboard clip("XY");
+
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &clip) == true);
+    CHECK(input->displayText == "heXYllo");
+    // The caret (and collapsed anchor) land after the pasted text.
+    CHECK(input->caret == 4);
+    CHECK(input->selectionAnchor == 4);
+    CHECK(changes == 1);
+}
+
+TEST_CASE("Clipboard - Paste replaces the selection") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    test::TestClipboard clip("Z");
+
+    // Select [1,4) = "ell".
+    events.handleEditCommand(EditCommand::MoveRight);
+    for (int i = 0; i < 3; ++i)
+        events.handleEditCommand(EditCommand::MoveRight, true);
+
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &clip) == true);
+    CHECK(input->displayText == "hZo");
+    CHECK(input->caret == 2);
+    CHECK(!input->hasSelection());
+}
+
+TEST_CASE("Clipboard - Paste strips newlines for the single-line input") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "");
+    test::TestClipboard clip("a\nb\r\nc");
+
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &clip) == true);
+    CHECK(input->displayText == "abc");
+    CHECK(input->caret == 3);
+}
+
+TEST_CASE("Clipboard - pasting an empty clipboard is a consumed no-op; the selection survives") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+    int changes = 0;
+    input->props.onChange = [&](const std::string&) { ++changes; };
+
+    events.handleEditCommand(EditCommand::SelectAll);
+
+    test::TestClipboard empty;
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &empty) == true);
+    CHECK(input->displayText == "hello");
+    CHECK(input->hasSelection());  // an empty paste is not a delete
+    CHECK(changes == 0);
+
+    // A newline-only clipboard sanitizes down to empty: the same no-op.
+    test::TestClipboard newlines("\r\n");
+    CHECK(events.handleEditCommand(EditCommand::Paste, false, &newlines) == true);
+    CHECK(input->displayText == "hello");
+    CHECK(changes == 0);
+}
+
+// ---------------------------------------------------------------------------
+// C5 liveness matrix: the Host/IClipboard link is self-managed in both
+// directions (either object may die first), mirroring the ITextMeasurer
+// teardown tests. These go through Host::setClipboard / Host::handleEditCommand
+// — the plumbing under test — where the EventHandler-level tests above pass the
+// clipboard directly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+VNode clipboardFixture() {
+    return Box(
+                   Input().value("hi").width(80).height(20).setKey("f")
+               )
+        .width(200)
+        .height(100);
+}
+
+// Mount the fixture's host, focus its Input, and pin the caret at the end so a
+// paste appends deterministically.
+InputNode* focusHostInput(EventTestHost& host) {
+    host.update(200, 100);
+    auto* input = static_cast<InputNode*>(host.root()->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    host.focus(input);
+    host.handleEditCommand(EditCommand::MoveLineEnd);
+    return input;
+}
+
+}  // namespace
+
+TEST_CASE("C5 liveness: clipboard destroyed before host severs the link; paste no-ops") {
+    EventTestHost host(clipboardFixture);
+    InputNode* input = focusHostInput(host);
+    {
+        test::TestClipboard clip("XY");
+        host.setClipboard(&clip);
+        CHECK(host.handleEditCommand(EditCommand::Paste) == true);
+        CHECK(input->displayText == "hiXY");
+        // clip dies here WITHOUT host.setClipboard(nullptr): ~IClipboard must
+        // null the host's clipboard_ by itself (clipboard-dies-first).
+    }
+    // Severed: paste reports unconsumed, touches nothing, and does not crash.
+    CHECK(host.handleEditCommand(EditCommand::Paste) == false);
+    CHECK(input->displayText == "hiXY");
+}
+
+TEST_CASE("C5 liveness: host destroyed before clipboard is safe") {
+    test::TestClipboard clip("XY");
+    {
+        EventTestHost host(clipboardFixture);
+        InputNode* input = focusHostInput(host);
+        host.setClipboard(&clip);
+        CHECK(host.handleEditCommand(EditCommand::Paste) == true);
+        CHECK(input->displayText == "hiXY");
+        // host dies here; ~Host deregisters from `clip`.
+    }
+    // clip is alive and untouched by the host's teardown; its own destruction
+    // at scope exit must not touch the freed host — reaching the end is the pass.
+    CHECK(clip.text() == "XY");
+}
+
+TEST_CASE("C5 liveness: setClipboard replacement detaches the prior clipboard") {
+    EventTestHost host(clipboardFixture);
+    InputNode* input = focusHostInput(host);
+    test::TestClipboard second("B");
+    {
+        test::TestClipboard first("A");
+        host.setClipboard(&first);
+        host.setClipboard(&second);  // replacement must deregister `first`
+        // `first` dies here: had the replacement failed to detach it, ~first
+        // would null clipboard_ and sever the LIVE link to `second`.
+    }
+    CHECK(host.handleEditCommand(EditCommand::Paste) == true);
+    CHECK(input->displayText == "hiB");
+}
+
+TEST_CASE("C5 liveness: clearing, re-installing, and sharing across hosts stay safe") {
+    EventTestHost host(clipboardFixture);
+    InputNode* input = focusHostInput(host);
+    test::TestClipboard clip("XY");
+
+    // setClipboard(nullptr) detaches: clipboard commands report unconsumed again.
+    host.setClipboard(&clip);
+    host.setClipboard(nullptr);
+    CHECK(host.handleEditCommand(EditCommand::Paste) == false);
+    CHECK(input->displayText == "hi");
+
+    // Re-installing after a clear works.
+    host.setClipboard(&clip);
+    CHECK(host.handleEditCommand(EditCommand::Paste) == true);
+    CHECK(input->displayText == "hiXY");
+
+    // One clipboard on TWO hosts (registrations_ is plural by design).
+    SUBCASE("clipboard dies before both hosts: both links severed") {
+        EventTestHost other(clipboardFixture);
+        InputNode* otherInput = focusHostInput(other);
+        {
+            test::TestClipboard shared("Z");
+            host.setClipboard(&shared);
+            other.setClipboard(&shared);
+        }
+        CHECK(host.handleEditCommand(EditCommand::Paste) == false);
+        CHECK(other.handleEditCommand(EditCommand::Paste) == false);
+        CHECK(otherInput->displayText == "hi");
+    }
+    SUBCASE("one host dies: the surviving host's link stays live") {
+        {
+            EventTestHost other(clipboardFixture);
+            focusHostInput(other);
+            other.setClipboard(&clip);
+            // other dies; ~Host must remove ITS registration and leave ours.
+        }
+        CHECK(host.handleEditCommand(EditCommand::Paste) == true);
+        CHECK(input->displayText == "hiXYXY");
+    }
 }

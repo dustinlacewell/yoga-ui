@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Clipboard.hpp"
 #include "DirtyScheduler.hpp"
 #include "EditCommand.hpp"
 #include "ErrorHandler.hpp"
@@ -220,6 +221,31 @@ public:
         }
     }
 
+    // Install the platform clipboard for this host. Handed to the event handler
+    // per-call for Cut/Copy/Paste, never stored below Host. Pass nullptr to
+    // clear (Cut/Copy/Paste then report unconsumed). Unlike setTextMeasurer, a
+    // clipboard swap has no layout impact, so nothing is dirtied.
+    //
+    // Lifetime is self-managed in both directions, mirroring setTextMeasurer:
+    // ~IClipboard nulls clipboard_ if the clipboard dies first, and ~Host
+    // deregisters from the clipboard if the host dies first.
+    void setClipboard(IClipboard* clipboard) {
+        if (clipboard == clipboard_)
+            return;
+        // Drop the prior clipboard's back-reference to us before installing the
+        // new one, so it does not later null a pointer we have repointed.
+        if (clipboard_)
+            clipboard_->detachHost(this);
+        clipboard_ = clipboard;
+        if (clipboard) {
+            // Run by ~IClipboard (clipboard-dies-first) while this host is
+            // still alive (gated by the liveness token in ~IClipboard). Severs
+            // the back-reference, so ~Host's detach guard sees null and never
+            // dereferences the freed clipboard.
+            clipboard->attachHost(this, alive_, [this] { clipboard_ = nullptr; });
+        }
+    }
+
     // Install the diagnostic sink for exceptions escaping user callbacks. A single
     // host-level sink covers reconciliation, events, and effects. Pass {} to fall
     // back to the default policy (debug-stderr / release-swallow). See reportError.
@@ -390,9 +416,11 @@ public:
     // in which commit) to the focused Input. Returns true iff consumed, so a
     // shim can fall through when nothing is focused. `extend` is the Shift-held
     // selection modifier: Move* commands move only the caret, leaving the
-    // anchor to span the selection.
+    // anchor to span the selection. Cut/Copy/Paste read/write the installed
+    // clipboard (see setClipboard); with none installed they report unconsumed.
     bool handleEditCommand(EditCommand cmd, bool extend = false) noexcept {
-        return guardedBool("Host::handleEditCommand", [&] { return eventHandler_.handleEditCommand(cmd, extend); });
+        return guardedBool("Host::handleEditCommand",
+                           [&] { return eventHandler_.handleEditCommand(cmd, extend, clipboard_); });
     }
 
     void handleSubmit() noexcept {
@@ -626,9 +654,15 @@ protected:
     // can deregister from it on replacement and in ~Host.
     ITextMeasurer* installedMeasurer_ = nullptr;
 
-    // Liveness token shared with the measurer's registration records, mirroring
-    // the Fiber/Store alive_ idiom. Cleared in ~Host so a measurer destroyed
-    // afterwards observes the host as dead and skips clearing our freed config.
+    // Currently installed platform clipboard (raw, non-owning). Same tracking
+    // discipline as installedMeasurer_: deregistered on replacement and in
+    // ~Host; handed to the event handler per-call, never stored below here.
+    IClipboard* clipboard_ = nullptr;
+
+    // Liveness token shared with the measurer's and clipboard's registration
+    // records, mirroring the Fiber/Store alive_ idiom. Cleared in ~Host so a
+    // measurer/clipboard destroyed afterwards observes the host as dead and
+    // skips clearing our freed state.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
