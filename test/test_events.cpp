@@ -236,6 +236,38 @@ TEST_CASE("Hover tracks deepest node") {
     CHECK(!outerHovered);
 }
 
+TEST_CASE("Hover - a sibling-to-sibling move does not re-fire the shared parent's onHover") {
+    // Parent hosts two sibling children. Moving the cursor from childA to childB
+    // must leave the parent hovered throughout (it is the LCA), firing its onHover
+    // ZERO times during the sibling move — the spurious-ancestor fix.
+    Reconciler reconciler;
+    EventHandler events;
+
+    int parentHoverCalls = 0;
+    auto tree = Box({
+                        Box().width(50).height(100).setKey("childA").onHover([](bool) {}),
+                        Box().width(50).height(100).setKey("childB").onHover([](bool) {}),
+                    })
+                    .flexDirection(FlexDirection::Row)
+                    .width(100)
+                    .height(100)
+                    .onHover([&](bool) { ++parentHoverCalls; });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // Enter childA: parent's onHover fires once (initial enter).
+    events.handleMouseMove(root, 25, 50);
+    CHECK(parentHoverCalls == 1);
+
+    int callsBeforeMove = parentHoverCalls;
+    // Sibling move childA -> childB: the parent is the LCA, so its onHover must
+    // NOT fire again.
+    events.handleMouseMove(root, 75, 50);
+    CHECK(parentHoverCalls == callsBeforeMove);
+}
+
 TEST_CASE("Text node receives events") {
     Reconciler reconciler;
     EventHandler events;

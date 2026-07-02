@@ -1,6 +1,7 @@
 #include <yui/core/EventHandler.hpp>
 
 #include <exception>
+#include <unordered_set>
 
 namespace yui {
 
@@ -232,6 +233,19 @@ const std::function<void()>* clickHandlerFor(Node* node, MouseButton button) {
     return nullptr;
 }
 
+// The onHover handler for a node, dispatched on its primitive type (mirrors
+// clickHandlerFor). Returns nullptr if the node carries no onHover.
+const std::function<void(bool)>* hoverHandlerFor(Node* node) {
+    switch (node->type()) {
+    case PrimitiveType::Box:    return static_cast<BoxNode*>(node)->props.onHover ? &static_cast<BoxNode*>(node)->props.onHover : nullptr;
+    case PrimitiveType::Text:   return static_cast<TextNode*>(node)->props.onHover ? &static_cast<TextNode*>(node)->props.onHover : nullptr;
+    case PrimitiveType::Input:  return static_cast<InputNode*>(node)->props.onHover ? &static_cast<InputNode*>(node)->props.onHover : nullptr;
+    case PrimitiveType::Scroll: return static_cast<ScrollNode*>(node)->props.onHover ? &static_cast<ScrollNode*>(node)->props.onHover : nullptr;
+    case PrimitiveType::Canvas: return static_cast<CanvasNode*>(node)->props.onHover ? &static_cast<CanvasNode*>(node)->props.onHover : nullptr;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 bool EventHandler::hasClickHandler(Node* root, float x, float y, MouseButton button) {
@@ -371,91 +385,69 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     return event.consumed;
 }
 
+Node* EventHandler::lowestCommonAncestor(Node* a, Node* b) {
+    if (!a || !b)
+        return nullptr;
+
+    // Chain a-to-root into a set; walk b-to-root until the first shared node.
+    std::unordered_set<Node*> ancestorsOfA;
+    int depth = 0;
+    for (Node* n = a; n; n = n->parent) {
+        if (depth++ >= maxTreeDepth_) {
+            reportError("lowestCommonAncestor: max tree depth exceeded — hover cut truncated", nullptr);
+            break;
+        }
+        ancestorsOfA.insert(n);
+    }
+
+    depth = 0;
+    for (Node* n = b; n; n = n->parent) {
+        if (depth++ >= maxTreeDepth_) {
+            reportError("lowestCommonAncestor: max tree depth exceeded — hover cut truncated", nullptr);
+            break;
+        }
+        if (ancestorsOfA.count(n))
+            return n;
+    }
+
+    // Disjoint chains (different roots): no shared ancestor. updateHover treats
+    // this as a full leave + full enter — the original, always-safe behavior.
+    return nullptr;
+}
+
 void EventHandler::updateHover(Node* newHovered) {
-    if (newHovered == hoveredNode_)
+    Node* oldNode = liveHoveredNode();
+    if (newHovered == oldNode)
         return;
 
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
-    // Clear hovered flag and call onHover(false) on old node and ancestors. The
-    // flag toggle commits before the callback fires, and hoveredNode_ is assigned
-    // unconditionally at the end — so a throwing onHover can never leave the node
-    // flags out of sync with hoveredNode_.
-    Node* oldNode = liveHoveredNode();
-    while (oldNode) {
-        oldNode->hovered = false;
+    // Cut enter/leave at the lowest common ancestor: nodes shared by the old and
+    // new hover paths keep their hovered state and fire no callback, so a
+    // sibling-to-sibling move never spuriously re-fires onHover on shared
+    // ancestors. LCA == nullptr (disjoint roots) degrades to full leave + enter.
+    Node* lca = lowestCommonAncestor(oldNode, newHovered);
 
-        std::function<void(bool)>* onHover = nullptr;
-
-        switch (oldNode->type()) {
-        case PrimitiveType::Box:
-            onHover = static_cast<BoxNode*>(oldNode)->props.onHover ? &static_cast<BoxNode*>(oldNode)->props.onHover
-                                                                    : nullptr;
-            break;
-        case PrimitiveType::Text:
-            onHover = static_cast<TextNode*>(oldNode)->props.onHover ? &static_cast<TextNode*>(oldNode)->props.onHover
-                                                                     : nullptr;
-            break;
-        case PrimitiveType::Input:
-            onHover = static_cast<InputNode*>(oldNode)->props.onHover ? &static_cast<InputNode*>(oldNode)->props.onHover
-                                                                      : nullptr;
-            break;
-        case PrimitiveType::Scroll:
-            onHover = static_cast<ScrollNode*>(oldNode)->props.onHover
-                          ? &static_cast<ScrollNode*>(oldNode)->props.onHover
-                          : nullptr;
-            break;
-        case PrimitiveType::Canvas:
-            onHover = static_cast<CanvasNode*>(oldNode)->props.onHover
-                          ? &static_cast<CanvasNode*>(oldNode)->props.onHover
-                          : nullptr;
-            break;
-        }
-
+    // Leave: clear hovered + onHover(false) from the old node up to (exclusive)
+    // the LCA. The flag toggle commits before the callback fires, and the hovered
+    // node is reassigned unconditionally at the end — a throwing onHover can never
+    // desync node flags from hoveredNode_.
+    for (Node* n = oldNode; n && n != lca; n = n->parent) {
+        n->hovered = false;
+        const auto* onHover = hoverHandlerFor(n);
         if (onHover && *onHover) {
             fireCallback("onHover", [&] { (*onHover)(false); }, report);
         }
-
-        oldNode = oldNode->parent;
     }
 
-    // Set hovered flag and call onHover(true) on new node and ancestors
-    Node* newNode = newHovered;
-    while (newNode) {
-        newNode->hovered = true;
-
-        std::function<void(bool)>* onHover = nullptr;
-
-        switch (newNode->type()) {
-        case PrimitiveType::Box:
-            onHover = static_cast<BoxNode*>(newNode)->props.onHover ? &static_cast<BoxNode*>(newNode)->props.onHover
-                                                                    : nullptr;
-            break;
-        case PrimitiveType::Text:
-            onHover = static_cast<TextNode*>(newNode)->props.onHover ? &static_cast<TextNode*>(newNode)->props.onHover
-                                                                     : nullptr;
-            break;
-        case PrimitiveType::Input:
-            onHover = static_cast<InputNode*>(newNode)->props.onHover ? &static_cast<InputNode*>(newNode)->props.onHover
-                                                                      : nullptr;
-            break;
-        case PrimitiveType::Scroll:
-            onHover = static_cast<ScrollNode*>(newNode)->props.onHover
-                          ? &static_cast<ScrollNode*>(newNode)->props.onHover
-                          : nullptr;
-            break;
-        case PrimitiveType::Canvas:
-            onHover = static_cast<CanvasNode*>(newNode)->props.onHover
-                          ? &static_cast<CanvasNode*>(newNode)->props.onHover
-                          : nullptr;
-            break;
-        }
-
+    // Enter: set hovered + onHover(true) from the new node up to (exclusive) the
+    // LCA.
+    for (Node* n = newHovered; n && n != lca; n = n->parent) {
+        n->hovered = true;
+        const auto* onHover = hoverHandlerFor(n);
         if (onHover && *onHover) {
             fireCallback("onHover", [&] { (*onHover)(true); }, report);
         }
-
-        newNode = newNode->parent;
     }
 
     setHoveredNode(newHovered);

@@ -97,6 +97,13 @@ private:
     // Fire hover callbacks
     void updateHover(Node* newHovered);
 
+    // Lowest common ancestor of two nodes (nullptr if either is null or the two
+    // live under different roots). Used by updateHover to cut enter/leave at the
+    // shared ancestor so a sibling-to-sibling move never re-fires onHover on nodes
+    // both the old and new targets share. Depth-bounded by maxTreeDepth_ (mirrors
+    // the other event-path walks: diagnose once and proceed on overflow).
+    Node* lowestCommonAncestor(Node* a, Node* b);
+
     // Update focus when clicking
     void updateFocus(Node* clicked);
 
