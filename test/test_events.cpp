@@ -1185,7 +1185,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     // focus is treated as cleared. Pre-fix each of these dereferenced freed
     // memory (focusedInput_->displayText / ->props).
     CHECK_NOTHROW(events.handleTextInput("b"));
-    CHECK_NOTHROW(events.handleBackspace());
+    CHECK_NOTHROW(events.handleEditCommand(EditCommand::DeleteBackward));
     CHECK_NOTHROW(events.handleSubmit());
     CHECK_NOTHROW(events.handleKeyDown(reconciler.renderRoot(), 65, 0));
     CHECK_NOTHROW(events.handleKeyUp(reconciler.renderRoot(), 65, 0));
@@ -1195,7 +1195,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     CHECK(events.getFocusedInput() == nullptr);
 }
 
-TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
+TEST_CASE("DeleteBackward deletes a whole UTF-8 code point, not a single byte") {
     Reconciler reconciler;
     EventHandler events;
 
@@ -1213,8 +1213,8 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
     REQUIRE(input->type() == PrimitiveType::Input);
     events.focusNode(input);
 
-    // "é" is a 2-byte UTF-8 code point (0xC3 0xA9). One backspace must remove
-    // both bytes, leaving an empty (and valid-UTF-8) string.
+    // "é" is a 2-byte UTF-8 code point (0xC3 0xA9). One DeleteBackward must
+    // remove both bytes, leaving an empty (and valid-UTF-8) string.
     std::string lastChange = "sentinel";
     input->props.onChange = [&](const std::string& s) { lastChange = s; };
 
@@ -1222,18 +1222,180 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
     CHECK(input->displayText == "\xC3\xA9");
     CHECK(input->displayText.size() == 2);
 
-    events.handleBackspace();
+    events.handleEditCommand(EditCommand::DeleteBackward);
     CHECK(input->displayText.empty());
     // The onChange payload is valid UTF-8 (empty), not a lone continuation byte.
     CHECK(lastChange.empty());
 
-    // Mixed content: "aé" -> backspace -> "a" (the ASCII byte survives intact).
+    // Mixed content: "aé" -> DeleteBackward -> "a" (the ASCII byte survives intact).
     events.handleTextInput("a");
     events.handleTextInput("\xC3\xA9");
     CHECK(input->displayText == "a\xC3\xA9");
-    events.handleBackspace();
+    events.handleEditCommand(EditCommand::DeleteBackward);
     CHECK(input->displayText == "a");
     CHECK(lastChange == "a");
+}
+
+namespace {
+// Mount a Box-wrapped Input with `value` and focus it. The reconciler/fiber
+// live in the caller so the render tree (and the returned InputNode) outlive
+// this helper; tests that need to reconcile new props reuse the same shape.
+VNode inputFixture(const char* value) {
+    return Box(
+                   Input().value(value).width(80).height(20).setKey("field")
+               )
+        .width(100)
+        .height(100);
+}
+
+InputNode* mountFocusedInput(Reconciler& reconciler, std::unique_ptr<Fiber>& fiber,
+                             EventHandler& events, const char* value) {
+    fiber = reconciler.mount(inputFixture(value));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    events.focusNode(input);
+    return input;
+}
+}  // namespace
+
+TEST_CASE("EditCommand - caret moves by whole code points, no-op at the bounds") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    // "aéb" = a(1 byte) é(2 bytes) b(1 byte): boundaries at 0, 1, 3, 4.
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "a\xC3\xA9" "b");
+    CHECK(input->caret == 0);  // caret starts at 0 on mount
+
+    // MoveRight steps one CODE POINT at a time: 0 -> 1 -> 3 (past é) -> 4.
+    CHECK(events.handleEditCommand(EditCommand::MoveRight) == true);
+    CHECK(input->caret == 1);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 3);
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 4);
+    // At the end: still consumed (the key targeted the input), caret unmoved.
+    CHECK(events.handleEditCommand(EditCommand::MoveRight) == true);
+    CHECK(input->caret == 4);
+
+    // MoveLeft is symmetric: 4 -> 3 -> 1 -> 0, then a consumed no-op at 0.
+    events.handleEditCommand(EditCommand::MoveLeft);
+    CHECK(input->caret == 3);
+    events.handleEditCommand(EditCommand::MoveLeft);
+    CHECK(input->caret == 1);
+    events.handleEditCommand(EditCommand::MoveLeft);
+    CHECK(input->caret == 0);
+    CHECK(events.handleEditCommand(EditCommand::MoveLeft) == true);
+    CHECK(input->caret == 0);
+
+    // Home/End span the whole single-line value.
+    CHECK(events.handleEditCommand(EditCommand::MoveLineEnd) == true);
+    CHECK(input->caret == 4);
+    CHECK(events.handleEditCommand(EditCommand::MoveLineStart) == true);
+    CHECK(input->caret == 0);
+
+    // The anchor tracks every move (== caret throughout C1).
+    CHECK(input->selectionAnchor == input->caret);
+}
+
+TEST_CASE("EditCommand - insert at caret; DeleteBackward/DeleteForward erase whole code points") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "a\xC3\xA9" "b");
+
+    std::string lastChange;
+    int changes = 0;
+    input->props.onChange = [&](const std::string& s) {
+        lastChange = s;
+        ++changes;
+    };
+
+    // Caret after 'a' (byte 1): typing inserts THERE, not at the end.
+    events.handleEditCommand(EditCommand::MoveRight);
+    CHECK(input->caret == 1);
+    events.handleTextInput("X");
+    CHECK(input->displayText == "aX\xC3\xA9" "b");
+    CHECK(input->caret == 2);
+    CHECK(lastChange == "aX\xC3\xA9" "b");
+
+    // DeleteBackward mid-string removes the code point BEFORE the caret.
+    events.handleEditCommand(EditCommand::DeleteBackward);
+    CHECK(input->displayText == "a\xC3\xA9" "b");
+    CHECK(input->caret == 1);
+
+    // DeleteForward removes the (multi-byte) code point AFTER the caret, whole.
+    events.handleEditCommand(EditCommand::DeleteForward);
+    CHECK(input->displayText == "ab");
+    CHECK(input->caret == 1);
+
+    // Bounds no-ops: consumed, but no mutation and no onChange.
+    int changesBefore = changes;
+    events.handleEditCommand(EditCommand::MoveLineStart);
+    CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == true);  // caret 0
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(events.handleEditCommand(EditCommand::DeleteForward) == true);  // caret at end
+    CHECK(input->displayText == "ab");
+    CHECK(changes == changesBefore);
+}
+
+TEST_CASE("EditCommand - controlled round-trip preserves the caret; an external value clamps and snaps") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "hello");
+
+    // Caret mid-string (2), type: insert at 2, caret advances to 3.
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleEditCommand(EditCommand::MoveRight);
+    events.handleTextInput("X");
+    CHECK(input->displayText == "heXllo");
+    CHECK(input->caret == 3);
+
+    // The app's onChange round-trip echoes the SAME value back through props:
+    // the caret must stay put (typing mid-string depends on it).
+    reconciler.reconcile(fiber.get(), inputFixture("heXllo"));
+    CHECK(input->displayText == "heXllo");
+    CHECK(input->caret == 3);
+    CHECK(input->selectionAnchor == 3);
+
+    // A genuinely DIFFERENT external value clamps the caret into range.
+    reconciler.reconcile(fiber.get(), inputFixture("hi"));
+    CHECK(input->displayText == "hi");
+    CHECK(input->caret == 2);
+    CHECK(input->selectionAnchor == 2);
+
+    // An external value whose byte at the old caret is a continuation byte
+    // snaps the caret BACKWARD to a code-point boundary ("aé": byte 2 is 0xA9,
+    // mid-é, so the caret lands on 1 — never mid-code-point).
+    reconciler.reconcile(fiber.get(), inputFixture("a\xC3\xA9"));
+    CHECK(input->displayText == "a\xC3\xA9");
+    CHECK(input->caret == 1);
+    CHECK(input->selectionAnchor == 1);
+}
+
+TEST_CASE("EditCommand - not consumed without a focused Input; unimplemented commands not consumed") {
+    Reconciler reconciler;
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+    InputNode* input = mountFocusedInput(reconciler, fiber, events, "abc");
+
+    // Commands whose implementations land in later commits (see EditCommand.hpp)
+    // report unconsumed and touch nothing.
+    for (EditCommand cmd : {EditCommand::MoveUp, EditCommand::MoveDown, EditCommand::SelectAll,
+                            EditCommand::Cut, EditCommand::Copy, EditCommand::Paste,
+                            EditCommand::InsertNewline}) {
+        CHECK(events.handleEditCommand(cmd) == false);
+    }
+    CHECK(input->displayText == "abc");
+    CHECK(input->caret == 0);
+
+    // No focused Input: even an implemented command is not consumed.
+    events.focusNode(nullptr);
+    CHECK(events.handleEditCommand(EditCommand::MoveRight) == false);
+    CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == false);
+    CHECK(input->displayText == "abc");
 }
 
 TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") {
@@ -1513,7 +1675,7 @@ TEST_CASE("UpdateResult - autoFocus input animates from the mount frame on") {
 }
 
 TEST_CASE("UpdateResult - text edits latch needsRepaint until the next update") {
-    // Regression: handleTextInput/handleBackspace mutated displayText without
+    // Regression: handleTextInput / delete edits mutated displayText without
     // latching, so an Input with no onChange wired (no app-driven reconcile)
     // reported needsRepaint == false for the edit — the typed text never showed
     // in an embedder that honors UpdateResult.
@@ -1535,10 +1697,39 @@ TEST_CASE("UpdateResult - text edits latch needsRepaint until the next update") 
     CHECK(host.update(200, 50, 0.01f).needsRepaint == true);
     CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
 
-    // Backspace (non-empty text) latches the same way.
-    host.handleBackspace();
+    // DeleteBackward (non-empty text) latches the same way.
+    host.handleEditCommand(EditCommand::DeleteBackward);
     CHECK(host.update(200, 50, 0.01f).needsRepaint == true);
     CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+}
+
+TEST_CASE("UpdateResult - a consumed edit command restarts the caret blink and latches a repaint") {
+    EventTestHost host(repaintFixture);
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+
+    // Focus the input by clicking it, then drain the focus/press transitions.
+    host.handleMouseDown(125, 25, MouseButton::Left);
+    host.handleMouseUp(125, 25, MouseButton::Left);
+    InputNode* input = host.getFocusedInput();
+    REQUIRE(input != nullptr);
+    host.update(200, 50, 0.01f);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+
+    // Park the caret hidden (phase past the 530ms on-window).
+    host.update(200, 50, 0.6f);
+    CHECK(input->caretVisible == false);
+
+    // A caret move restarts the blink (visible immediately) and latches the
+    // repaint even though no text changed.
+    CHECK(host.handleEditCommand(EditCommand::MoveLineEnd) == true);
+    CHECK(input->caretVisible == true);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == true);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+
+    // An unimplemented command reports unconsumed through the Host entry too.
+    CHECK(host.handleEditCommand(EditCommand::Copy) == false);
 }
 
 TEST_CASE("UpdateResult - a handler's deferred update() cannot eat the visual-state latch") {
@@ -2457,7 +2648,7 @@ TEST_CASE("Focus - text editing routes only through a focused Input") {
     events.focusNode(input);
     events.handleTextInput("hi");
     CHECK(input->displayText == "hi");
-    events.handleBackspace();
+    CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == true);
     CHECK(input->displayText == "h");
     bool submitted = false;
     input->props.onSubmit = [&] { submitted = true; };
@@ -2470,7 +2661,7 @@ TEST_CASE("Focus - text editing routes only through a focused Input") {
     CHECK(events.getFocusedNode() == box);
     CHECK(events.getFocusedInput() == nullptr);
     CHECK_NOTHROW(events.handleTextInput("x"));
-    CHECK_NOTHROW(events.handleBackspace());
+    CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == false);
     CHECK_NOTHROW(events.handleSubmit());
     CHECK(input->displayText == "h");
 }

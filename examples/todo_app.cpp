@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 using namespace yui;
@@ -285,6 +286,29 @@ static void charCallback(GLFWwindow*, unsigned int codepoint) {
     g_host->handleTextInput(buf);
 }
 
+// The editing command a key maps to, if any — routed to the focused Input only
+// after handleKeyDown reports the key unconsumed (the Tab precedent: app
+// handlers see the raw key first). Enter stays on handleSubmit (single-line
+// inputs); InsertNewline routing arrives with multiline (C6).
+static std::optional<EditCommand> editCommandFor(int key) {
+    switch (key) {
+    case GLFW_KEY_LEFT:
+        return EditCommand::MoveLeft;
+    case GLFW_KEY_RIGHT:
+        return EditCommand::MoveRight;
+    case GLFW_KEY_HOME:
+        return EditCommand::MoveLineStart;
+    case GLFW_KEY_END:
+        return EditCommand::MoveLineEnd;
+    case GLFW_KEY_BACKSPACE:
+        return EditCommand::DeleteBackward;
+    case GLFW_KEY_DELETE:
+        return EditCommand::DeleteForward;
+    default:
+        return std::nullopt;
+    }
+}
+
 static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) {
     if (!g_host)
         return;
@@ -292,8 +316,6 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
         if (key == GLFW_KEY_ESCAPE) {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             return;
-        } else if (key == GLFW_KEY_BACKSPACE) {
-            g_host->handleBackspace();
         } else if (key == GLFW_KEY_ENTER) {
             g_host->handleSubmit();
         }
@@ -306,14 +328,19 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
     if (mods & GLFW_MOD_ALT)
         keyMod |= KeyMod_Alt;
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        // Tab traversal lives in the platform shim (core stays keycode-agnostic;
-        // GLFW's Tab is 258), and only when no app handler consumed the key.
+        // Tab traversal and the editing keys live in the platform shim (core
+        // stays keycode-agnostic; GLFW's Tab is 258), and only when no app
+        // handler consumed the key.
         bool consumed = g_host->handleKeyDown(key, keyMod, action == GLFW_REPEAT);
-        if (!consumed && key == GLFW_KEY_TAB) {
-            if (keyMod & KeyMod_Shift)
-                g_host->focusPrev();
-            else
-                g_host->focusNext();
+        if (!consumed) {
+            if (key == GLFW_KEY_TAB) {
+                if (keyMod & KeyMod_Shift)
+                    g_host->focusPrev();
+                else
+                    g_host->focusNext();
+            } else if (auto cmd = editCommandFor(key)) {
+                g_host->handleEditCommand(*cmd);
+            }
         }
     } else if (action == GLFW_RELEASE) {
         g_host->handleKeyUp(key, keyMod);

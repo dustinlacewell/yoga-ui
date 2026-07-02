@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DirtyScheduler.hpp"
+#include "EditCommand.hpp"
 #include "ErrorHandler.hpp"
 #include "EventHandler.hpp"
 #include "Fiber.hpp"
@@ -382,8 +383,12 @@ public:
         guardedVoid("Host::handleTextInput", [&] { eventHandler_.handleTextInput(text); });
     }
 
-    void handleBackspace() noexcept {
-        guardedVoid("Host::handleBackspace", [&] { eventHandler_.handleBackspace(); });
+    // Route an editing command (see EditCommand.hpp for which commands are live
+    // in which commit) to the focused Input. Returns true iff consumed, so a
+    // shim can fall through when nothing is focused. `extend` is the Shift-held
+    // selection modifier — accepted now, implemented with selection (C3).
+    bool handleEditCommand(EditCommand cmd, bool extend = false) noexcept {
+        return guardedBool("Host::handleEditCommand", [&] { return eventHandler_.handleEditCommand(cmd, extend); });
     }
 
     void handleSubmit() noexcept {

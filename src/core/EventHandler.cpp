@@ -2,6 +2,7 @@
 
 #include <yui/core/NodeRef.hpp>  // absoluteRect (scrollbar-local press coords)
 #include <yui/core/RenderDefaults.hpp>
+#include <yui/core/Utf8.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -859,7 +860,11 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     // Optimistic advance for immediate feedback. The display state commits first;
     // only the onChange notification is isolated, so a throwing handler preserves
     // the on-screen feedback (per the decided contract) instead of rolling it back.
-    focused->displayText += text;
+    // Insertion is AT the caret (== append when the caret sits at the end).
+    focused->displayText.insert(focused->caret, text);
+    focused->caret += text.size();
+    focused->selectionAnchor = focused->caret;
+    focused->resetCaretBlink();  // typing keeps the caret visible
 
     // An edit is a visual transition: latch the repaint so an Input with no
     // onChange wired (no app-driven reconcile) still repaints. Repaint only —
@@ -873,30 +878,100 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     }
 }
 
-void EventHandler::handleBackspace() noexcept {
+namespace {
+
+// What applying one EditCommand did: `handled` decides consumption (a command
+// whose implementation lands in a later commit is NOT consumed, so platform
+// shims can fall through until then); `textChanged` drives the onChange
+// notification.
+struct EditOutcome {
+    bool handled = false;
+    bool textChanged = false;
+};
+
+// Apply one editing command to an Input's text/caret state. Single-line
+// semantics: MoveLineStart/End span the whole value. Every caret move collapses
+// the selection anchor onto the caret — extend-selection (Shift) lands with
+// selection in C3, so `extend` is not consulted here yet. A move already at its
+// bound is still consumed: the key targeted the focused input either way.
+EditOutcome applyEditCommand(InputNode& input, EditCommand cmd) {
+    std::string& s = input.displayText;
+    auto moveTo = [&](size_t pos) {
+        input.caret = pos;
+        input.selectionAnchor = pos;
+    };
+    switch (cmd) {
+    case EditCommand::MoveLeft:
+        moveTo(utf8::prevCodePoint(s, input.caret));
+        return {true, false};
+    case EditCommand::MoveRight:
+        moveTo(utf8::nextCodePoint(s, input.caret));
+        return {true, false};
+    case EditCommand::MoveLineStart:
+        moveTo(0);
+        return {true, false};
+    case EditCommand::MoveLineEnd:
+        moveTo(s.size());
+        return {true, false};
+    case EditCommand::DeleteBackward: {
+        if (input.caret == 0)
+            return {true, false};
+        // Erase the whole code point before the caret, never a lone byte, so
+        // multi-byte characters delete cleanly and leave valid UTF-8 behind.
+        size_t start = utf8::prevCodePoint(s, input.caret);
+        s.erase(start, input.caret - start);
+        moveTo(start);
+        return {true, true};
+    }
+    case EditCommand::DeleteForward: {
+        if (input.caret >= s.size())
+            return {true, false};
+        s.erase(input.caret, utf8::nextCodePoint(s, input.caret) - input.caret);
+        return {true, true};
+    }
+    // Declared ahead of their commits (see EditCommand.hpp): SelectAll is C3,
+    // Cut/Copy/Paste are C5, MoveUp/MoveDown/InsertNewline are C6 (multiline).
+    case EditCommand::MoveUp:
+    case EditCommand::MoveDown:
+    case EditCommand::SelectAll:
+    case EditCommand::Cut:
+    case EditCommand::Copy:
+    case EditCommand::Paste:
+    case EditCommand::InsertNewline:
+        return {};
+    }
+    return {};  // unreachable for a valid enum; -Wswitch flags new enumerators
+}
+
+}  // namespace
+
+bool EventHandler::handleEditCommand(EditCommand cmd, bool /*extend — C3 (selection)*/,
+                                     IClipboard* /*clipboard — C5 (cut/copy/paste)*/) noexcept {
+    // Same liveness gate as handleTextInput: no focused (live) Input means no
+    // edit — and NOT consumed, so the shim can route the key elsewhere.
     InputNode* focused = liveFocusedInput();
     if (!focused)
-        return;
+        return false;
 
-    if (!focused->displayText.empty()) {
-        // Same optimistic-advance contract as handleTextInput: commit the edit,
-        // isolate only the onChange notification. Erase a whole UTF-8 code point,
-        // not a single byte, so multi-byte characters delete cleanly and leave
-        // valid UTF-8 behind.
-        std::string& s = focused->displayText;
-        size_t i = s.size();
-        do {
-            --i;
-        } while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80);
-        s.erase(i);
-        markVisualStateChanged();  // an edit is a visual transition (see handleTextInput)
+    EditOutcome outcome = applyEditCommand(*focused, cmd);
+    if (!outcome.handled)
+        return false;
 
-        if (focused->props.onChange) {
-            fireCallback(
-                "onChange", [&] { focused->props.onChange(focused->displayText); },
-                [this](std::string_view w, const std::exception* e) { reportError(w, e); });
-        }
+    // Every consumed command restarts the blink (the caret shows while the user
+    // works the keyboard) and latches the repaint: a caret move is a visual
+    // transition exactly like a text edit (see handleTextInput). This fires even
+    // for a no-op move/delete at a bound — the caret snapping visible IS a real
+    // visual change — deliberately unlike C0's empty-backspace no-latch: the
+    // philosophy is that any keyboard edit interaction resets the blink.
+    focused->resetCaretBlink();
+    markVisualStateChanged();
+
+    if (outcome.textChanged && focused->props.onChange) {
+        fireCallback(
+            "onChange", [&] { focused->props.onChange(focused->displayText); },
+            [this](std::string_view w, const std::exception* e) { reportError(w, e); });
     }
+    return true;
 }
 
 void EventHandler::handleSubmit() noexcept {

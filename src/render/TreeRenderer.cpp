@@ -1,5 +1,6 @@
 #include <yui/core/Node.hpp>
 #include <yui/core/RenderDefaults.hpp>
+#include <yui/core/Utf8.hpp>
 #include <yui/render/StyleResolver.hpp>
 #include <yui/render/TextWrap.hpp>
 #include <yui/render/TreeRenderer.hpp>
@@ -22,18 +23,6 @@ void report(const ErrorHandler& onError, std::string_view where, const std::exce
     } catch (...) {}
 }
 
-// Number of UTF-8 code points in `text`: count the bytes that start a code
-// point, i.e. everything but continuation bytes (0b10xxxxxx) — the same scan
-// the backspace edit in EventHandler and TextWrap use.
-size_t codePointCount(std::string_view text) {
-    size_t count = 0;
-    for (char c : text) {
-        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
-            ++count;
-    }
-    return count;
-}
-
 // The run an Input displays and its color: the (possibly password-masked)
 // displayText, else the placeholder in the placeholder color.
 struct InputRun {
@@ -46,12 +35,25 @@ InputRun inputDisplayRun(const InputNode& node, uint32_t textColor) {
     if (!node.displayText.empty()) {
         // One '*' per CODE POINT, not per byte: a 2-byte 'é' is one star.
         if (p.password.value_or(false))
-            return {std::string(codePointCount(node.displayText), '*'), textColor};
+            return {std::string(utf8::codePointCount(node.displayText), '*'), textColor};
         return {node.displayText, textColor};
     }
     if (p.placeholder)
         return {*p.placeholder, render_defaults::kPlaceholderColor};
     return {std::string{}, textColor};
+}
+
+// The display-space run BEFORE the caret's byte index: the raw prefix for a
+// plain input; for a password, one star per code point of that prefix (a view
+// over the already-masked run — the caret lives in star space, matching what
+// was drawn). A placeholder never advances the caret (displayText is empty
+// while a placeholder shows, so the prefix is empty).
+std::string_view caretPrefix(const InputNode& node, const InputRun& run) {
+    std::string_view raw(node.displayText);
+    raw = raw.substr(0, std::min(node.caret, raw.size()));
+    if (node.props.password.value_or(false))
+        return std::string_view(run.text).substr(0, utf8::codePointCount(raw));
+    return raw;
 }
 
 class TreeWalker {
@@ -228,14 +230,12 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
 void TreeWalker::drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
                            std::string_view font) {
     namespace rd = render_defaults;
-    float caretX = content.x + rd::kInputTextPad;
-    // Advance past the rendered text; the run is the masked display string, so
-    // the caret tracks password dots. A placeholder never advances the caret
-    // (displayText is empty while a placeholder shows).
-    if (!node.displayText.empty())
-        caretX += backend_.measure(run.text, s.fontSize, 0, font).width;
-    // Pin to the content box: when the text overflows, the caret hugs the right
-    // edge instead of riding past the clip (and vanishing with it).
+    // The caret sits after the display prefix before its byte index (see
+    // caretPrefix). measureRun, not measure: the prefix is one unwrapped run.
+    float caretX = content.x + rd::kInputTextPad + backend_.measureRun(caretPrefix(node, run), s.fontSize, font);
+    // Pin to the content box: when the prefix overflows, the caret hugs the
+    // right edge instead of riding past the clip (and vanishing with it).
+    // Horizontal follow-scroll (textScrollX) arrives with click-to-position (C2).
     caretX = std::min(caretX, content.x + content.w - rd::kCaretWidth / 2);
 
     Rect caret{caretX - rd::kCaretWidth / 2, content.y + rd::kCaretInset, rd::kCaretWidth,

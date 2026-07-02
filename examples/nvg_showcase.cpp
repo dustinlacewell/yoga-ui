@@ -170,7 +170,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             return;
         } else if (key == GLFW_KEY_BACKSPACE) {
-            g_host->handleBackspace();
+            g_host->handleEditCommand(EditCommand::DeleteBackward);
         } else if (key == GLFW_KEY_ENTER) {
             g_host->handleSubmit();
         }

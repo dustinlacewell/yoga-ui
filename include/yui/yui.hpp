@@ -2,6 +2,7 @@
 
 // Core
 #include <yui/core/ComponentContext.hpp>
+#include <yui/core/EditCommand.hpp>
 #include <yui/core/Event.hpp>
 #include <yui/core/EventHandler.hpp>
 #include <yui/core/Fiber.hpp>

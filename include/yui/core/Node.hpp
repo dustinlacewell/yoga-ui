@@ -189,6 +189,21 @@ public:
     // Display text - synced from props.value, modified during editing
     std::string displayText;
 
+    // Caret position as a BYTE offset into displayText. Invariant: always on a
+    // UTF-8 code-point boundary — every editing op moves by whole code points,
+    // and an external value change re-clamps/snaps it (see updateProps).
+    //
+    // Initializes to 0 on mount and is NOT auto-moved to the end on focus: a
+    // pre-populated input that is focused-but-not-clicked inserts at the FRONT
+    // (End/arrows still reposition) until click-to-position sets the caret on a
+    // focus-click. Intentional; C2 (click-to-position) resolves it.
+    size_t caret = 0;
+
+    // Selection anchor (byte offset, same boundary invariant). Kept equal to
+    // `caret` by every C1 operation; selection (C3) lets the two diverge to
+    // span [min, max).
+    size_t selectionAnchor = 0;
+
     // Caret blink state, advanced by update(dt) while focused. The renderer
     // draws the caret iff focused && caretVisible — no wall clock involved.
     bool caretVisible = true;

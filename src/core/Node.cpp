@@ -2,6 +2,7 @@
 
 #include <yui/core/NodeRef.hpp>  // absoluteRect (scrollIntoView)
 #include <yui/core/RenderDefaults.hpp>
+#include <yui/core/Utf8.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -495,7 +496,18 @@ void InputNode::updateProps(PropsVariant&& p) {
     }
     // Read displayText from the MOVED-IN member (props.value), not the moved-from
     // source (newProps.value is now empty).
-    displayText = props.value;
+    //
+    // Controlled-model caret rule: the common case is the onChange ROUND-TRIP —
+    // the app echoes the value we just reported straight back through props —
+    // and the caret must NOT move then, or typing mid-string would snap it away
+    // on every reconcile. Only a value that actually differs (an external
+    // reset) replaces the text, clamping caret/anchor into range and snapping
+    // backward to a UTF-8 code-point boundary (a caret never sits mid-code-point).
+    if (props.value != displayText) {
+        displayText = props.value;
+        caret = utf8::snapToCodePoint(displayText, caret);
+        selectionAnchor = caret;
+    }
 }
 
 bool InputNode::updateBlink(float dt) {

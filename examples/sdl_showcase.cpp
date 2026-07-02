@@ -14,12 +14,36 @@
 #include "yui/sdl/sdl.hpp"
 
 #include <iostream>
+#include <optional>
 
 #include <SDL.h>
 #include <SDL_ttf.h>
 
 using namespace yui;
 using namespace showcase;
+
+// The editing command a key maps to, if any — routed to the focused Input only
+// after handleKeyDown reports the key unconsumed (the Tab precedent: app
+// handlers see the raw key first). Return stays on handleSubmit (single-line
+// inputs); InsertNewline routing arrives with multiline (C6).
+static std::optional<EditCommand> editCommandFor(SDL_Keycode key) {
+    switch (key) {
+    case SDLK_LEFT:
+        return EditCommand::MoveLeft;
+    case SDLK_RIGHT:
+        return EditCommand::MoveRight;
+    case SDLK_HOME:
+        return EditCommand::MoveLineStart;
+    case SDLK_END:
+        return EditCommand::MoveLineEnd;
+    case SDLK_BACKSPACE:
+        return EditCommand::DeleteBackward;
+    case SDLK_DELETE:
+        return EditCommand::DeleteForward;
+    default:
+        return std::nullopt;
+    }
+}
 
 // ============================================================================
 // Canvas Demo - SDL-specific custom drawing
@@ -202,8 +226,6 @@ int main(int argc, char* argv[]) {
                 case SDL_KEYDOWN: {
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         running = false;
-                    } else if (event.key.keysym.sym == SDLK_BACKSPACE) {
-                        host.handleBackspace();
                     } else if (event.key.keysym.sym == SDLK_RETURN) {
                         host.handleSubmit();
                     }
@@ -221,16 +243,20 @@ int main(int argc, char* argv[]) {
                         mods |= KeyMod_CapsLock;
                     if (event.key.keysym.mod & KMOD_NUM)
                         mods |= KeyMod_NumLock;
-                    // Tab traversal lives in the platform shim (core stays
-                    // keycode-agnostic; SDL's Tab is 9), and only when no app
-                    // handler consumed the key.
+                    // Tab traversal and the editing keys live in the platform
+                    // shim (core stays keycode-agnostic; SDL's Tab is 9), and
+                    // only when no app handler consumed the key.
                     bool consumed =
                         host.handleKeyDown(event.key.keysym.sym, mods, event.key.repeat != 0);
-                    if (!consumed && event.key.keysym.sym == SDLK_TAB) {
-                        if (mods & KeyMod_Shift)
-                            host.focusPrev();
-                        else
-                            host.focusNext();
+                    if (!consumed) {
+                        if (event.key.keysym.sym == SDLK_TAB) {
+                            if (mods & KeyMod_Shift)
+                                host.focusPrev();
+                            else
+                                host.focusNext();
+                        } else if (auto cmd = editCommandFor(event.key.keysym.sym)) {
+                            host.handleEditCommand(*cmd);
+                        }
                     }
                     break;
                 }

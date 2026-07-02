@@ -547,6 +547,8 @@ TEST_CASE("renderTree: password mask is one star per code point, not per byte") 
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(100, 30);
     root->focused = true;  // fresh blink state: caret starts visible
+    auto* in = static_cast<InputNode*>(root);
+    in->caret = in->displayText.size();  // pin at END (the caret index defaults to 0)
 
     render::renderTree(root, backend, {});
 
@@ -592,6 +594,8 @@ TEST_CASE("renderTree: focused input draws the caret; blink phase hides it deter
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(100, 30);
     root->focused = true;  // fresh blink state: caret starts visible
+    auto* in = static_cast<InputNode*>(root);
+    in->caret = in->displayText.size();  // pin at END (the caret index defaults to 0)
 
     render::renderTree(root, backend, {});
 
@@ -661,6 +665,68 @@ TEST_CASE("renderTree: caret sits at the text pad when only a placeholder shows"
 }
 
 // ---------------------------------------------------------------------------
+// Caret at index: the caret draws at pad + the measured DISPLAY PREFIX before
+// its byte offset — not pinned to the end of the run. For a password the
+// prefix is one star per code point (star space).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: caret draws at the measured prefix before its byte index") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("abc").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;  // fresh blink state: caret visible
+    auto* in = static_cast<InputNode*>(root);
+
+    // FakeBackend measures 10px per byte, so caret-x is pad + 10 * caret.
+    auto caretXAt = [&](size_t caret) {
+        in->caret = caret;
+        backend.calls.clear();
+        render::renderTree(root, backend, {});
+        const Call* c = backend.nthOf(Call::Kind::FillRect, 1);
+        REQUIRE(c != nullptr);
+        return c->rect.x;
+    };
+
+    CHECK(caretXAt(0) == doctest::Approx(rd::kInputTextPad - rd::kCaretWidth / 2));
+    CHECK(caretXAt(1) == doctest::Approx(rd::kInputTextPad + 10.0f - rd::kCaretWidth / 2));
+    CHECK(caretXAt(2) == doctest::Approx(rd::kInputTextPad + 20.0f - rd::kCaretWidth / 2));
+    // At the end the prefix is the whole run — the pre-caret-index geometry.
+    CHECK(caretXAt(3) == doctest::Approx(rd::kInputTextPad + 30.0f - rd::kCaretWidth / 2));
+}
+
+TEST_CASE("renderTree: password caret positions in star space (code points, not bytes)") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // "aéb": boundaries at 0, 1, 3, 4 — but the DISPLAY run is "***" (one star
+    // per code point), so the caret advances one 10px star per code point.
+    auto tree = Input().value("a\xC3\xA9" "b").password(true).fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;  // fresh blink state: caret visible
+    auto* in = static_cast<InputNode*>(root);
+
+    auto caretXAt = [&](size_t caret) {
+        in->caret = caret;
+        backend.calls.clear();
+        render::renderTree(root, backend, {});
+        const Call* c = backend.nthOf(Call::Kind::FillRect, 1);
+        REQUIRE(c != nullptr);
+        return c->rect.x;
+    };
+
+    CHECK(caretXAt(0) == doctest::Approx(rd::kInputTextPad - rd::kCaretWidth / 2));
+    CHECK(caretXAt(1) == doctest::Approx(rd::kInputTextPad + 10.0f - rd::kCaretWidth / 2));  // 1 cp -> 1 star
+    CHECK(caretXAt(3) == doctest::Approx(rd::kInputTextPad + 20.0f - rd::kCaretWidth / 2));  // past é: 2 stars
+    CHECK(caretXAt(4) == doctest::Approx(rd::kInputTextPad + 30.0f - rd::kCaretWidth / 2));  // end: 3 stars
+}
+
+// ---------------------------------------------------------------------------
 // Input clip: text and caret draw between a pushClip/popClip pair over the
 // input's content box; an overflowing caret pins to the box's right edge; the
 // clip stack stays balanced across every display variant.
@@ -676,6 +742,8 @@ TEST_CASE("renderTree: overflowing input text and caret are clipped to the conte
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(100, 30);
     root->focused = true;  // fresh blink state: caret visible
+    auto* in = static_cast<InputNode*>(root);
+    in->caret = in->displayText.size();  // pin at END so the prefix is the full 120px run
 
     render::renderTree(root, backend, {});
 
