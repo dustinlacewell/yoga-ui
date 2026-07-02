@@ -280,6 +280,36 @@ TEST_CASE("renderTree: scroll clips at its absolute rect and offsets children") 
     CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
 }
 
+TEST_CASE("renderTree: scroll padding insets the clip viewport and the content origin") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // The unsized child stretches to the scroll's CONTENT width (100 - 2*10):
+    // Scroll padding shrinks what the detached content root lays out against.
+    auto tree =
+        Scroll(Box().height(200).backgroundColor(0x112233FFu).setKey("content")).width(100).height(80).padding(10);
+
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 80);
+
+    REQUIRE(root->type() == PrimitiveType::Scroll);
+    auto* scroll = static_cast<ScrollNode*>(root);
+    scroll->scrollOffsetY = 30;
+
+    render::renderTree(root, backend, {});
+
+    REQUIRE(backend.calls.size() == 3);
+
+    CHECK(backend.calls[0].kind == Call::Kind::PushClip);
+    checkRect(backend.calls[0].rect, 10, 10, 80, 60);  // the PADDED viewport
+
+    CHECK(backend.calls[1].kind == Call::Kind::FillRect);
+    checkRect(backend.calls[1].rect, 10, -20, 80, 200);  // content origin (10,10) - 30 scroll
+
+    CHECK(backend.calls[2].kind == Call::Kind::PopClip);
+}
+
 // ---------------------------------------------------------------------------
 // A throwing Canvas callback is isolated by the backend: siblings still draw
 // and the clip stack stays balanced.
@@ -329,7 +359,9 @@ TEST_CASE("renderTree: input draws default chrome and top-left-anchored text") {
 
     render::renderTree(root, backend, {});
 
-    REQUIRE(backend.calls.size() == 3);
+    // Chrome outside the clip; the text run inside a clip of the content box
+    // (== the border box here — no insets).
+    REQUIRE(backend.calls.size() == 5);
 
     CHECK(backend.calls[0].kind == Call::Kind::FillRect);
     CHECK(backend.calls[0].color == rd::kInputBg);
@@ -340,11 +372,16 @@ TEST_CASE("renderTree: input draws default chrome and top-left-anchored text") {
     CHECK(backend.calls[1].color == rd::kInputBorder);
     CHECK(backend.calls[1].strokeWidth == doctest::Approx(rd::kInputBorderWidth));
 
-    CHECK(backend.calls[2].kind == Call::Kind::TextRun);
-    CHECK(backend.calls[2].text == "abc");
-    CHECK(backend.calls[2].x == doctest::Approx(rd::kInputTextPad));
-    CHECK(backend.calls[2].y == doctest::Approx((30 - 10) / 2.0f));  // (h - fontSize) / 2
-    CHECK(backend.calls[2].color == rd::kDefaultTextColor);
+    CHECK(backend.calls[2].kind == Call::Kind::PushClip);
+    checkRect(backend.calls[2].rect, 0, 0, 100, 30);
+
+    CHECK(backend.calls[3].kind == Call::Kind::TextRun);
+    CHECK(backend.calls[3].text == "abc");
+    CHECK(backend.calls[3].x == doctest::Approx(rd::kInputTextPad));
+    CHECK(backend.calls[3].y == doctest::Approx((30 - 10) / 2.0f));  // (h - fontSize) / 2
+    CHECK(backend.calls[3].color == rd::kDefaultTextColor);
+
+    CHECK(backend.calls[4].kind == Call::Kind::PopClip);
 }
 
 TEST_CASE("renderTree: empty input draws placeholder in placeholder color") {
@@ -398,11 +435,13 @@ TEST_CASE("renderTree: focused input draws the caret; blink phase hides it deter
 
     render::renderTree(root, backend, {});
 
-    // bg fill + caret fill: the caret is the second FillRect, drawn last.
+    // bg fill + caret fill: the caret is the second FillRect, drawn last
+    // inside the content clip (only the closing PopClip follows it).
     REQUIRE(backend.count(Call::Kind::FillRect) == 2);
     const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
     REQUIRE(caret != nullptr);
-    CHECK(caret == &backend.calls.back());
+    CHECK(caret == &backend.calls[backend.calls.size() - 2]);
+    CHECK(backend.calls.back().kind == Call::Kind::PopClip);
 
     // x: pad + measured "abc" (3 chars * 10px), centered on the caret width.
     float caretX = rd::kInputTextPad + 30.0f - rd::kCaretWidth / 2;
@@ -459,4 +498,95 @@ TEST_CASE("renderTree: caret sits at the text pad when only a placeholder shows"
     const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
     REQUIRE(caret != nullptr);
     CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad - rd::kCaretWidth / 2));  // no advance past "hint"
+}
+
+// ---------------------------------------------------------------------------
+// Input clip: text and caret draw between a pushClip/popClip pair over the
+// input's content box; an overflowing caret pins to the box's right edge; the
+// clip stack stays balanced across every display variant.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: overflowing input text and caret are clipped to the content box") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // 12 chars * 10px = 120px of text in a 100px box: the run overflows.
+    auto tree = Input().value("aaaaaaaaaaaa").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;  // fresh blink state: caret visible
+
+    render::renderTree(root, backend, {});
+
+    // bg fill / border stroke / clip(content box) / text run / caret fill / unclip.
+    REQUIRE(backend.calls.size() == 6);
+    CHECK(backend.calls[2].kind == Call::Kind::PushClip);
+    checkRect(backend.calls[2].rect, 0, 0, 100, 30);  // no insets: content == border box
+    CHECK(backend.calls[3].kind == Call::Kind::TextRun);
+    CHECK(backend.calls[4].kind == Call::Kind::FillRect);  // the caret, inside the clip
+    CHECK(backend.calls[5].kind == Call::Kind::PopClip);
+    CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+
+    // Pinned to the content box's right edge instead of riding out with the
+    // 120px run (text pad + 120 would put the caret past x = 100).
+    CHECK(backend.calls[4].rect.x == doctest::Approx(100 - rd::kCaretWidth));
+}
+
+TEST_CASE("renderTree: input clip stays balanced across display variants") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    SUBCASE("placeholder, unfocused: one pair around the placeholder run") {
+        auto tree = Input().placeholder("hint").fontSize(10).width(100).height(30);
+        auto* root = h.mount(std::move(tree));
+        root->calculateLayout(100, 30);
+        render::renderTree(root, backend, {});
+        CHECK(backend.count(Call::Kind::PushClip) == 1);
+        CHECK(backend.count(Call::Kind::TextRun) == 1);
+    }
+
+    SUBCASE("empty, unfocused: nothing to draw inside the box, no clip at all") {
+        auto tree = Input().fontSize(10).width(100).height(30);
+        auto* root = h.mount(std::move(tree));
+        root->calculateLayout(100, 30);
+        render::renderTree(root, backend, {});
+        CHECK(backend.count(Call::Kind::PushClip) == 0);
+        CHECK(backend.count(Call::Kind::TextRun) == 0);
+    }
+
+    SUBCASE("empty, focused: one pair around the caret alone") {
+        auto tree = Input().fontSize(10).width(100).height(30);
+        auto* root = h.mount(std::move(tree));
+        root->calculateLayout(100, 30);
+        root->focused = true;
+        render::renderTree(root, backend, {});
+        CHECK(backend.count(Call::Kind::PushClip) == 1);
+        CHECK(backend.count(Call::Kind::TextRun) == 0);
+        CHECK(backend.count(Call::Kind::FillRect) == 2);  // bg + caret
+    }
+
+    CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
+}
+
+TEST_CASE("renderTree: padded input clips and positions text in its content box") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("abc").fontSize(10).width(100).height(40).padding(5);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 40);
+
+    render::renderTree(root, backend, {});
+
+    const Call* clip = backend.nthOf(Call::Kind::PushClip, 0);
+    REQUIRE(clip != nullptr);
+    checkRect(clip->rect, 5, 5, 90, 30);  // border box minus the 5px insets
+
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    REQUIRE(run != nullptr);
+    CHECK(run->x == doctest::Approx(5 + rd::kInputTextPad));
+    CHECK(run->y == doctest::Approx(5 + (30 - 10) / 2.0f));  // centered in the content box
 }

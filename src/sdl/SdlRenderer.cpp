@@ -4,6 +4,7 @@
 #include "yui/sdl/detail/SdlScopes.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 
 #include <SDL2_gfxPrimitives.h>
@@ -142,7 +143,12 @@ void SdlRenderer::pushClip(const render::Rect& r, float /*radius — rect-only c
         SDL_RenderGetClipRect(renderer_, &prev.rect);
     }
 
-    SDL_Rect clip = {static_cast<int>(r.x), static_cast<int>(r.y), static_cast<int>(r.w), static_cast<int>(r.h)};
+    // Round OUTWARD (floor the origin, ceil the far edge): SDL clips on integer
+    // rects, and truncating a fractional layout rect would shave a sliver of
+    // legitimate content off its right/bottom edge.
+    int x1 = static_cast<int>(std::floor(r.x));
+    int y1 = static_cast<int>(std::floor(r.y));
+    SDL_Rect clip = {x1, y1, static_cast<int>(std::ceil(r.x + r.w)) - x1, static_cast<int>(std::ceil(r.y + r.h)) - y1};
     if (prev.hadClip) {
         clip = intersect(clip, prev.rect);
     }

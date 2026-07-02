@@ -43,6 +43,7 @@ struct LayoutResult {
     float insetBottom = 0;
 
     float contentWidth() const { return width - insetLeft - insetRight; }
+    float contentHeight() const { return height - insetTop - insetBottom; }
 };
 
 // Result of one frame's animation advance, folded up the subtree walk by

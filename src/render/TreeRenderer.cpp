@@ -4,6 +4,7 @@
 #include <yui/render/TextWrap.hpp>
 #include <yui/render/TreeRenderer.hpp>
 
+#include <algorithm>
 #include <exception>
 #include <string>
 
@@ -53,7 +54,7 @@ private:
     void drawCanvas(const CanvasNode* node, const Rect& r);
 
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
-    void drawCaret(const InputNode& node, const InputRun& run, const Rect& r, const ResolvedInputStyle& s,
+    void drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
                    const std::string& font);
 
     IRenderBackend& backend_;
@@ -144,9 +145,15 @@ void TreeWalker::drawScroll(const ScrollNode* node, const Rect& r) {
     auto s = resolveBox(node->props, node->hovered, node->focused);
     paintBoxChrome(s, r);
 
-    backend_.pushClip(r, s.borderRadius);
-    float childOffsetX = r.x - node->scrollOffsetX;
-    float childOffsetY = r.y - node->scrollOffsetY;
+    // Content lives in the PADDED viewport: the scroll's own insets shrink the
+    // clip and place the content origin, so Scroll padding is honored the same
+    // way Box padding is. layoutScrollContent laid the detached content root
+    // against this same content width, and hitTest gates on this same rect.
+    const LayoutResult& l = node->layout;
+    Rect viewport{r.x + l.insetLeft, r.y + l.insetTop, l.contentWidth(), l.contentHeight()};
+    backend_.pushClip(viewport, s.borderRadius);
+    float childOffsetX = viewport.x - node->scrollOffsetX;
+    float childOffsetY = viewport.y - node->scrollOffsetY;
     for (auto& child : node->children) {
         drawNode(child.get(), childOffsetX, childOffsetY);
     }
@@ -163,28 +170,43 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
 
     const std::string font = node->props.font.value_or(std::string{});
     InputRun run = inputDisplayRun(*node, s.color);
-    if (!run.text.empty()) {
-        backend_.drawTextRun(run.text, r.x + rd::kInputTextPad, r.y + (r.h - s.fontSize) / 2, s.fontSize, run.color,
-                             font);
-    }
-
     // Blink is node state driven by update(dt), not a wall clock — the renderer
     // just paints what the node says (see InputNode::updateBlink).
-    if (node->focused && node->caretVisible)
-        drawCaret(*node, run, r, s, font);
+    bool caretShown = node->focused && node->caretVisible;
+    if (run.text.empty() && !caretShown)
+        return;
+
+    // Text and caret live in the CONTENT box (border box minus the input's own
+    // insets) and are clipped to it: overflowing text must not ride past the
+    // input's chrome. The early return above keeps the clip stack untouched
+    // when there is nothing to draw inside it.
+    const LayoutResult& l = node->layout;
+    Rect content{r.x + l.insetLeft, r.y + l.insetTop, l.contentWidth(), l.contentHeight()};
+    backend_.pushClip(content, s.borderRadius);
+    if (!run.text.empty()) {
+        backend_.drawTextRun(run.text, content.x + rd::kInputTextPad, content.y + (content.h - s.fontSize) / 2,
+                             s.fontSize, run.color, font);
+    }
+    if (caretShown)
+        drawCaret(*node, run, content, s, font);
+    backend_.popClip();
 }
 
-void TreeWalker::drawCaret(const InputNode& node, const InputRun& run, const Rect& r, const ResolvedInputStyle& s,
+void TreeWalker::drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
                            const std::string& font) {
     namespace rd = render_defaults;
-    float caretX = r.x + rd::kInputTextPad;
+    float caretX = content.x + rd::kInputTextPad;
     // Advance past the rendered text; the run is the masked display string, so
     // the caret tracks password dots. A placeholder never advances the caret
     // (displayText is empty while a placeholder shows).
     if (!node.displayText.empty())
         caretX += backend_.measure(run.text, s.fontSize, 0, font).width;
+    // Pin to the content box: when the text overflows, the caret hugs the right
+    // edge instead of riding past the clip (and vanishing with it).
+    caretX = std::min(caretX, content.x + content.w - rd::kCaretWidth / 2);
 
-    Rect caret{caretX - rd::kCaretWidth / 2, r.y + rd::kCaretInset, rd::kCaretWidth, r.h - 2 * rd::kCaretInset};
+    Rect caret{caretX - rd::kCaretWidth / 2, content.y + rd::kCaretInset, rd::kCaretWidth,
+               content.h - 2 * rd::kCaretInset};
     backend_.fillRect(caret, s.color, 0);
 }
 

@@ -43,7 +43,10 @@ public:
     virtual void strokeRect(const Rect& r, uint32_t color, float radius, float width) = 0;
 
     // Clip stack: intersects the current clip; pushes and pops must nest.
-    // radius is advisory (both backends clip rect-only today).
+    // radius is ADVISORY: neither shipped backend can clip a rounded region
+    // (nanovg scissors are axis-aligned rects, SDL clip rects are integer
+    // rects), so content may bleed into the corner arcs of a rounded clip. A
+    // backend with stencil/mask clipping could honor it exactly.
     virtual void pushClip(const Rect& r, float radius) = 0;
     virtual void popClip() = 0;
 

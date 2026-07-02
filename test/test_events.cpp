@@ -465,6 +465,62 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
     CHECK(childClicked);
 }
 
+TEST_CASE("ScrollNode padding: padding band hits the scroll, content hits at the padded origin") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Scroll(Box().height(150).setKey("child")).width(100).height(100).padding(10);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* scrollNode = static_cast<ScrollNode*>(root);
+    REQUIRE(scrollNode->children.size() == 1);
+    Node* child = scrollNode->children[0].get();
+
+    // The detached content root lays out against the CONTENT width (100 - 2*10).
+    CHECK(child->layout.width == doctest::Approx(80));
+
+    // Inside the scroll but in the padding band: content is clipped away there,
+    // so the hit is the Scroll itself.
+    events.handleMouseMove(root, 5, 5);
+    CHECK(events.getHoveredNode() == root);
+    events.handleMouseMove(root, 50, 95);
+    CHECK(events.getHoveredNode() == root);
+
+    // Inside the padded viewport: (15,15) maps to content (5,5), in the child.
+    events.handleMouseMove(root, 15, 15);
+    CHECK(events.getHoveredNode() == child);
+
+    // Scrolled: content coordinates shift from the padded origin.
+    scrollNode->scrollOffsetY = 70;
+    events.handleMouseMove(root, 15, 85);  // content y = 85 - 10 + 70 = 145, in the child
+    CHECK(events.getHoveredNode() == child);
+    events.handleMouseMove(root, 15, 95);  // padding band still wins over scrolled content
+    CHECK(events.getHoveredNode() == root);
+}
+
+TEST_CASE("ScrollNode padding: scrolling clamps to the padded viewport") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Scroll(Box().height(300)).width(100).height(100).padding(10);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* scrollNode = static_cast<ScrollNode*>(root);
+
+    // 300px of content in an 80px padded viewport: max scroll = 300 - 80.
+    events.handleScroll(root, 50, 50, 0, -1000);
+    CHECK(scrollNode->targetScrollY == 220);
+
+    events.handleScroll(root, 50, 50, 0, 1000);
+    CHECK(scrollNode->targetScrollY == 0);
+}
+
 TEST_CASE("ScrollNode child layout dimensions - fixed size child") {
     Reconciler reconciler;
 

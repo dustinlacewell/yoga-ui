@@ -350,7 +350,11 @@ static void layoutScrollContent(Node* node) {
         auto* scrollNode = static_cast<ScrollNode*>(node);
         for (auto& child : scrollNode->children) {
             if (child->yogaNode) {
-                YGNodeCalculateLayout(child->yogaNode, scrollNode->layout.width, YGUndefined, YGDirectionLTR);
+                // The detached content root lays out against the scroll's CONTENT
+                // width: the scroll's own insets (synced by the enclosing
+                // calculateLayout before this runs) shrink the viewport, so
+                // Scroll padding is honored the same way Box padding is.
+                YGNodeCalculateLayout(child->yogaNode, scrollNode->layout.contentWidth(), YGUndefined, YGDirectionLTR);
                 child->syncLayoutFromYoga();
             }
         }
@@ -509,8 +513,11 @@ void ScrollNode::updateContentSize() {
 }
 
 void ScrollNode::clampScrollOffset() {
-    float maxScrollX = std::max(0.0f, contentWidth - layout.width);
-    float maxScrollY = std::max(0.0f, contentHeight - layout.height);
+    // The viewport is the border box minus the scroll's own insets — content is
+    // clipped to it, so scrolling ends when the content's far edge meets the
+    // padded viewport's far edge, not the border box's.
+    float maxScrollX = std::max(0.0f, contentWidth - layout.contentWidth());
+    float maxScrollY = std::max(0.0f, contentHeight - layout.contentHeight());
 
     targetScrollX = std::max(0.0f, std::min(targetScrollX, maxScrollX));
     targetScrollY = std::max(0.0f, std::min(targetScrollY, maxScrollY));

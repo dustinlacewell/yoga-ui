@@ -185,13 +185,21 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
         return nullptr;
     }
 
-    // Adjust child offset for scroll containers
+    // Scroll content is clipped to the PADDED viewport (border box minus the
+    // scroll's own insets), so a point in the padding band hits the Scroll
+    // itself — never the clipped-away content — and children are hit-tested
+    // from the content origin, matching where the renderer draws them.
     float childOffsetX = nodeX;
     float childOffsetY = nodeY;
     if (node->type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(node);
-        childOffsetX -= scrollNode->scrollOffsetX;
-        childOffsetY -= scrollNode->scrollOffsetY;
+        const LayoutResult& l = node->layout;
+        bool inViewport = x >= nodeX + l.insetLeft && x < nodeX + l.width - l.insetRight && y >= nodeY + l.insetTop &&
+                          y < nodeY + l.height - l.insetBottom;
+        if (!inViewport)
+            return node;
+        childOffsetX += l.insetLeft - scrollNode->scrollOffsetX;
+        childOffsetY += l.insetTop - scrollNode->scrollOffsetY;
     }
 
     // Check children in reverse order (front to back)
@@ -352,9 +360,10 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
             auto* scrollNode = static_cast<ScrollNode*>(node);
             scrollNode->updateContentSize();
 
-            // Check if there's content to scroll
-            bool canScrollX = scrollNode->contentWidth > scrollNode->layout.width;
-            bool canScrollY = scrollNode->contentHeight > scrollNode->layout.height;
+            // Content scrolls when it exceeds the padded viewport — the same
+            // region the renderer clips to and clampScrollOffset ranges over.
+            bool canScrollX = scrollNode->contentWidth > scrollNode->layout.contentWidth();
+            bool canScrollY = scrollNode->contentHeight > scrollNode->layout.contentHeight();
 
             if (canScrollY || canScrollX) {
                 // Update target (smooth scrolling interpolates toward this)
