@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace yui {
 
@@ -40,7 +41,7 @@ public:
     void handleSubmit() noexcept;
 
     // Get the currently hovered node (for cursor changes, etc.). Validates the
-    // liveness token first (mirrors getFocusedInput): a hovered node freed by a
+    // liveness token first (mirrors getFocusedNode): a hovered node freed by a
     // reconciliation is reported as no-hover rather than a dangling pointer.
     Node* getHoveredNode() const { return liveHoveredNode(); }
 
@@ -60,16 +61,41 @@ public:
     // stays deterministic under tests — no wall clock.
     void advanceClock(float dt) noexcept { clockMs_ += static_cast<double>(dt) * 1000.0; }
 
-    // Get the focused input node (for text input routing). Validates the
-    // liveness token first: if the focused InputNode was freed by a
-    // reconciliation, this clears the stale pointer and returns nullptr so a
-    // caller never receives a dangling pointer.
+    // Get the focused node, of any primitive type. Validates the liveness token
+    // first: if the focused node was freed by a reconciliation, this clears the
+    // stale pointer and returns nullptr so a caller never receives a dangling
+    // pointer.
+    Node* getFocusedNode() const { return liveFocusedNode(); }
+
+    // Get the focused node iff it is an Input (for text input routing). The
+    // typed view over getFocusedNode: a focused non-Input reads as "no focused
+    // input", so the text-editing entry points below no-op for it.
     InputNode* getFocusedInput() const {
         return liveFocusedInput();
     }
 
-    // Programmatically focus an input node (used by autoFocus)
-    void focusInput(InputNode* node);
+    // Move focus to `node` (nullptr = blur). Programmatic focus accepts ANY
+    // node — the focusable predicate gates only click/Tab ACQUISITION. Fires
+    // onFocus(false) on the old node before onFocus(true) on the new; an Input
+    // gaining focus restarts its caret blink.
+    void focusNode(Node* node);
+
+    // Move focus to the next/previous focusable node in document (pre-order)
+    // order, wrapping at the ends. With nothing focused, Tab targets the first
+    // focusable and Shift-Tab the last. While a focus trap is set (and its root
+    // alive), traversal is scoped to the trap root's subtree.
+    void focusNext(Node* root);
+    void focusPrev(Node* root);
+
+    // Scope Tab traversal to `node`'s subtree. The slot follows the same
+    // liveness-token pattern as the focus/hover/press slots: a trap root freed
+    // by a reconciliation reads as no-trap and traversal falls back to the full
+    // tree.
+    void setFocusTrap(Node* node) {
+        trapNode_ = node;
+        trapAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    }
+    void clearFocusTrap() { setFocusTrap(nullptr); }
 
     // Read-and-clear the visual-state latch: true iff a hover, press, or focus
     // TRANSITION occurred since the last consume. Latched (not returned per
@@ -96,11 +122,14 @@ public:
         if (hoveredNode_ == node) {
             setHoveredNode(nullptr);
         }
-        if (focusedInput_ == node) {
-            setFocusedInput(nullptr);
+        if (focusedNode_ == node) {
+            setFocusedNode(nullptr);
         }
         if (pressedNode_ == node) {
             setPressedNode(nullptr);
+        }
+        if (trapNode_ == node) {
+            setFocusTrap(nullptr);
         }
     }
 
@@ -155,28 +184,49 @@ private:
     // Update focus when clicking
     void updateFocus(Node* clicked);
 
-    // Set the focused input and capture its liveness token in lockstep. The
-    // sole writer of focusedInput_ — keeps the raw pointer and the weak token
-    // observing the same node so a later validate can detect a freed input.
-    void setFocusedInput(InputNode* node) {
-        focusedInput_ = node;
-        focusedInputAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    // Set the focused node and capture its liveness token in lockstep. The
+    // sole writer of focusedNode_ — keeps the raw pointer and the weak token
+    // observing the same node so a later validate can detect a freed node.
+    void setFocusedNode(Node* node) {
+        focusedNode_ = node;
+        focusedNodeAlive_ = node ? node->alive : std::weak_ptr<bool>{};
     }
 
-    // Return focusedInput_ only if its node is still alive; otherwise clear the
-    // stale pointer and return nullptr. Every deref of the focused input routes
+    // Return focusedNode_ only if its node is still alive; otherwise clear the
+    // stale pointer and return nullptr. Every deref of the focused node routes
     // through here so a reconciliation that freed the node (without an
     // onNodeRemoved for it) can never produce a use-after-free.
-    InputNode* liveFocusedInput() const {
-        if (!focusedInput_)
+    Node* liveFocusedNode() const {
+        if (!focusedNode_)
             return nullptr;
-        auto alive = focusedInputAlive_.lock();
+        auto alive = focusedNodeAlive_.lock();
         if (!alive || !*alive) {
-            focusedInput_ = nullptr;
-            focusedInputAlive_.reset();
+            focusedNode_ = nullptr;
+            focusedNodeAlive_.reset();
             return nullptr;
         }
-        return focusedInput_;
+        return focusedNode_;
+    }
+
+    // Typed view of the focused slot: the focused node iff it is an Input.
+    InputNode* liveFocusedInput() const {
+        Node* n = liveFocusedNode();
+        return (n && n->type() == PrimitiveType::Input) ? static_cast<InputNode*>(n) : nullptr;
+    }
+
+    // Return trapNode_ only if it is still alive; otherwise clear the stale
+    // pointer and return nullptr (mirrors liveFocusedNode — a removed trap root
+    // silently unscopes traversal back to the full tree).
+    Node* liveTrapRoot() const {
+        if (!trapNode_)
+            return nullptr;
+        auto alive = trapAlive_.lock();
+        if (!alive || !*alive) {
+            trapNode_ = nullptr;
+            trapAlive_.reset();
+            return nullptr;
+        }
+        return trapNode_;
     }
 
     // Record the node that received the most recent mouse press, with its button
@@ -256,6 +306,14 @@ private:
     // the stack.
     Node* findKeyTarget(Node* node, KeyPhase phase, int depth = 0);
 
+    // Append every focusable node under `node` in FORWARD pre-order (document
+    // order). `depth` bounds the descent against maxTreeDepth_ (see hitTest).
+    void collectFocusables(Node* node, std::vector<Node*>& out, int depth = 0);
+
+    // Shared body of focusNext/focusPrev: collect the focusable order (scoped to
+    // a live trap root), step from the focused node with wraparound, focus.
+    void moveFocus(Node* root, bool forward);
+
     // Route a caught user-callback exception to the installed sink (no-op if none
     // installed; the Host always installs one that applies the default policy).
     void reportError(std::string_view where, const std::exception* eOrNull) noexcept {
@@ -277,11 +335,15 @@ private:
     // token (Node::alive) without owning it.
     mutable Node* hoveredNode_ = nullptr;
     mutable std::weak_ptr<bool> hoveredNodeAlive_;
-    // mutable: liveFocusedInput() lazily clears a stale focus from const
-    // getFocusedInput(). focusedInputAlive_ observes the focused node's
+    // mutable: liveFocusedNode() lazily clears a stale focus from const
+    // getFocusedNode(). focusedNodeAlive_ observes the focused node's
     // liveness token (Node::alive) without owning it.
-    mutable InputNode* focusedInput_ = nullptr;
-    mutable std::weak_ptr<bool> focusedInputAlive_;
+    mutable Node* focusedNode_ = nullptr;
+    mutable std::weak_ptr<bool> focusedNodeAlive_;
+    // Focus-trap root: while set and alive, focusNext/focusPrev traverse only
+    // its subtree. mutable: liveTrapRoot() lazily clears a stale trap.
+    mutable Node* trapNode_ = nullptr;
+    mutable std::weak_ptr<bool> trapAlive_;
     // The node that received the last mouse press (+ its button), for click
     // press/release matching — AND the implicit pointer-capture slot: while set,
     // mouse moves and the release route to this node regardless of what is under

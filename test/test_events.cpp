@@ -2,11 +2,13 @@
 
 #include <yui/core/EventHandler.hpp>
 #include <yui/detail/Reconciler.hpp>
+#include <yui/render/StyleResolver.hpp>
 #include <yui/yui.hpp>
 
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace yui;
 
@@ -1154,7 +1156,7 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
 
     // Focus the input and observe its liveness token (mirrors how the B3 test
     // observes the fiber's alive token to pin the death point).
-    events.focusInput(input);
+    events.focusNode(input);
     CHECK(events.getFocusedInput() == input);
     std::shared_ptr<bool> inputAlive = input->alive;
     CHECK(*inputAlive == true);
@@ -1209,7 +1211,7 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
 
     auto* input = static_cast<InputNode*>(root->children[0].get());
     REQUIRE(input->type() == PrimitiveType::Input);
-    events.focusInput(input);
+    events.focusNode(input);
 
     // "é" is a 2-byte UTF-8 code point (0xC3 0xA9). One backspace must remove
     // both bytes, leaving an empty (and valid-UTF-8) string.
@@ -2174,4 +2176,461 @@ TEST_CASE("Cursor - explicit prop, Input default, and captor override during cap
     // Release resyncs hover to the Input: its default shows again.
     events.handleMouseUp(root, 125, 25, MouseButton::Left);
     CHECK(events.getCursor() == CursorShape::IBeam);
+}
+
+// ============================================================================
+// Focus / tab system: the generalized focus slot (any primitive), the explicit
+// .focusable() acquisition gate, pre-order Tab traversal with wraparound, the
+// focus trap, and programmatic focus. focusStyle needs no renderer change —
+// the focused flag lives on base Node and the resolver is already type-general.
+// ============================================================================
+
+TEST_CASE("Focus - click focuses a focusable Box and focusStyle resolves") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    BoxStyle focus;
+    focus.backgroundColor = 0x222222FF;
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("target")
+                            .focusable()
+                            .backgroundColor(0x111111FF)
+                            .focusStyle(focus)
+                    )
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto* box = static_cast<BoxNode*>(root->children[0].get());
+
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
+    events.handleMouseUp(root, 25, 25, MouseButton::Left);
+
+    CHECK(events.getFocusedNode() == box);
+    CHECK(box->focused == true);
+    CHECK(events.getFocusedInput() == nullptr);  // typed view: not an Input
+
+    // The focused pipeline is type-general end to end: the resolver applies the
+    // Box's focusStyle exactly as it would an Input's.
+    auto resolved = render::resolveBox(box->props, box->hovered, box->focused);
+    CHECK(resolved.backgroundColor == 0x222222FFu);
+}
+
+TEST_CASE("Focus - a click walks up to the nearest focusable ancestor") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box(
+                        Box(
+                            Box().width(30).height(30).setKey("leaf")
+                        )
+                            .width(50)
+                            .height(50)
+                            .setKey("holder")
+                            .focusable()
+                    )
+                    .width(100)
+                    .height(100);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    Node* holder = root->children[0].get();
+    Node* leaf = holder->children[0].get();
+
+    // The leaf is not focusable; the click walks up and focuses the holder.
+    events.handleMouseDown(root, 15, 15, MouseButton::Left);
+    events.handleMouseUp(root, 15, 15, MouseButton::Left);
+    CHECK(events.getFocusedNode() == holder);
+    CHECK(holder->focused == true);
+    CHECK(leaf->focused == false);
+
+    // No focusable in the clicked chain (the root Box never opted in): the
+    // click clears focus — blur-on-click-away.
+    events.handleMouseDown(root, 90, 90, MouseButton::Left);
+    events.handleMouseUp(root, 90, 90, MouseButton::Left);
+    CHECK(events.getFocusedNode() == nullptr);
+    CHECK(holder->focused == false);
+}
+
+TEST_CASE("Tab - pre-order traversal skips non-focusables and wraps both ways") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Row(
+                    Box().width(50).height(50).setKey("a").focusable(),
+                    Box().width(50).height(50).setKey("plain"),
+                    Input().width(50).height(50).setKey("in"),
+                    Box().width(50).height(50).setKey("b").focusable()
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* a = root->children[0].get();
+    Node* in = root->children[2].get();
+    Node* b = root->children[3].get();
+
+    // Nothing focused: Tab enters at the first focusable in document order.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == a);
+
+    // Pre-order: the non-focusable Box is skipped; an Input needs no opt-in.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == in);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == b);
+
+    // Wraps at the end.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == a);
+
+    // Shift-Tab wraps backward from the front.
+    events.focusPrev(root);
+    CHECK(events.getFocusedNode() == b);
+    events.focusPrev(root);
+    CHECK(events.getFocusedNode() == in);
+
+    // Nothing focused: Shift-Tab enters at the last focusable.
+    events.focusNode(nullptr);
+    events.focusPrev(root);
+    CHECK(events.getFocusedNode() == b);
+}
+
+TEST_CASE("Tab - a focused node freed by reconcile reads as no-focus; Tab recovers (no UAF)") {
+    // The generalized-slot analogue of the focused-input UAF regression: NO
+    // node-removed callback is wired (the token-only escape path), so a
+    // reconcile that frees the focused node leaves the raw pointer dangling
+    // until a liveness check.
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Row(
+                    Box().width(50).height(50).setKey("a").focusable(),
+                    Box().width(50).height(50).setKey("b").focusable()
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* b = root->children[1].get();
+    events.focusNode(b);
+    CHECK(events.getFocusedNode() == b);
+    std::shared_ptr<bool> bAlive = b->alive;
+
+    // Reconcile "b" into a different primitive type: forced removal frees it.
+    auto next = Row(
+                    Box().width(50).height(50).setKey("a").focusable(),
+                    Text("x").width(50).height(50).setKey("b")
+                )
+                    .width(200)
+                    .height(50);
+    reconciler.reconcile(fiber.get(), std::move(next));
+    root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+    CHECK(*bAlive == false);  // genuinely freed — the dangling precondition
+
+    // The dead token reads as no-focus; Tab recovers to the first focusable.
+    CHECK(events.getFocusedNode() == nullptr);
+    CHECK_NOTHROW(events.focusNext(root));
+    CHECK(events.getFocusedNode() == root->children[0].get());
+
+    // A trap root freed by reconcile likewise falls back: traversal scopes to
+    // the FULL tree instead of collecting from freed memory.
+    events.setFocusTrap(root->children[1].get());  // the Text node as trap root
+    std::shared_ptr<bool> trapAlive = root->children[1]->alive;
+    auto next2 = Row(
+                     Box().width(50).height(50).setKey("a").focusable(),
+                     Box().width(50).height(50).setKey("c").focusable()
+                 )
+                     .width(200)
+                     .height(50);
+    reconciler.reconcile(fiber.get(), std::move(next2));
+    root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+    CHECK(*trapAlive == false);
+
+    // Focus is still on the reused "a"; Tab under the dead trap moves through
+    // the full tree to "c".
+    CHECK(events.getFocusedNode() == root->children[0].get());
+    CHECK_NOTHROW(events.focusNext(root));
+    CHECK(events.getFocusedNode() == root->children[1].get());
+}
+
+TEST_CASE("Key - events route to the focused Box and bubble while unconsumed") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    std::vector<std::string> log;
+    auto tree = Box(
+                        Box(
+                            Box().width(30).height(30).setKey("leaf").focusable()
+                        )
+                            .width(50)
+                            .height(50)
+                            .setKey("mid")
+                            .onKeyDown([&](int, uint16_t, bool) { log.push_back("mid"); })
+                    )
+                    .width(100)
+                    .height(100)
+                    .onKeyDown([&](int, uint16_t, bool) { log.push_back("root"); });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    Node* mid = root->children[0].get();
+    Node* leaf = mid->children[0].get();
+
+    // The focused Box carries no handler: the event starts AT the focused node
+    // and bubbles until the first handler consumes — the root is never reached.
+    events.focusNode(leaf);
+    bool consumed = events.handleKeyDown(root, 65, 0);
+    CHECK(consumed == true);
+    CHECK(log == std::vector<std::string>{"mid"});
+
+    // A focused handler-bearing node consumes in place.
+    log.clear();
+    events.focusNode(mid);
+    events.handleKeyDown(root, 65, 0);
+    CHECK(log == std::vector<std::string>{"mid"});
+}
+
+TEST_CASE("Focus - text editing routes only through a focused Input") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Row(
+                    Box().width(50).height(50).setKey("box").focusable(),
+                    Input().width(50).height(50).setKey("in")
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* box = root->children[0].get();
+    auto* input = static_cast<InputNode*>(root->children[1].get());
+
+    // Focused Input: the text entry points reach it.
+    events.focusNode(input);
+    events.handleTextInput("hi");
+    CHECK(input->displayText == "hi");
+    events.handleBackspace();
+    CHECK(input->displayText == "h");
+    bool submitted = false;
+    input->props.onSubmit = [&] { submitted = true; };
+    events.handleSubmit();
+    CHECK(submitted == true);
+
+    // Focused Box: the typed view is null, so the same entry points are safe
+    // no-ops — the Input's state is untouched.
+    events.focusNode(box);
+    CHECK(events.getFocusedNode() == box);
+    CHECK(events.getFocusedInput() == nullptr);
+    CHECK_NOTHROW(events.handleTextInput("x"));
+    CHECK_NOTHROW(events.handleBackspace());
+    CHECK_NOTHROW(events.handleSubmit());
+    CHECK(input->displayText == "h");
+}
+
+TEST_CASE("Focus - programmatic focusNode/blur, onFocus ordering, any node accepted") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    std::vector<std::string> log;
+    auto tree = Row(
+                    Box().width(50).height(50).setKey("a").focusable().onFocus(
+                        [&](bool f) { log.push_back(f ? "a:true" : "a:false"); }),
+                    Box().width(50).height(50).setKey("b").onFocus(
+                        [&](bool f) { log.push_back(f ? "b:true" : "b:false"); })
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* a = root->children[0].get();
+    Node* b = root->children[1].get();
+
+    events.focusNode(a);
+    CHECK(log == std::vector<std::string>{"a:true"});
+    CHECK(a->focused == true);
+
+    // "b" never opted into .focusable(): programmatic focus still lands (the
+    // predicate gates only click/Tab acquisition) — and the old node's
+    // onFocus(false) fires BEFORE the new node's onFocus(true).
+    events.focusNode(b);
+    CHECK(log == std::vector<std::string>{"a:true", "a:false", "b:true"});
+    CHECK(a->focused == false);
+    CHECK(b->focused == true);
+    CHECK(events.getFocusedNode() == b);
+
+    // Blur.
+    events.focusNode(nullptr);
+    CHECK(log == std::vector<std::string>{"a:true", "a:false", "b:true", "b:false"});
+    CHECK(b->focused == false);
+    CHECK(events.getFocusedNode() == nullptr);
+
+    // Re-focusing the current focus is a no-op (no spurious callbacks).
+    events.focusNode(a);
+    log.clear();
+    events.focusNode(a);
+    CHECK(log.empty());
+}
+
+TEST_CASE("Focus - autoFocus on a Box focuses it at mount") {
+    EventTestHost host([]() {
+        return Row(Box().width(50).height(50).setKey("box").focusable().autoFocus())
+            .width(200)
+            .height(50);
+    });
+
+    auto mountFrame = host.update(200, 50);
+    CHECK(mountFrame.needsRepaint == true);
+
+    Node* focused = host.getFocusedNode();
+    REQUIRE(focused != nullptr);
+    CHECK(focused->type() == PrimitiveType::Box);
+    CHECK(focused->focused == true);
+    CHECK(host.getFocusedInput() == nullptr);
+}
+
+TEST_CASE("UpdateResult - focus traversal latches needsRepaint until the next update") {
+    EventTestHost host([]() {
+        return Row(Box().width(50).height(50).setKey("a").focusable(),
+                   Box().width(50).height(50).setKey("b").focusable())
+            .width(200)
+            .height(50);
+    });
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+    CHECK(host.update(200, 50).needsRepaint == false);
+
+    // Tab: the focus transition latches; the NEXT update repaints, then idle.
+    host.focusNext();
+    REQUIRE(host.getFocusedNode() != nullptr);
+    CHECK(host.update(200, 50).needsRepaint == true);
+    CHECK(host.update(200, 50).needsRepaint == false);
+
+    // Programmatic focus latches the same way.
+    host.focus(host.root()->children[1].get());
+    CHECK(host.update(200, 50).needsRepaint == true);
+    CHECK(host.update(200, 50).needsRepaint == false);
+
+    // And blur.
+    host.blur();
+    CHECK(host.getFocusedNode() == nullptr);
+    CHECK(host.update(200, 50).needsRepaint == true);
+    CHECK(host.update(200, 50).needsRepaint == false);
+}
+
+TEST_CASE("Focus trap - Tab cycles inside the trap; clearing restores the full tree") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Row(
+                    Box().width(40).height(40).setKey("outside-a").focusable(),
+                    Box(
+                        Box().width(20).height(20).setKey("t1").focusable(),
+                        Box().width(20).height(20).setKey("t2").focusable()
+                    )
+                        .width(60)
+                        .height(40)
+                        .setKey("modal"),
+                    Box().width(40).height(40).setKey("outside-b").focusable()
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* outsideA = root->children[0].get();
+    Node* modal = root->children[1].get();
+    Node* t1 = modal->children[0].get();
+    Node* t2 = modal->children[1].get();
+    Node* outsideB = root->children[2].get();
+
+    events.setFocusTrap(modal);
+
+    // Scoped traversal: enter at the trap's first focusable and cycle inside —
+    // the outside focusables are unreachable by Tab.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t2);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);  // wraps inside the trap
+    events.focusPrev(root);
+    CHECK(events.getFocusedNode() == t2);
+
+    // Focus parked outside the trap (programmatic): the next Tab pulls it in.
+    events.focusNode(outsideA);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);
+
+    // Clearing the trap restores full-tree traversal (document order resumes
+    // from the current node).
+    events.clearFocusTrap();
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t2);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == outsideB);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == outsideA);  // full-tree wrap
+}
+
+TEST_CASE("Exception - a throwing onFocus during Tab keeps flags and slot consistent") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int errorCount = 0;
+    events.setErrorHandler([&](std::string_view, const std::exception*) { errorCount++; });
+
+    auto tree = Row(
+                    Box().width(50).height(50).setKey("a").focusable().onFocus(
+                        [](bool) { throw std::runtime_error("focus boom"); }),
+                    Box().width(50).height(50).setKey("b").focusable().onFocus(
+                        [](bool) { throw std::runtime_error("focus boom"); })
+                )
+                    .width(200)
+                    .height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    Node* a = root->children[0].get();
+    Node* b = root->children[1].get();
+
+    // Tab onto "a": onFocus(true) throws, but the flag and slot committed first.
+    CHECK_NOTHROW(events.focusNext(root));
+    CHECK(errorCount == 1);
+    CHECK(events.getFocusedNode() == a);
+    CHECK(a->focused == true);
+
+    // Tab onto "b": BOTH the old node's onFocus(false) and the new node's
+    // onFocus(true) throw; flags and slot still transition cleanly.
+    CHECK_NOTHROW(events.focusNext(root));
+    CHECK(errorCount == 3);
+    CHECK(events.getFocusedNode() == b);
+    CHECK(a->focused == false);
+    CHECK(b->focused == true);
 }

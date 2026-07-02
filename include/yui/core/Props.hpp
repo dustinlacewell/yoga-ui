@@ -92,6 +92,9 @@ struct EventProps {
     std::function<void(int, uint16_t, bool)> onKeyDown;      // (keyCode, modifiers, repeat)
     std::function<void(int, uint16_t)> onKeyUp;              // (keyCode, modifiers)
     std::optional<CursorShape> cursor;                       // pointer shape while hovered/captured
+    bool focusable = false;                                  // click/Tab can move focus here
+                                                             // (an Input always can)
+    std::optional<bool> autoFocus;                           // focus this node when it mounts
 };
 
 // --- State-based style overrides ---
@@ -167,7 +170,6 @@ struct InputProps : LayoutProps, EventProps {
     std::optional<float> borderRadius;
     std::function<void(const std::string&)> onChange;
     std::function<void()> onSubmit;
-    std::optional<bool> autoFocus;
 
     // State-based style overrides
     std::optional<InputStyle> hoverStyle;

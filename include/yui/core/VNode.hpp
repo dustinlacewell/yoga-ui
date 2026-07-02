@@ -263,6 +263,18 @@ public:
     Derived& cursor(CursorShape v) {
         return event([&](EventProps& p) { p.cursor = v; });
     }
+    // Let click and Tab move focus to this node (an Input always can). Gates
+    // acquisition only — programmatic focus (Host::focus) accepts any node.
+    Derived& focusable(bool v = true) {
+        return event([&](EventProps& p) { p.focusable = v; });
+    }
+    // Focus this node when it mounts (any primitive, not just Input).
+    // Deliberately NOT gated on .focusable(): it routes through focusNode, which
+    // accepts any node (tabindex=-1 parity), so a node can be mount-focused even
+    // though Tab/click can never acquire it. Intentional, not a bug.
+    Derived& autoFocus(bool v = true) {
+        return event([&](EventProps& p) { p.autoFocus = v; });
+    }
 
     // --- Conversion seam: builders compose into the VNode/Child trees ---
     operator VNode() const& { return node_; }
@@ -362,7 +374,6 @@ public:
     InputBuilder& onSubmit(std::function<void()> fn) {
         return p([&](InputProps& i) { i.onSubmit = std::move(fn); });
     }
-    InputBuilder& autoFocus(bool v = true) { return p([&](InputProps& i) { i.autoFocus = v; }); }
     InputBuilder& hoverStyle(InputStyle s) {
         return p([&](InputProps& i) { i.hoverStyle = std::move(s); });
     }

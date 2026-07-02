@@ -305,12 +305,19 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
         keyMod |= KeyMod_Ctrl;
     if (mods & GLFW_MOD_ALT)
         keyMod |= KeyMod_Alt;
-    if (action == GLFW_PRESS)
-        g_host->handleKeyDown(key, keyMod, false);
-    else if (action == GLFW_REPEAT)
-        g_host->handleKeyDown(key, keyMod, true);
-    else if (action == GLFW_RELEASE)
+    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+        // Tab traversal lives in the platform shim (core stays keycode-agnostic;
+        // GLFW's Tab is 258), and only when no app handler consumed the key.
+        bool consumed = g_host->handleKeyDown(key, keyMod, action == GLFW_REPEAT);
+        if (!consumed && key == GLFW_KEY_TAB) {
+            if (keyMod & KeyMod_Shift)
+                g_host->focusPrev();
+            else
+                g_host->focusNext();
+        }
+    } else if (action == GLFW_RELEASE) {
         g_host->handleKeyUp(key, keyMod);
+    }
 }
 
 int main() {

@@ -645,7 +645,7 @@ TEST_CASE("A throw during a mount pass does not leave the commit queue dangling 
     Reconciler reconciler;
 
     bool armed = true;
-    reconciler.setAutoFocusCallback([&](InputNode*) {
+    reconciler.setAutoFocusCallback([&](Node*) {
         if (armed) throw std::runtime_error("autofocus boom");
     });
 

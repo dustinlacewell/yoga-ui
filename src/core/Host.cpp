@@ -14,7 +14,7 @@ Host::Host() : reconciler_(std::make_unique<Reconciler>()) {
     detail::liveHosts.insert(this);
 
     reconciler_->setNodeRemovedCallback([this](Node* node) { eventHandler_.onNodeRemoved(node); });
-    reconciler_->setAutoFocusCallback([this](InputNode* node) { eventHandler_.focusInput(node); });
+    reconciler_->setAutoFocusCallback([this](Node* node) { eventHandler_.focusNode(node); });
     reconciler_->setHost(this);
     reconciler_->setConfig(config_.get());
 

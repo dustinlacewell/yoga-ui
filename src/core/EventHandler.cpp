@@ -301,12 +301,13 @@ bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, floa
 }
 
 bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool repeat) noexcept {
-    // Focused Input wins; otherwise route to the first pre-order onKeyDown handler.
-    // liveFocusedInput() validates the liveness token so a reconciliation that
-    // freed the focused input routes to the tree instead of a dangling pointer.
+    // The focused node (any type) wins; otherwise route to the first pre-order
+    // onKeyDown handler. liveFocusedNode() validates the liveness token so a
+    // reconciliation that freed the focused node routes to the tree instead of
+    // a dangling pointer.
     Node* target;
-    if (InputNode* focused = liveFocusedInput()) {
-        target = static_cast<Node*>(focused);
+    if (Node* focused = liveFocusedNode()) {
+        target = focused;
     } else {
         target = findKeyTarget(root, KeyPhase::Down);
         if (!target) target = root;
@@ -324,11 +325,12 @@ bool EventHandler::handleKeyDown(Node* root, int keyCode, uint16_t keyMod, bool 
 }
 
 bool EventHandler::handleKeyUp(Node* root, int keyCode, uint16_t keyMod) noexcept {
-    // Focused Input wins; otherwise route to the first pre-order onKeyUp handler.
-    // liveFocusedInput() validates the liveness token (see handleKeyDown).
+    // The focused node (any type) wins; otherwise route to the first pre-order
+    // onKeyUp handler. liveFocusedNode() validates the liveness token (see
+    // handleKeyDown).
     Node* target;
-    if (InputNode* focused = liveFocusedInput()) {
-        target = static_cast<Node*>(focused);
+    if (Node* focused = liveFocusedNode()) {
+        target = focused;
     } else {
         target = findKeyTarget(root, KeyPhase::Up);
         if (!target) target = root;
@@ -420,6 +422,20 @@ bool EventHandler::containsPoint(Node* node, float x, float y, float offsetX, fl
 
 namespace {
 
+// The shared EventProps of a node, dispatched on its primitive type: the ONE
+// per-type switch every event-prop read routes through (click/hover/focus/
+// cursor/key dispatch below all read the base slice this returns).
+EventProps* eventPropsOf(Node* node) {
+    switch (node->type()) {
+    case PrimitiveType::Box:    return &static_cast<BoxNode*>(node)->props;
+    case PrimitiveType::Text:   return &static_cast<TextNode*>(node)->props;
+    case PrimitiveType::Input:  return &static_cast<InputNode*>(node)->props;
+    case PrimitiveType::Scroll: return &static_cast<ScrollNode*>(node)->props;
+    case PrimitiveType::Canvas: return &static_cast<CanvasNode*>(node)->props;
+    }
+    return nullptr;
+}
+
 // Select the click handler for a given mouse button from a node's props.
 const std::function<void()>* clickHandlerFor(const EventProps& props, MouseButton button) {
     switch (button) {
@@ -430,42 +446,39 @@ const std::function<void()>* clickHandlerFor(const EventProps& props, MouseButto
     return nullptr;
 }
 
-// Click handler for the node's button, dispatched on the node's primitive type.
+// Click handler for the node's button.
 const std::function<void()>* clickHandlerFor(Node* node, MouseButton button) {
-    switch (node->type()) {
-    case PrimitiveType::Box:    return clickHandlerFor(static_cast<BoxNode*>(node)->props, button);
-    case PrimitiveType::Text:   return clickHandlerFor(static_cast<TextNode*>(node)->props, button);
-    case PrimitiveType::Input:  return clickHandlerFor(static_cast<InputNode*>(node)->props, button);
-    case PrimitiveType::Scroll: return clickHandlerFor(static_cast<ScrollNode*>(node)->props, button);
-    case PrimitiveType::Canvas: return clickHandlerFor(static_cast<CanvasNode*>(node)->props, button);
-    }
-    return nullptr;
+    const EventProps* p = eventPropsOf(node);
+    return p ? clickHandlerFor(*p, button) : nullptr;
 }
 
-// The onHover handler for a node, dispatched on its primitive type (mirrors
-// clickHandlerFor). Returns nullptr if the node carries no onHover.
+// The onHover handler for a node; nullptr if the node carries none.
 const std::function<void(bool)>* hoverHandlerFor(Node* node) {
-    switch (node->type()) {
-    case PrimitiveType::Box:    return static_cast<BoxNode*>(node)->props.onHover ? &static_cast<BoxNode*>(node)->props.onHover : nullptr;
-    case PrimitiveType::Text:   return static_cast<TextNode*>(node)->props.onHover ? &static_cast<TextNode*>(node)->props.onHover : nullptr;
-    case PrimitiveType::Input:  return static_cast<InputNode*>(node)->props.onHover ? &static_cast<InputNode*>(node)->props.onHover : nullptr;
-    case PrimitiveType::Scroll: return static_cast<ScrollNode*>(node)->props.onHover ? &static_cast<ScrollNode*>(node)->props.onHover : nullptr;
-    case PrimitiveType::Canvas: return static_cast<CanvasNode*>(node)->props.onHover ? &static_cast<CanvasNode*>(node)->props.onHover : nullptr;
-    }
-    return nullptr;
+    const EventProps* p = eventPropsOf(node);
+    return (p && p->onHover) ? &p->onHover : nullptr;
 }
 
-// The explicit cursor prop of a node, dispatched on its primitive type (mirrors
-// hoverHandlerFor). nullopt when the node requests no particular shape.
+// The onFocus handler for a node (mirrors hoverHandlerFor); nullptr if none.
+const std::function<void(bool)>* focusHandlerFor(Node* node) {
+    const EventProps* p = eventPropsOf(node);
+    return (p && p->onFocus) ? &p->onFocus : nullptr;
+}
+
+// The explicit cursor prop of a node; nullopt when the node requests no
+// particular shape.
 std::optional<CursorShape> cursorFor(Node* node) {
-    switch (node->type()) {
-    case PrimitiveType::Box:    return static_cast<BoxNode*>(node)->props.cursor;
-    case PrimitiveType::Text:   return static_cast<TextNode*>(node)->props.cursor;
-    case PrimitiveType::Input:  return static_cast<InputNode*>(node)->props.cursor;
-    case PrimitiveType::Scroll: return static_cast<ScrollNode*>(node)->props.cursor;
-    case PrimitiveType::Canvas: return static_cast<CanvasNode*>(node)->props.cursor;
-    }
-    return std::nullopt;
+    const EventProps* p = eventPropsOf(node);
+    return p ? p->cursor : std::nullopt;
+}
+
+// Can click/Tab move focus to this node? An Input always can; anything else
+// must opt in via the .focusable() prop. Gates ACQUISITION only — programmatic
+// focus (focusNode / Host::focus) accepts any node.
+bool isFocusable(Node* node) {
+    if (node->type() == PrimitiveType::Input)
+        return true;
+    const EventProps* p = eventPropsOf(node);
+    return p && p->focusable;
 }
 
 }  // namespace
@@ -517,7 +530,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
         return event.consumed;
     }
 
-    // Get event handlers from props based on node type
+    // Get event handlers from the node's shared EventProps slice
     std::function<void()>* onClick = nullptr;
     std::function<void()>* onRightClick = nullptr;
     std::function<void()>* onMiddleClick = nullptr;
@@ -530,32 +543,19 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     std::function<void(int, uint16_t, bool)>* onKeyDown = nullptr;
     std::function<void(int, uint16_t)>* onKeyUp = nullptr;
 
-#define YUI_EXTRACT_EVENTS(nodeType, castType) \
-    case PrimitiveType::nodeType: { \
-        auto* n = static_cast<castType*>(node); \
-        onClick = n->props.onClick ? &n->props.onClick : nullptr; \
-        onRightClick = n->props.onRightClick ? &n->props.onRightClick : nullptr; \
-        onMiddleClick = n->props.onMiddleClick ? &n->props.onMiddleClick : nullptr; \
-        onDoubleClick = n->props.onDoubleClick ? &n->props.onDoubleClick : nullptr; \
-        onMouseDown = n->props.onMouseDown ? &n->props.onMouseDown : nullptr; \
-        onMouseUp = n->props.onMouseUp ? &n->props.onMouseUp : nullptr; \
-        onMouseMove = n->props.onMouseMove ? &n->props.onMouseMove : nullptr; \
-        onDrag = n->props.onDrag ? &n->props.onDrag : nullptr; \
-        onScroll = n->props.onScroll ? &n->props.onScroll : nullptr; \
-        onKeyDown = n->props.onKeyDown ? &n->props.onKeyDown : nullptr; \
-        onKeyUp = n->props.onKeyUp ? &n->props.onKeyUp : nullptr; \
-        break; \
+    if (EventProps* p = eventPropsOf(node)) {
+        onClick = p->onClick ? &p->onClick : nullptr;
+        onRightClick = p->onRightClick ? &p->onRightClick : nullptr;
+        onMiddleClick = p->onMiddleClick ? &p->onMiddleClick : nullptr;
+        onDoubleClick = p->onDoubleClick ? &p->onDoubleClick : nullptr;
+        onMouseDown = p->onMouseDown ? &p->onMouseDown : nullptr;
+        onMouseUp = p->onMouseUp ? &p->onMouseUp : nullptr;
+        onMouseMove = p->onMouseMove ? &p->onMouseMove : nullptr;
+        onDrag = p->onDrag ? &p->onDrag : nullptr;
+        onScroll = p->onScroll ? &p->onScroll : nullptr;
+        onKeyDown = p->onKeyDown ? &p->onKeyDown : nullptr;
+        onKeyUp = p->onKeyUp ? &p->onKeyUp : nullptr;
     }
-
-    switch (node->type()) {
-    YUI_EXTRACT_EVENTS(Box, BoxNode)
-    YUI_EXTRACT_EVENTS(Text, TextNode)
-    YUI_EXTRACT_EVENTS(Input, InputNode)
-    YUI_EXTRACT_EVENTS(Scroll, ScrollNode)
-    YUI_EXTRACT_EVENTS(Canvas, CanvasNode)
-    }
-
-#undef YUI_EXTRACT_EVENTS
 
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
@@ -739,21 +739,20 @@ void EventHandler::updateHover(Node* newHovered) {
 }
 
 void EventHandler::updateFocus(Node* clicked) {
-    InputNode* newFocus = nullptr;
+    // Walk up from the clicked node to the first focusable one. No focusable in
+    // the chain ⇒ nullptr: a click on non-focusable space clears focus
+    // (blur-on-click-away).
+    Node* target = clicked;
+    while (target && !isFocusable(target))
+        target = target->parent;
 
-    // Walk up from clicked node to find an input
-    Node* node = clicked;
-    while (node) {
-        if (node->type() == PrimitiveType::Input) {
-            newFocus = static_cast<InputNode*>(node);
-            break;
-        }
-        node = node->parent;
-    }
+    focusNode(target);
+}
 
-    // Validate first: drops a stale focusedInput_ so the equality test below
+void EventHandler::focusNode(Node* node) {
+    // Validate first: drops a stale focusedNode_ so the equality test below
     // can't be fooled by a freed pointer aliasing a freshly-allocated node.
-    if (newFocus == liveFocusedInput())
+    if (node == liveFocusedNode())
         return;
 
     // Past the equality check: focus IS changing — a visual transition.
@@ -762,60 +761,92 @@ void EventHandler::updateFocus(Node* clicked) {
     auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
 
     // Clear focused flag and fire onFocus(false) on old. The flag commits before
-    // the callback, the callback is isolated, and focusedInput_ is reassigned
+    // the callback, the callback is isolated, and focusedNode_ is reassigned
     // unconditionally — so a throwing onFocus cannot desync the flag from
-    // focusedInput_.
-    if (focusedInput_) {
-        focusedInput_->focused = false;
-        if (focusedInput_->props.onFocus) {
-            InputNode* old = focusedInput_;
-            fireCallback("onFocus", [&] { old->props.onFocus(false); }, report);
+    // focusedNode_.
+    if (focusedNode_) {
+        focusedNode_->focused = false;
+        if (const auto* onFocus = focusHandlerFor(focusedNode_)) {
+            fireCallback("onFocus", [&] { (*onFocus)(false); }, report);
         }
     }
 
-    setFocusedInput(newFocus);
+    setFocusedNode(node);
 
-    // Set focused flag and fire onFocus(true) on new. Restart the blink cycle
-    // so the caret starts visible on focus gain.
-    if (focusedInput_) {
-        focusedInput_->focused = true;
-        focusedInput_->resetCaretBlink();
-        if (focusedInput_->props.onFocus) {
-            fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
+    // Set focused flag and fire onFocus(true) on new. An Input restarts its
+    // blink cycle so the caret starts visible on focus gain.
+    if (focusedNode_) {
+        focusedNode_->focused = true;
+        if (focusedNode_->type() == PrimitiveType::Input)
+            static_cast<InputNode*>(focusedNode_)->resetCaretBlink();
+        if (const auto* onFocus = focusHandlerFor(focusedNode_)) {
+            fireCallback("onFocus", [&] { (*onFocus)(true); }, report);
         }
     }
 }
 
-void EventHandler::focusInput(InputNode* node) {
-    // Validate first (see updateFocus): a stale focusedInput_ must not alias
-    // the incoming node and short-circuit a legitimate focus change.
-    if (node == liveFocusedInput())
+void EventHandler::collectFocusables(Node* node, std::vector<Node*>& out, int depth) {
+    if (!node)
         return;
 
-    // Past the equality check: focus IS changing — a visual transition.
-    markVisualStateChanged();
-
-    auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
-
-    // Unfocus old (same state-commits-before-callback discipline as updateFocus).
-    if (focusedInput_) {
-        focusedInput_->focused = false;
-        if (focusedInput_->props.onFocus) {
-            InputNode* old = focusedInput_;
-            fireCallback("onFocus", [&] { old->props.onFocus(false); }, report);
-        }
+    // Depth guard on the DFS (see findKeyTarget): stop collecting this subtree
+    // and diagnose once instead of overflowing the stack.
+    if (depth >= maxTreeDepth_) {
+        reportError("collectFocusables: max tree depth exceeded — focus traversal truncated",
+                    nullptr);
+        return;
     }
 
-    setFocusedInput(node);
+    // v1 limitation: Display::None and zero-size nodes are still collected —
+    // traversal is structural, not visibility-aware.
+    if (isFocusable(node))
+        out.push_back(node);
 
-    // Focus new. Restart the blink cycle so the caret starts visible.
-    if (focusedInput_) {
-        focusedInput_->focused = true;
-        focusedInput_->resetCaretBlink();
-        if (focusedInput_->props.onFocus) {
-            fireCallback("onFocus", [&] { focusedInput_->props.onFocus(true); }, report);
-        }
+    // FORWARD child order: Tab traverses document order. (hitTest walks children
+    // in reverse for z-priority; traversal wants the order they were declared.)
+    for (auto& child : node->children)
+        collectFocusables(child.get(), out, depth + 1);
+}
+
+void EventHandler::moveFocus(Node* root, bool forward) {
+    // A live trap root scopes the traversal to its subtree; a trap root freed by
+    // a reconcile reads as no-trap (dead token) and falls back to the full tree.
+    if (Node* trap = liveTrapRoot())
+        root = trap;
+    if (!root)
+        return;
+
+    // UAF safety: the collected raw pointers stay valid across focusNode below
+    // by the same deferral argument as dispatchCapturedMove — a user onFocus
+    // that calls host.update() mid-dispatch is forced to UpdateStatus::Deferred,
+    // so no reconcile can free a collected node until this entry unwinds.
+    std::vector<Node*> order;
+    collectFocusables(root, order);
+    if (order.empty())
+        return;
+
+    Node* current = liveFocusedNode();
+    auto it = std::find(order.begin(), order.end(), current);
+    Node* target;
+    if (!current || it == order.end()) {
+        // Nothing focused (or focused outside the scope): Tab enters at the
+        // front, Shift-Tab at the back.
+        target = forward ? order.front() : order.back();
+    } else {
+        // Step with wraparound at both ends.
+        size_t i = static_cast<size_t>(it - order.begin());
+        size_t n = order.size();
+        target = order[forward ? (i + 1) % n : (i + n - 1) % n];
     }
+    focusNode(target);
+}
+
+void EventHandler::focusNext(Node* root) {
+    moveFocus(root, true);
+}
+
+void EventHandler::focusPrev(Node* root) {
+    moveFocus(root, false);
 }
 
 void EventHandler::handleTextInput(const std::string& text) noexcept {
@@ -878,23 +909,10 @@ void EventHandler::handleSubmit() noexcept {
 // (KeyDown searches onKeyDown; KeyUp searches onKeyUp — so a node that registers
 // only one of the two is reachable for the matching event and ignored for the other.)
 bool EventHandler::hasKeyHandler(Node* node, KeyPhase phase) {
-    auto pick = [phase](const EventProps& p) -> bool {
-        return phase == KeyPhase::Down ? !!p.onKeyDown : !!p.onKeyUp;
-    };
-    switch (node->type()) {
-    case PrimitiveType::Box:
-        return pick(static_cast<BoxNode*>(node)->props);
-    case PrimitiveType::Text:
-        return pick(static_cast<TextNode*>(node)->props);
-    case PrimitiveType::Input:
-        return pick(static_cast<InputNode*>(node)->props);
-    case PrimitiveType::Scroll:
-        return pick(static_cast<ScrollNode*>(node)->props);
-    case PrimitiveType::Canvas:
-        return pick(static_cast<CanvasNode*>(node)->props);
-    default:
+    const EventProps* p = eventPropsOf(node);
+    if (!p)
         return false;
-    }
+    return phase == KeyPhase::Down ? !!p->onKeyDown : !!p->onKeyUp;
 }
 
 // Keyboard routing contract: keyboard events go to the focused Input if any;

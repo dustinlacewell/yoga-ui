@@ -218,12 +218,11 @@ std::unique_ptr<Fiber> Reconciler::mountHost(VNode&& vnode, size_t sourcePos,
     node->intKey = vnode.intKey;
     bindRefSlot(node.get(), vnode);
 
-    // Peek autoFocus (a const read of the props) BEFORE moving props into the node.
-    bool wantsAutoFocus = false;
-    if (vnode.type() == PrimitiveType::Input) {
-        const auto& inputProps = std::get<InputProps>(vnode.props);
-        wantsAutoFocus = inputProps.autoFocus.value_or(false);
-    }
+    // Peek autoFocus (a const read of the shared EventProps slice) BEFORE moving
+    // props into the node. Any primitive may request mount focus.
+    bool wantsAutoFocus = std::visit(
+        [](const auto& p) { return static_cast<const EventProps&>(p).autoFocus.value_or(false); },
+        vnode.props);
 
     node->updateProps(std::move(vnode.props));
     fiber->renderNode = node.get();
@@ -234,7 +233,7 @@ std::unique_ptr<Fiber> Reconciler::mountHost(VNode&& vnode, size_t sourcePos,
 
     // Notify host of autoFocus request
     if (wantsAutoFocus && onAutoFocus_) {
-        onAutoFocus_(static_cast<InputNode*>(fiber->renderNode));
+        onAutoFocus_(fiber->renderNode);
     }
 
     // Mount children — this fiber's renderNode is the render parent for children

@@ -19,7 +19,7 @@ struct DirtyScheduler;
 class Reconciler {
 public:
     using NodeRemovedCallback = std::function<void(Node*)>;
-    using AutoFocusCallback = std::function<void(InputNode*)>;
+    using AutoFocusCallback = std::function<void(Node*)>;
 
     void setNodeRemovedCallback(NodeRemovedCallback callback) { onNodeRemoved_ = std::move(callback); }
     void setAutoFocusCallback(AutoFocusCallback callback) { onAutoFocus_ = std::move(callback); }

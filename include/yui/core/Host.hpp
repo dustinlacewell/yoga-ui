@@ -391,6 +391,47 @@ public:
     }
 
     InputNode* getFocusedInput() const { return eventHandler_.getFocusedInput(); }
+    Node* getFocusedNode() const { return eventHandler_.getFocusedNode(); }
+
+    // Programmatic focus (typically host.focus(ref.current())). Accepts ANY
+    // node — .focusable() gates only click/Tab acquisition, not programmatic
+    // focus (tabindex=-1 parity). Wrapped in the dispatch guard: an onFocus
+    // that calls update() defers and drains same-frame (see guardedVoid).
+    void focus(Node* node) noexcept {
+        guardedVoid("Host::focus", [&] { eventHandler_.focusNode(node); });
+    }
+
+    void blur() noexcept {
+        guardedVoid("Host::blur", [&] { eventHandler_.focusNode(nullptr); });
+    }
+
+    // Move focus through the focusables in document order, wrapping — scoped to
+    // the focus trap while one is set. Tab detection lives in the platform shim
+    // (core stays keycode-agnostic: SDL's Tab is 9, GLFW's is 258): call these
+    // on Tab / Shift-Tab that handleKeyDown did not report consumed.
+    void focusNext() noexcept {
+        guardedVoid("Host::focusNext", [&] {
+            if (renderRoot_)
+                eventHandler_.focusNext(renderRoot_.get());
+        });
+    }
+
+    void focusPrev() noexcept {
+        guardedVoid("Host::focusPrev", [&] {
+            if (renderRoot_)
+                eventHandler_.focusPrev(renderRoot_.get());
+        });
+    }
+
+    // Scope Tab traversal to `node`'s subtree (e.g. an open modal). A trap root
+    // removed by a later reconcile silently unscopes (liveness token).
+    void setFocusTrap(Node* node) noexcept {
+        guardedVoid("Host::setFocusTrap", [&] { eventHandler_.setFocusTrap(node); });
+    }
+
+    void clearFocusTrap() noexcept {
+        guardedVoid("Host::clearFocusTrap", [&] { eventHandler_.clearFocusTrap(); });
+    }
 
     // The mouse cursor the platform should show right now: the captured node's
     // chain wins during a drag, else the hovered chain; the first explicit

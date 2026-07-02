@@ -221,7 +221,17 @@ int main(int argc, char* argv[]) {
                         mods |= KeyMod_CapsLock;
                     if (event.key.keysym.mod & KMOD_NUM)
                         mods |= KeyMod_NumLock;
-                    host.handleKeyDown(event.key.keysym.sym, mods, event.key.repeat != 0);
+                    // Tab traversal lives in the platform shim (core stays
+                    // keycode-agnostic; SDL's Tab is 9), and only when no app
+                    // handler consumed the key.
+                    bool consumed =
+                        host.handleKeyDown(event.key.keysym.sym, mods, event.key.repeat != 0);
+                    if (!consumed && event.key.keysym.sym == SDLK_TAB) {
+                        if (mods & KeyMod_Shift)
+                            host.focusPrev();
+                        else
+                            host.focusNext();
+                    }
                     break;
                 }
 
