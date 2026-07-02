@@ -309,11 +309,14 @@ public:
     // EventHandler already isolates each user callback and routes it to the sink;
     // these guards are the truthful backstop for anything else, so the noexcept
     // never fires for a normal callback throw.
-    bool handleMouseDown(float x, float y, MouseButton btn) noexcept {
+    // `mods` is the KeyMod bitmask held at the press (matches handleKeyDown's
+    // keyMod): shims pass the platform modifier state so shift+click consumers
+    // can read it from the dispatched event.
+    bool handleMouseDown(float x, float y, MouseButton btn, uint16_t mods = KeyMod_None) noexcept {
         return guardedBool("Host::handleMouseDown", [&] {
             if (!renderRoot_)
                 return false;
-            return eventHandler_.handleMouseDown(renderRoot_.get(), x, y, btn);
+            return eventHandler_.handleMouseDown(renderRoot_.get(), x, y, btn, mods);
         });
     }
 

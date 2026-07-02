@@ -1,6 +1,8 @@
+#include "TestMeasurer.hpp"
 #include "doctest.h"
 
 #include <yui/core/EventHandler.hpp>
+#include <yui/core/RenderDefaults.hpp>
 #include <yui/detail/Reconciler.hpp>
 #include <yui/render/StyleResolver.hpp>
 #include <yui/yui.hpp>
@@ -11,6 +13,7 @@
 #include <vector>
 
 using namespace yui;
+namespace rd = yui::render_defaults;
 
 TEST_CASE("Hit test finds deepest node") {
     Reconciler reconciler;
@@ -539,7 +542,7 @@ TEST_CASE("Scrollbar - thumb drag maps pointer deltas through the track scale, c
                     .width(100)
                     .height(100)
                     .onClick([&]() { ++clicks; })
-                    .onMouseDown([&](float, float, MouseButton) { ++mouseDowns; })
+                    .onMouseDown([&](float, float, MouseButton, uint16_t) { ++mouseDowns; })
                     .onDrag([&](const DragEvent&) { ++drags; });
 
     auto fiber = reconciler.mount(std::move(tree));
@@ -1396,6 +1399,281 @@ TEST_CASE("EditCommand - not consumed without a focused Input; unimplemented com
     CHECK(events.handleEditCommand(EditCommand::MoveRight) == false);
     CHECK(events.handleEditCommand(EditCommand::DeleteBackward) == false);
     CHECK(input->displayText == "abc");
+}
+
+// ============================================================================
+// Click-to-position + follow-scroll (6c C2): a press on an Input maps the
+// pointer x through the shared InputNode text geometry (indexAtPoint) to a
+// caret byte offset, and textScrollX follows the caret through edits so it
+// stays inside the content box.
+// ============================================================================
+
+namespace {
+
+// 10px per BYTE at any size (the FakeBackend convention in test_tree_renderer):
+// deterministic caret/click arithmetic; a multi-byte cp measures wider.
+test::FnMeasurer tenPxPerByte() {
+    return test::FnMeasurer(
+        [](const std::string& t, float, float) { return Size{static_cast<float>(t.size()) * 10.0f, 10.0f}; });
+}
+
+// The Box-wrapped Input the click/scroll tests mount AND reconcile new values
+// through. The Input sits at the origin with no insets, so its text starts at
+// x = kInputTextPad and a window x maps to textX = x - pad + textScrollX.
+VNode measuredInputFixture(const char* value, bool password = false) {
+    return Box(
+               Input().value(value).password(password).fontSize(10).width(100).height(30).setKey("field")
+           )
+        .width(200)
+        .height(100);
+}
+
+// Mount the fixture on a measurer-wired harness — the production
+// config-context seam the event handler recovers the measurer through.
+InputNode* mountMeasuredInput(test::MeasureHarness& h, const char* value, bool password = false) {
+    Node* root = h.mount(measuredInputFixture(value, password));
+    root->calculateLayout(200, 100);
+    auto* input = static_cast<InputNode*>(root->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    return input;
+}
+
+}  // namespace
+
+TEST_CASE("Click positions the caret at the nearest boundary; midpoint ties go left") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "hello");
+    Node* root = h.reconciler().renderRoot();
+
+    auto clickAt = [&](float textX) {
+        events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
+        events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
+        return input->caret;
+    };
+
+    // 10px cells: 'h' spans [0,10) with midpoint 5, 'e' [10,20) mid 15, ...
+    CHECK(clickAt(0) == 0);
+    CHECK(clickAt(16) == 2);  // past 'e' midpoint: caret after 'e'
+    CHECK(clickAt(15) == 1);  // exactly ON 'e' midpoint: ties go LEFT
+    CHECK(clickAt(5) == 0);   // 'h' midpoint tie: before 'h'
+    CHECK(clickAt(31) == 3);
+    CHECK(clickAt(75) == 5);  // past the last midpoint: caret at size
+    CHECK(clickAt(-5) == 0);  // in the left text pad: clamps to 0
+
+    // The click focused the input, collapsed the anchor onto the caret, and
+    // latched a repaint (a placed caret is a visual transition).
+    CHECK(events.getFocusedInput() == input);
+    CHECK(input->selectionAnchor == input->caret);
+    CHECK(events.consumeVisualStateChanged());
+}
+
+TEST_CASE("Click lands on code-point boundaries in multibyte text") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // "aéb" at 10px/byte: 'a' [0,10), 'é' [10,30) (2 bytes wide), 'b' [30,40).
+    InputNode* input = mountMeasuredInput(h, "a\xC3\xA9" "b");
+    Node* root = h.reconciler().renderRoot();
+
+    auto clickAt = [&](float textX) {
+        events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
+        events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
+        return input->caret;
+    };
+
+    // Anywhere in é's cell resolves to byte 1 or 3 — NEVER the mid-cp byte 2.
+    CHECK(clickAt(15) == 1);  // before é's midpoint (20)
+    CHECK(clickAt(19) == 1);
+    CHECK(clickAt(21) == 3);  // past the midpoint: after the whole é
+    CHECK(clickAt(34) == 3);
+    CHECK(clickAt(36) == 4);  // past b's midpoint (35): the end
+}
+
+TEST_CASE("Click maps through star space to displayText offsets for passwords") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // Raw "aéb" DISPLAYS as "***": uniform 10px star cells — the click space
+    // is star space, mapped back to raw byte offsets (0, 1, 3, 4).
+    InputNode* input = mountMeasuredInput(h, "a\xC3\xA9" "b", true);
+    Node* root = h.reconciler().renderRoot();
+
+    auto clickAt = [&](float textX) {
+        events.handleMouseDown(root, rd::kInputTextPad + textX, 15);
+        events.handleMouseUp(root, rd::kInputTextPad + textX, 15);
+        return input->caret;
+    };
+
+    CHECK(clickAt(4) == 0);
+    CHECK(clickAt(12) == 1);  // second star's left half → before é → byte 1
+    CHECK(clickAt(16) == 3);  // second star's right half → after é → byte 3
+    CHECK(clickAt(26) == 4);  // past the last star's midpoint (25)
+}
+
+TEST_CASE("textScrollX follows the caret through End/Left/Home") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // 12 chars * 10px = 120px in a 100px input: the visible text span is the
+    // content box minus the pad both sides = 84px.
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaa");
+    events.focusNode(input);
+    CHECK(input->textScrollX == doctest::Approx(0));
+
+    // End: caretX 120 rides past the span → scroll right to 120 - 84 = 36.
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // One left: caretX 110 is still inside [36, 36+84] → no jitter.
+    events.handleEditCommand(EditCommand::MoveLeft);
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // Home: caretX 0 is left of the span → scroll fully back.
+    events.handleEditCommand(EditCommand::MoveLineStart);
+    CHECK(input->textScrollX == doctest::Approx(0));
+}
+
+TEST_CASE("Typing past the right edge scrolls; deletions clamp the scroll back") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaa");  // 80px: fits the 84px span
+    events.focusNode(input);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->textScrollX == doctest::Approx(0));
+
+    events.handleTextInput("b");  // 90px, caret at 90 → scroll 6
+    CHECK(input->textScrollX == doctest::Approx(6));
+    events.handleTextInput("c");  // 100px, caret at 100 → scroll 16
+    CHECK(input->textScrollX == doctest::Approx(16));
+
+    // Each deletion re-clamps to max(0, total - span): no dead space is left
+    // open past the last glyph.
+    events.handleEditCommand(EditCommand::DeleteBackward);  // 90px → clamp 6
+    CHECK(input->textScrollX == doctest::Approx(6));
+    events.handleEditCommand(EditCommand::DeleteBackward);  // 80px fits → 0
+    CHECK(input->textScrollX == doctest::Approx(0));
+}
+
+TEST_CASE("Click maps through textScrollX to the scrolled-away offsets") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaa");
+    Node* root = h.reconciler().renderRoot();
+    events.focusNode(input);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // Window x 58 → textX = (58 - pad) + 36 = 86 → past cell 8's midpoint
+    // (85) → boundary 9. (Unscrolled, the same window x would give 5.)
+    events.handleMouseDown(root, 58, 15);
+    CHECK(input->caret == 9);
+    // A plain click never moves the scroll: the caret landed inside the span.
+    CHECK(input->textScrollX == doctest::Approx(36));
+}
+
+TEST_CASE("External value replacement resets textScrollX; the onChange echo preserves it") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaa");
+    events.focusNode(input);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // The app's onChange echo (the SAME value back through props) must not
+    // disturb the follow-scroll — it runs after every keystroke.
+    h.reconciler().reconcile(h.fiber(), measuredInputFixture("aaaaaaaaaaaa"));
+    CHECK(input->textScrollX == doctest::Approx(36));
+
+    // A genuinely different external value resets the scroll alongside the
+    // caret snap: the new text shows from its head.
+    h.reconciler().reconcile(h.fiber(), measuredInputFixture("hi"));
+    CHECK(input->displayText == "hi");
+    CHECK(input->textScrollX == doctest::Approx(0));
+}
+
+TEST_CASE("External replacement preserving a far caret follows it into view (not off-clip)") {
+    test::FnMeasurer m = tenPxPerByte();
+    test::MeasureHarness h;
+    h.setMeasurer(&m);
+    EventHandler events;
+    // 15 'a's, caret at the end (byte 15, caretX 150). Span = 84px.
+    InputNode* input = mountMeasuredInput(h, "aaaaaaaaaaaaaaa");
+    events.focusNode(input);
+    events.handleEditCommand(EditCommand::MoveLineEnd);
+    CHECK(input->caret == 15);
+
+    // A controlled app replaces the value with a LONGER string but keeps the
+    // caret at byte 15 (mid-string now). The reset-to-0 alone would leave the
+    // caret at x=150 with a 84px span — 66px off the right clip edge. The
+    // re-follow in updateProps must pull it back into the visible span.
+    h.reconciler().reconcile(h.fiber(), measuredInputFixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));  // 30 chars
+    CHECK(input->displayText.size() == 30);
+    CHECK(input->caret == 15);
+
+    // The caret (x = caretPrefixWidth) must sit inside [textScrollX,
+    // textScrollX + span] — i.e. visible, not clipped away.
+    float span = input->layout.contentWidth() - 2 * rd::kInputTextPad;
+    float caretX = input->caretPrefixWidth(&m);
+    CHECK(caretX - input->textScrollX >= 0);
+    CHECK(caretX - input->textScrollX <= doctest::Approx(span));
+    // Concretely: caretX 150 at the right edge → scroll 150 - 84 = 66.
+    CHECK(input->textScrollX == doctest::Approx(66));
+}
+
+TEST_CASE("indexAtPoint clamps on empty text and works without a measurer") {
+    Reconciler reconciler;  // bare: the config context holds no measurer
+    EventHandler events;
+    std::unique_ptr<Fiber> fiber;
+
+    SUBCASE("empty text always resolves to 0") {
+        InputNode* empty = mountFocusedInput(reconciler, fiber, events, "");
+        CHECK(empty->indexAtPoint(50.0f, nullptr) == 0);
+    }
+
+    SUBCASE("null measurer falls back to the heuristic") {
+        // 0.6 * fontSize per byte (the default 16px face → 9.6px cells),
+        // matching TextNode's fallback path.
+        InputNode* abc = mountFocusedInput(reconciler, fiber, events, "abc");
+        CHECK(abc->indexAtPoint(-1.0f, nullptr) == 0);
+        CHECK(abc->indexAtPoint(10.0f, nullptr) == 1);
+        CHECK(abc->indexAtPoint(1000.0f, nullptr) == 3);
+    }
+}
+
+TEST_CASE("Mouse-down modifiers thread into the dispatched event") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    uint16_t seen = 0xFFFF;
+    auto tree = Box()
+                    .width(100)
+                    .height(100)
+                    .onMouseDown([&](float, float, MouseButton, uint16_t mods) { seen = mods; });
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // Shift held at the press rides on Event::keyMod into the handler — the
+    // seam C3's shift+click selection extension consumes.
+    events.handleMouseDown(root, 50, 50, MouseButton::Left, KeyMod_Shift);
+    CHECK(seen == KeyMod_Shift);
+    events.handleMouseUp(root, 50, 50, MouseButton::Left);
+
+    // ... and defaults to KeyMod_None when the platform passes nothing.
+    events.handleMouseDown(root, 50, 50, MouseButton::Left);
+    CHECK(seen == KeyMod_None);
 }
 
 TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") {

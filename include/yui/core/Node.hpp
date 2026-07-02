@@ -194,9 +194,9 @@ public:
     // and an external value change re-clamps/snaps it (see updateProps).
     //
     // Initializes to 0 on mount and is NOT auto-moved to the end on focus: a
-    // pre-populated input that is focused-but-not-clicked inserts at the FRONT
-    // (End/arrows still reposition) until click-to-position sets the caret on a
-    // focus-click. Intentional; C2 (click-to-position) resolves it.
+    // mouse focus-click places it at the clicked boundary (click-to-position
+    // in EventHandler::handleMouseDown); a KEYBOARD focus (Tab) leaves it at
+    // the front until End/arrows reposition. Intentional.
     size_t caret = 0;
 
     // Selection anchor (byte offset, same boundary invariant). Kept equal to
@@ -204,9 +204,56 @@ public:
     // span [min, max).
     size_t selectionAnchor = 0;
 
+    // Horizontal follow-scroll (px): how far the text run is shifted LEFT so
+    // the caret stays inside the content box. Maintained by
+    // scrollCaretIntoView from the edit path; the renderer subtracts it from
+    // both the text run's and the caret's x. Always 0 while the text fits.
+    float textScrollX = 0;
+
     // Caret blink state, advanced by update(dt) while focused. The renderer
     // draws the caret iff focused && caretVisible — no wall clock involved.
     bool caretVisible = true;
+
+    // --- Text geometry (single-line) ---
+    // Lives on the node so the renderer's caret/text placement and the event
+    // handler's click mapping share ONE source (the ScrollNode scrollbar
+    // precedent). All widths are measured with `m` (nullptr ⇒ the fallback
+    // heuristic, matching TextNode::wrappedRuns) at the SAME resolved font the
+    // renderer paints with. x coordinates are in TEXT SPACE: measured from the
+    // left edge of the first glyph, pre-scroll — a window x maps in via
+    //   textX = windowX - (absContentX + kInputTextPad) + textScrollX.
+
+    // The string this input DISPLAYS for its value: displayText, or one '*'
+    // per CODE POINT for a password. (The placeholder is chrome, not value —
+    // geometry over an empty value is empty.) The single masking source; the
+    // renderer's display run reads through this.
+    std::string displayRun() const;
+
+    // Width of the display run before the caret's byte offset — the caret's x
+    // in text space. For a password the prefix is one star per code point of
+    // the raw prefix (the caret lives in star space, matching what is drawn).
+    float caretPrefixWidth(const ITextMeasurer* m) const;
+
+    // The caret byte offset (into displayText) nearest to `textX`. Midpoint
+    // rule: the caret lands BEFORE a code point when textX <= that code
+    // point's midpoint (prefix + width/2) — a click exactly ON a midpoint
+    // resolves to the boundary on its LEFT. Prefix widths are whole-run
+    // measurements (not per-cp sums), so the chosen boundary agrees exactly
+    // with caretPrefixWidth under a kerning measurer. Clamps: textX <= 0 ⇒ 0,
+    // past the last midpoint ⇒ displayText.size(). Always a cp boundary.
+    //
+    // Zero-advance code points (combining marks) are an inherent exception:
+    // two boundaries share one x, so a click there resolves to the earlier
+    // (ties-left) — a click can land on either boundary but never between them.
+    size_t indexAtPoint(float textX, const ITextMeasurer* m) const;
+
+    // Follow the caret with textScrollX so it stays inside the visible text
+    // span (the content box minus kInputTextPad on each side), clamped so no
+    // dead space opens past the last glyph. Called from the edit path after
+    // every caret/text mutation. Timing: reads the layout synced by the LAST
+    // calculateLayout — edit events arrive between frames, after layout ran,
+    // so the content box is current for the state being edited.
+    void scrollCaretIntoView(const ITextMeasurer* m);
 
     // Advance the blink phase by dt. Returns true when visibility toggled
     // (the repaint edge). Called from Node::update only while focused.

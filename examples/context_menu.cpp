@@ -465,7 +465,17 @@ static void cursorPosCallback(GLFWwindow*, double x, double y) {
     if (g_host) g_host->handleMouseMove(static_cast<float>(x), static_cast<float>(y));
 }
 
-static void mouseButtonCallback(GLFWwindow* window, int button, int action, int) {
+// GLFW modifier bits -> yui KeyMod bitmask (presses carry mods for
+// shift+click selection).
+static uint16_t toKeyMod(int mods) {
+    uint16_t keyMod = 0;
+    if (mods & GLFW_MOD_SHIFT) keyMod |= KeyMod_Shift;
+    if (mods & GLFW_MOD_CONTROL) keyMod |= KeyMod_Ctrl;
+    if (mods & GLFW_MOD_ALT) keyMod |= KeyMod_Alt;
+    return keyMod;
+}
+
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
     if (!g_host) return;
     double x, y;
     glfwGetCursorPos(window, &x, &y);
@@ -486,7 +496,7 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int)
               : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? MouseButton::Middle
                                                      : MouseButton::Left;
     if (action == GLFW_PRESS)
-        g_host->handleMouseDown(fx, fy, mb);
+        g_host->handleMouseDown(fx, fy, mb, toKeyMod(mods));
     else if (action == GLFW_RELEASE)
         g_host->handleMouseUp(fx, fy, mb);
 }

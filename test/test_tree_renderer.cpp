@@ -727,9 +727,10 @@ TEST_CASE("renderTree: password caret positions in star space (code points, not 
 }
 
 // ---------------------------------------------------------------------------
-// Input clip: text and caret draw between a pushClip/popClip pair over the
-// input's content box; an overflowing caret pins to the box's right edge; the
-// clip stack stays balanced across every display variant.
+// Input clip + follow-scroll: text and caret draw between a pushClip/popClip
+// pair over the input's content box; when the caret would overflow, the edit
+// path's textScrollX shifts BOTH the run and the caret left so the caret stays
+// inside; the clip stack stays balanced across every display variant.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("renderTree: overflowing input text and caret are clipped to the content box") {
@@ -743,7 +744,12 @@ TEST_CASE("renderTree: overflowing input text and caret are clipped to the conte
     root->calculateLayout(100, 30);
     root->focused = true;  // fresh blink state: caret visible
     auto* in = static_cast<InputNode*>(root);
-    in->caret = in->displayText.size();  // pin at END so the prefix is the full 120px run
+    in->caret = in->displayText.size();  // at END: the prefix is the full 120px run
+    // What the edit path does after every caret move: follow-scroll so the
+    // caret sits at the right edge of the visible span (content minus the
+    // text pad both sides = 84px): textScrollX = 120 - 84 = 36.
+    in->scrollCaretIntoView(&backend);
+    CHECK(in->textScrollX == doctest::Approx(36));
 
     render::renderTree(root, backend, {});
 
@@ -756,9 +762,37 @@ TEST_CASE("renderTree: overflowing input text and caret are clipped to the conte
     CHECK(backend.calls[5].kind == Call::Kind::PopClip);
     CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
 
-    // Pinned to the content box's right edge instead of riding out with the
-    // 120px run (text pad + 120 would put the caret past x = 100).
-    CHECK(backend.calls[4].rect.x == doctest::Approx(100 - rd::kCaretWidth));
+    // Both shift left by textScrollX: the run starts at pad - 36 (its head
+    // clipped away), and the caret lands INSIDE the box at pad + 120 - 36
+    // (was pinned to the right edge before follow-scroll existed).
+    CHECK(backend.calls[3].x == doctest::Approx(rd::kInputTextPad - 36));
+    CHECK(backend.calls[4].rect.x == doctest::Approx(rd::kInputTextPad + 120 - 36 - rd::kCaretWidth / 2));
+}
+
+TEST_CASE("renderTree: textScrollX zero leaves short-text geometry untouched") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // Text fits: the follow-scroll clamps to 0 even after a caret move to the
+    // end, so the pre-scroll geometry (run at the pad, caret past the run) is
+    // byte-identical to the no-scroll rendering.
+    auto tree = Input().value("abc").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;
+    auto* in = static_cast<InputNode*>(root);
+    in->caret = in->displayText.size();
+    in->scrollCaretIntoView(&backend);
+    CHECK(in->textScrollX == doctest::Approx(0));
+
+    render::renderTree(root, backend, {});
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    REQUIRE(run != nullptr);
+    CHECK(run->x == doctest::Approx(rd::kInputTextPad));
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad + 30 - rd::kCaretWidth / 2));
 }
 
 TEST_CASE("renderTree: input clip stays balanced across display variants") {

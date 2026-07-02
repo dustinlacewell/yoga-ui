@@ -1,11 +1,9 @@
 #include <yui/core/Node.hpp>
 #include <yui/core/RenderDefaults.hpp>
-#include <yui/core/Utf8.hpp>
 #include <yui/render/StyleResolver.hpp>
 #include <yui/render/TextWrap.hpp>
 #include <yui/render/TreeRenderer.hpp>
 
-#include <algorithm>
 #include <exception>
 #include <string>
 #include <string_view>
@@ -31,29 +29,13 @@ struct InputRun {
 };
 
 InputRun inputDisplayRun(const InputNode& node, uint32_t textColor) {
-    const auto& p = node.props;
-    if (!node.displayText.empty()) {
-        // One '*' per CODE POINT, not per byte: a 2-byte 'é' is one star.
-        if (p.password.value_or(false))
-            return {std::string(utf8::codePointCount(node.displayText), '*'), textColor};
-        return {node.displayText, textColor};
-    }
-    if (p.placeholder)
-        return {*p.placeholder, render_defaults::kPlaceholderColor};
+    // Masking (password stars) lives on the node — InputNode::displayRun is
+    // the one source the click-mapping geometry measures through too.
+    if (!node.displayText.empty())
+        return {node.displayRun(), textColor};
+    if (node.props.placeholder)
+        return {*node.props.placeholder, render_defaults::kPlaceholderColor};
     return {std::string{}, textColor};
-}
-
-// The display-space run BEFORE the caret's byte index: the raw prefix for a
-// plain input; for a password, one star per code point of that prefix (a view
-// over the already-masked run — the caret lives in star space, matching what
-// was drawn). A placeholder never advances the caret (displayText is empty
-// while a placeholder shows, so the prefix is empty).
-std::string_view caretPrefix(const InputNode& node, const InputRun& run) {
-    std::string_view raw(node.displayText);
-    raw = raw.substr(0, std::min(node.caret, raw.size()));
-    if (node.props.password.value_or(false))
-        return std::string_view(run.text).substr(0, utf8::codePointCount(raw));
-    return raw;
 }
 
 class TreeWalker {
@@ -71,8 +53,7 @@ private:
     void drawCanvas(const CanvasNode* node, const Rect& r);
 
     void paintBoxChrome(const ResolvedBoxStyle& s, const Rect& r);
-    void drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
-                   std::string_view font);
+    void drawCaret(const InputNode& node, const Rect& content, const ResolvedInputStyle& s);
 
     IRenderBackend& backend_;
     const ErrorHandler& onError_;
@@ -217,26 +198,26 @@ void TreeWalker::drawInput(const InputNode* node, const Rect& r) {
     // when there is nothing to draw inside it.
     const LayoutResult& l = node->layout;
     Rect content{r.x + l.insetLeft, r.y + l.insetTop, l.contentWidth(), l.contentHeight()};
+    // The whole run shifts left by the follow-scroll; the clip hides what
+    // rides out. (textScrollX is 0 whenever the text fits — see
+    // InputNode::scrollCaretIntoView — so a placeholder never shifts.)
     backend_.pushClip(content, s.borderRadius);
     if (!run.text.empty()) {
-        backend_.drawTextRun(run.text, content.x + rd::kInputTextPad, content.y + (content.h - s.fontSize) / 2,
-                             s.fontSize, run.color, font);
+        backend_.drawTextRun(run.text, content.x + rd::kInputTextPad - node->textScrollX,
+                             content.y + (content.h - s.fontSize) / 2, s.fontSize, run.color, font);
     }
     if (caretShown)
-        drawCaret(*node, run, content, s, font);
+        drawCaret(*node, content, s);
     backend_.popClip();
 }
 
-void TreeWalker::drawCaret(const InputNode& node, const InputRun& run, const Rect& content, const ResolvedInputStyle& s,
-                           std::string_view font) {
+void TreeWalker::drawCaret(const InputNode& node, const Rect& content, const ResolvedInputStyle& s) {
     namespace rd = render_defaults;
-    // The caret sits after the display prefix before its byte index (see
-    // caretPrefix). measureRun, not measure: the prefix is one unwrapped run.
-    float caretX = content.x + rd::kInputTextPad + backend_.measureRun(caretPrefix(node, run), s.fontSize, font);
-    // Pin to the content box: when the prefix overflows, the caret hugs the
-    // right edge instead of riding past the clip (and vanishing with it).
-    // Horizontal follow-scroll (textScrollX) arrives with click-to-position (C2).
-    caretX = std::min(caretX, content.x + content.w - rd::kCaretWidth / 2);
+    // The caret sits after the display prefix before its byte index, shifted
+    // by the same follow-scroll as the text run. The edit path keeps the
+    // caret inside the content box via textScrollX (scrollCaretIntoView), so
+    // no right-edge pin is needed here anymore.
+    float caretX = content.x + rd::kInputTextPad + node.caretPrefixWidth(&backend_) - node.textScrollX;
 
     Rect caret{caretX - rd::kCaretWidth / 2, content.y + rd::kCaretInset, rd::kCaretWidth,
                content.h - 2 * rd::kCaretInset};

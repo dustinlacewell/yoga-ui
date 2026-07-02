@@ -21,6 +21,14 @@ float chebyshev(float ax, float ay, float bx, float by) {
     return std::max(std::fabs(ax - bx), std::fabs(ay - by));
 }
 
+// The host's text measurer, recovered from the node's per-host Yoga config
+// context — the same seam TextNode::measureFunc reads. Null (⇒ the fallback
+// heuristic inside InputNode's geometry) on a bare test reconciler with no
+// measurer installed.
+const ITextMeasurer* measurerOf(const Node* node) {
+    return static_cast<const ITextMeasurer*>(YGConfigGetContext(YGNodeGetConfig(node->yogaNode)));
+}
+
 // Is `ancestor` the same node as `node` or one of its ancestors? Used by click
 // press/release matching: a click fires on a handler node when the press leaf is
 // within that node's subtree (so press-on-child + handler-on-parent still clicks),
@@ -55,7 +63,8 @@ bool fireCallback(std::string_view where, Invoke&& invoke, Report&& report) {
 
 }  // namespace
 
-bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button) noexcept {
+bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button,
+                                   uint16_t mods) noexcept {
     Node* target = hitTest(root, x, y);
 
     // A press on a scroll node's overlay scrollbar is chrome, consumed before
@@ -84,11 +93,28 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     if (!target)
         return false;
 
+    // Click-to-position: a press on an Input places the caret at the clicked
+    // glyph boundary (the mouse analog of the arrow keys). The window x maps
+    // into text space by removing the content-box origin and text pad, then
+    // adding back the follow-scroll (the textX contract on
+    // InputNode::indexAtPoint). Collapses the selection anchor onto the caret;
+    // shift+click extension reads `mods` when selection lands (C3).
+    if (target->type() == PrimitiveType::Input) {
+        auto* input = static_cast<InputNode*>(target);
+        layout::Rect abs = absoluteRect(input);
+        float textX = x - (abs.x + input->layout.insetLeft + rd::kInputTextPad) + input->textScrollX;
+        input->caret = input->indexAtPoint(textX, measurerOf(input));
+        input->selectionAnchor = input->caret;
+        input->resetCaretBlink();  // the placed caret shows immediately
+        markVisualStateChanged();
+    }
+
     Event event;
     event.type = Event::Type::MouseDown;
     event.x = x;
     event.y = y;
     event.button = button;
+    event.keyMod = mods;
     event.clickCount = clickCount_;
 
     return dispatchEvent(target, event);
@@ -536,7 +562,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     std::function<void()>* onRightClick = nullptr;
     std::function<void()>* onMiddleClick = nullptr;
     std::function<void()>* onDoubleClick = nullptr;
-    std::function<void(float, float, MouseButton)>* onMouseDown = nullptr;
+    std::function<void(float, float, MouseButton, uint16_t)>* onMouseDown = nullptr;
     std::function<void(float, float, MouseButton)>* onMouseUp = nullptr;
     std::function<void(float, float)>* onMouseMove = nullptr;
     std::function<void(const DragEvent&)>* onDrag = nullptr;
@@ -565,7 +591,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     // ancestor handlers — a throw never aborts the rest of the dispatch walk.
     if (event.type == Event::Type::MouseDown && onMouseDown && *onMouseDown) {
         if (fireCallback("onMouseDown",
-                         [&] { (*onMouseDown)(event.x, event.y, event.button); }, report))
+                         [&] { (*onMouseDown)(event.x, event.y, event.button, event.keyMod); }, report))
             event.consume();
     }
 
@@ -865,6 +891,9 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     focused->caret += text.size();
     focused->selectionAnchor = focused->caret;
     focused->resetCaretBlink();  // typing keeps the caret visible
+    // Follow-scroll AFTER the insert: typing past the right edge scrolls the
+    // text so the caret stays inside the content box.
+    focused->scrollCaretIntoView(measurerOf(focused));
 
     // An edit is a visual transition: latch the repaint so an Input with no
     // onChange wired (no app-driven reconcile) still repaints. Repaint only —
@@ -964,6 +993,9 @@ bool EventHandler::handleEditCommand(EditCommand cmd, bool /*extend — C3 (sele
     // visual change — deliberately unlike C0's empty-backspace no-latch: the
     // philosophy is that any keyboard edit interaction resets the blink.
     focused->resetCaretBlink();
+    // Follow-scroll AFTER the op: any caret move or deletion may push the
+    // caret outside the visible span (or shrink the text under the scroll).
+    focused->scrollCaretIntoView(measurerOf(focused));
     markVisualStateChanged();
 
     if (outcome.textChanged && focused->props.onChange) {

@@ -226,8 +226,9 @@ public:
     Derived& onDoubleClick(std::function<void()> fn) {
         return event([&](EventProps& p) { p.onDoubleClick = std::move(fn); });
     }
-    // (x, y, button): fires on PRESS, for any button, at absolute window coords.
-    Derived& onMouseDown(std::function<void(float, float, MouseButton)> fn) {
+    // (x, y, button, mods): fires on PRESS, for any button, at absolute window
+    // coords. mods is the KeyMod bitmask held at the press (mirrors onKeyDown).
+    Derived& onMouseDown(std::function<void(float, float, MouseButton, uint16_t)> fn) {
         return event([&](EventProps& p) { p.onMouseDown = std::move(fn); });
     }
     // (x, y, button): fires on RELEASE — delivered to the press target (the

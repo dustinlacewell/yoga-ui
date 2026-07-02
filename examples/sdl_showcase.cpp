@@ -127,6 +127,25 @@ public:
 // Main
 // ============================================================================
 
+// SDL modifier state -> yui KeyMod bitmask (shared by the key and mouse
+// paths: presses carry mods too, for shift+click selection).
+static uint16_t toKeyMod(SDL_Keymod m) {
+    uint16_t mods = 0;
+    if (m & KMOD_SHIFT)
+        mods |= KeyMod_Shift;
+    if (m & KMOD_CTRL)
+        mods |= KeyMod_Ctrl;
+    if (m & KMOD_ALT)
+        mods |= KeyMod_Alt;
+    if (m & KMOD_GUI)
+        mods |= KeyMod_Super;
+    if (m & KMOD_CAPS)
+        mods |= KeyMod_CapsLock;
+    if (m & KMOD_NUM)
+        mods |= KeyMod_NumLock;
+    return mods;
+}
+
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
@@ -196,11 +215,14 @@ int main(int argc, char* argv[]) {
                     break;
 
                 case SDL_MOUSEBUTTONDOWN:
+                    // SDL button events carry no modifier state; poll it so
+                    // shift+click reaches the press.
                     host.handleMouseDown(
                         event.button.x, event.button.y,
                         event.button.button == SDL_BUTTON_RIGHT    ? MouseButton::Right
                         : event.button.button == SDL_BUTTON_MIDDLE ? MouseButton::Middle
-                                                                   : MouseButton::Left);
+                                                                   : MouseButton::Left,
+                        toKeyMod(SDL_GetModState()));
                     break;
 
                 case SDL_MOUSEBUTTONUP:
@@ -229,20 +251,7 @@ int main(int argc, char* argv[]) {
                     } else if (event.key.keysym.sym == SDLK_RETURN) {
                         host.handleSubmit();
                     }
-                    // Convert SDL modifiers to yui KeyMod
-                    uint16_t mods = 0;
-                    if (event.key.keysym.mod & KMOD_SHIFT)
-                        mods |= KeyMod_Shift;
-                    if (event.key.keysym.mod & KMOD_CTRL)
-                        mods |= KeyMod_Ctrl;
-                    if (event.key.keysym.mod & KMOD_ALT)
-                        mods |= KeyMod_Alt;
-                    if (event.key.keysym.mod & KMOD_GUI)
-                        mods |= KeyMod_Super;
-                    if (event.key.keysym.mod & KMOD_CAPS)
-                        mods |= KeyMod_CapsLock;
-                    if (event.key.keysym.mod & KMOD_NUM)
-                        mods |= KeyMod_NumLock;
+                    uint16_t mods = toKeyMod(static_cast<SDL_Keymod>(event.key.keysym.mod));
                     // Tab traversal and the editing keys live in the platform
                     // shim (core stays keycode-agnostic; SDL's Tab is 9), and
                     // only when no app handler consumed the key.
@@ -261,23 +270,10 @@ int main(int argc, char* argv[]) {
                     break;
                 }
 
-                case SDL_KEYUP: {
-                    uint16_t mods = 0;
-                    if (event.key.keysym.mod & KMOD_SHIFT)
-                        mods |= KeyMod_Shift;
-                    if (event.key.keysym.mod & KMOD_CTRL)
-                        mods |= KeyMod_Ctrl;
-                    if (event.key.keysym.mod & KMOD_ALT)
-                        mods |= KeyMod_Alt;
-                    if (event.key.keysym.mod & KMOD_GUI)
-                        mods |= KeyMod_Super;
-                    if (event.key.keysym.mod & KMOD_CAPS)
-                        mods |= KeyMod_CapsLock;
-                    if (event.key.keysym.mod & KMOD_NUM)
-                        mods |= KeyMod_NumLock;
-                    host.handleKeyUp(event.key.keysym.sym, mods);
+                case SDL_KEYUP:
+                    host.handleKeyUp(event.key.keysym.sym,
+                                     toKeyMod(static_cast<SDL_Keymod>(event.key.keysym.mod)));
                     break;
-                }
                 }
             }
 

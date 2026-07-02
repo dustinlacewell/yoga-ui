@@ -241,7 +241,20 @@ static void cursorPosCallback(GLFWwindow*, double x, double y) {
         g_host->handleMouseMove(static_cast<float>(x), static_cast<float>(y));
 }
 
-static void mouseButtonCallback(GLFWwindow*, int button, int action, int) {
+// GLFW modifier bits -> yui KeyMod bitmask (shared by the key and mouse
+// callbacks: presses carry mods too, for shift+click selection).
+static uint16_t toKeyMod(int mods) {
+    uint16_t keyMod = 0;
+    if (mods & GLFW_MOD_SHIFT)
+        keyMod |= KeyMod_Shift;
+    if (mods & GLFW_MOD_CONTROL)
+        keyMod |= KeyMod_Ctrl;
+    if (mods & GLFW_MOD_ALT)
+        keyMod |= KeyMod_Alt;
+    return keyMod;
+}
+
+static void mouseButtonCallback(GLFWwindow*, int button, int action, int mods) {
     if (!g_host)
         return;
     double x, y;
@@ -250,7 +263,7 @@ static void mouseButtonCallback(GLFWwindow*, int button, int action, int) {
                      : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? MouseButton::Middle
                                                             : MouseButton::Left;
     if (action == GLFW_PRESS)
-        g_host->handleMouseDown(static_cast<float>(x), static_cast<float>(y), mb);
+        g_host->handleMouseDown(static_cast<float>(x), static_cast<float>(y), mb, toKeyMod(mods));
     else if (action == GLFW_RELEASE)
         g_host->handleMouseUp(static_cast<float>(x), static_cast<float>(y), mb);
 }
@@ -320,13 +333,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
             g_host->handleSubmit();
         }
     }
-    uint16_t keyMod = 0;
-    if (mods & GLFW_MOD_SHIFT)
-        keyMod |= KeyMod_Shift;
-    if (mods & GLFW_MOD_CONTROL)
-        keyMod |= KeyMod_Ctrl;
-    if (mods & GLFW_MOD_ALT)
-        keyMod |= KeyMod_Alt;
+    uint16_t keyMod = toKeyMod(mods);
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
         // Tab traversal and the editing keys live in the platform shim (core
         // stays keycode-agnostic; GLFW's Tab is 258), and only when no app

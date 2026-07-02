@@ -3,10 +3,12 @@
 #include <yui/core/NodeRef.hpp>  // absoluteRect (scrollIntoView)
 #include <yui/core/RenderDefaults.hpp>
 #include <yui/core/Utf8.hpp>
+#include <yui/render/StyleResolver.hpp>  // resolveInput (Input text geometry font)
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <string_view>
 
 namespace yui {
 
@@ -507,7 +509,101 @@ void InputNode::updateProps(PropsVariant&& p) {
         displayText = props.value;
         caret = utf8::snapToCodePoint(displayText, caret);
         selectionAnchor = caret;
+        // The replaced text's scroll is meaningless against the new run: drop
+        // it, then re-follow the preserved caret into view. Without the
+        // re-follow, a caret preserved deep in a now-LONGER value would sit
+        // past the right clip edge (C1's pin is gone), invisible until the
+        // next keypress. Not reached by the onChange echo (value ==
+        // displayText), so ordinary typing round-trips keep their scroll. The
+        // measurer is the same config-context one the geometry methods read
+        // (TextNode::measureFunc idiom): available here because reconcile runs
+        // against the host's config, on which setTextMeasurer installed it.
+        textScrollX = 0;
+        scrollCaretIntoView(
+            static_cast<const ITextMeasurer*>(YGConfigGetContext(YGNodeGetConfig(yogaNode))));
     }
+}
+
+namespace {
+
+// The (size, face) an Input's text geometry measures with — the SAME
+// resolution drawInput paints with (hover/focus styles may override the font
+// size), so measured caret geometry and painted glyphs agree.
+struct InputFont {
+    float size;
+    std::string_view face;
+};
+
+InputFont inputFont(const InputNode& n) {
+    return {render::resolveInput(n.props, n.hovered, n.focused).fontSize,
+            n.props.font ? std::string_view(*n.props.font) : std::string_view{}};
+}
+
+// Advance of one display-space run, falling back to the heuristic when no
+// measurer is installed (matching TextNode::wrappedRuns).
+float runWidth(const InputFont& f, std::string_view run, const ITextMeasurer* m) {
+    return m ? m->measureRun(run, f.size, f.face) : fallbackMeasureRun(run, f.size, f.face);
+}
+
+}  // namespace
+
+std::string InputNode::displayRun() const {
+    // One '*' per CODE POINT, not per byte: a 2-byte 'é' is one star.
+    if (props.password.value_or(false))
+        return std::string(utf8::codePointCount(displayText), '*');
+    return displayText;
+}
+
+float InputNode::caretPrefixWidth(const ITextMeasurer* m) const {
+    std::string display = displayRun();
+    std::string_view raw(displayText);
+    size_t end = std::min(caret, raw.size());
+    // In star space a prefix of N code points is N one-byte stars.
+    size_t dispEnd = props.password.value_or(false) ? utf8::codePointCount(raw.substr(0, end)) : end;
+    return runWidth(inputFont(*this), std::string_view(display).substr(0, dispEnd), m);
+}
+
+size_t InputNode::indexAtPoint(float textX, const ITextMeasurer* m) const {
+    InputFont font = inputFont(*this);
+    bool masked = props.password.value_or(false);
+    std::string display = displayRun();
+    std::string_view disp(display);
+    std::string_view raw(displayText);
+
+    // Walk the raw code points, measuring the DISPLAY prefix through each.
+    // The caret lands before the first code point whose midpoint textX does
+    // not pass (ties resolve LEFT — see the header contract).
+    float before = 0;
+    size_t b = 0;   // byte offset into displayText (the returned space)
+    size_t cp = 0;  // code-point index == star byte offset when masked
+    while (b < raw.size()) {
+        size_t next = utf8::nextCodePoint(raw, b);
+        float after = runWidth(font, disp.substr(0, masked ? cp + 1 : next), m);
+        if (textX <= (before + after) / 2)
+            return b;
+        before = after;
+        b = next;
+        ++cp;
+    }
+    return raw.size();
+}
+
+void InputNode::scrollCaretIntoView(const ITextMeasurer* m) {
+    namespace rd = render_defaults;
+    // The visible text span is the content box minus the text pad on BOTH
+    // sides: text draws at the left pad, and the symmetric right pad keeps a
+    // followed caret off the clip edge.
+    float avail = std::max(0.0f, layout.contentWidth() - 2 * rd::kInputTextPad);
+    float caretX = caretPrefixWidth(m);
+    if (caretX - textScrollX < 0)
+        textScrollX = caretX;  // caret left of the span: scroll left to it
+    if (caretX - textScrollX > avail)
+        textScrollX = caretX - avail;  // caret right of the span: scroll right
+    // Never scroll past the text (deletions shrink it): dead space beyond the
+    // last glyph would push the visible run needlessly left. Short text
+    // clamps to 0, so an input whose text fits never scrolls at all.
+    float total = runWidth(inputFont(*this), displayRun(), m);
+    textScrollX = std::clamp(textScrollX, 0.0f, std::max(0.0f, total - avail));
 }
 
 bool InputNode::updateBlink(float dt) {

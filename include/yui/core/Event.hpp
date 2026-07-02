@@ -66,10 +66,11 @@ struct Event {
     // consumers; there is no public onTripleClick yet).
     int clickCount = 1;
 
-    // Keyboard event data (for KeyDown/KeyUp events)
-    int keyCode = 0;        // Platform key code (SDL_Keycode or GLFW key)
-    uint16_t keyMod = 0;    // Modifier flags (KeyMod bitmask)
-    bool keyRepeat = false; // True if this is a key repeat event
+    // Keyboard event data
+    int keyCode = 0;        // Platform key code (SDL_Keycode or GLFW key); KeyDown/KeyUp only
+    uint16_t keyMod = 0;    // Modifier flags (KeyMod bitmask); KeyDown/KeyUp AND MouseDown
+                            // (shift+click selection reads the press modifiers)
+    bool keyRepeat = false; // True if this is a key repeat event; KeyDown only
 
     bool consumed = false;  // Set to stop propagation
 

@@ -109,7 +109,26 @@ static void cursorPosCallback(GLFWwindow*, double x, double y) {
         g_host->handleMouseMove(static_cast<float>(x), static_cast<float>(y));
 }
 
-static void mouseButtonCallback(GLFWwindow*, int button, int action, int) {
+// GLFW modifier bits -> yui KeyMod bitmask (shared by the key and mouse
+// callbacks: presses carry mods too, for shift+click selection).
+static uint16_t toKeyMod(int mods) {
+    uint16_t keyMod = 0;
+    if (mods & GLFW_MOD_SHIFT)
+        keyMod |= KeyMod_Shift;
+    if (mods & GLFW_MOD_CONTROL)
+        keyMod |= KeyMod_Ctrl;
+    if (mods & GLFW_MOD_ALT)
+        keyMod |= KeyMod_Alt;
+    if (mods & GLFW_MOD_SUPER)
+        keyMod |= KeyMod_Super;
+    if (mods & GLFW_MOD_CAPS_LOCK)
+        keyMod |= KeyMod_CapsLock;
+    if (mods & GLFW_MOD_NUM_LOCK)
+        keyMod |= KeyMod_NumLock;
+    return keyMod;
+}
+
+static void mouseButtonCallback(GLFWwindow*, int button, int action, int mods) {
     if (!g_host)
         return;
 
@@ -121,7 +140,7 @@ static void mouseButtonCallback(GLFWwindow*, int button, int action, int) {
                                                             : MouseButton::Left;
 
     if (action == GLFW_PRESS) {
-        g_host->handleMouseDown(static_cast<float>(x), static_cast<float>(y), mb);
+        g_host->handleMouseDown(static_cast<float>(x), static_cast<float>(y), mb, toKeyMod(mods));
     } else if (action == GLFW_RELEASE) {
         g_host->handleMouseUp(static_cast<float>(x), static_cast<float>(y), mb);
     }
@@ -176,20 +195,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) 
         }
     }
 
-    // Convert GLFW modifiers to yui KeyMod
-    uint16_t keyMod = 0;
-    if (mods & GLFW_MOD_SHIFT)
-        keyMod |= KeyMod_Shift;
-    if (mods & GLFW_MOD_CONTROL)
-        keyMod |= KeyMod_Ctrl;
-    if (mods & GLFW_MOD_ALT)
-        keyMod |= KeyMod_Alt;
-    if (mods & GLFW_MOD_SUPER)
-        keyMod |= KeyMod_Super;
-    if (mods & GLFW_MOD_CAPS_LOCK)
-        keyMod |= KeyMod_CapsLock;
-    if (mods & GLFW_MOD_NUM_LOCK)
-        keyMod |= KeyMod_NumLock;
+    uint16_t keyMod = toKeyMod(mods);
 
     // Dispatch keyboard events
     if (action == GLFW_PRESS) {

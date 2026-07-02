@@ -32,7 +32,12 @@ public:
     // Returns true if any node consumed the event. noexcept: these are reached
     // from the platform event loop; each user callback is isolated at its call
     // site (routed to the sink), so a normal handler throw never reaches here.
-    bool handleMouseDown(Node* root, float x, float y, MouseButton button = MouseButton::Left) noexcept;
+    //
+    // `mods` is the KeyMod bitmask held at the press (matches handleKeyDown's
+    // keyMod). It rides on the dispatched Event (Event::keyMod) and is what
+    // shift+click selection extension reads (C3).
+    bool handleMouseDown(Node* root, float x, float y, MouseButton button = MouseButton::Left,
+                         uint16_t mods = KeyMod_None) noexcept;
     bool handleMouseUp(Node* root, float x, float y, MouseButton button = MouseButton::Left) noexcept;
     bool handleMouseMove(Node* root, float x, float y) noexcept;
     bool handleScroll(Node* root, float x, float y, float deltaX, float deltaY) noexcept;

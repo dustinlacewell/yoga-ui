@@ -81,7 +81,8 @@ struct EventProps {
     std::function<void()> onRightClick;
     std::function<void()> onMiddleClick;
     std::function<void()> onDoubleClick;                     // second chained click (see Event::clickCount)
-    std::function<void(float, float, MouseButton)> onMouseDown;  // (x, y, button) on PRESS, any button
+    std::function<void(float, float, MouseButton, uint16_t)> onMouseDown;  // (x, y, button, KeyMod bitmask)
+                                                                           // on PRESS, any button
     std::function<void(float, float, MouseButton)> onMouseUp;    // (x, y, button) on RELEASE — fires on the
                                                                  // captor even off-node / off-window
     std::function<void(float, float)> onMouseMove;           // (x, y) — the captor during a press, else hover
