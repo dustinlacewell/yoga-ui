@@ -38,6 +38,8 @@ public:
     // a registered named face (empty/unknown ⇒ the default font this renderer was
     // constructed with).
     Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const override;
+    float measureRun(std::string_view run, float fontSize, std::string_view font) const override;
+    FontMetrics fontMetrics(float fontSize, std::string_view font) const override;
 
     // Register a named font face (a .ttf path) usable from Text/Input `.font(name)`.
     // Fonts open lazily per size on first use. The default font supplied at

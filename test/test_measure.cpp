@@ -421,3 +421,50 @@ TEST_CASE("B6 general: destroying host before measurer is safe") {
     // having deregistered, it has no record to act on. Reaching here is the
     // pass; a stale record would have cleared a freed config (UB).
 }
+
+// ---------------------------------------------------------------------------
+// Font-metrics primitives: measureRun / fontMetrics on the test measurer and
+// the fallback heuristic. These are the pieces the shared wrapping layer is
+// built on, so their arithmetic is pinned directly.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FnMeasurer::measureRun returns the per-char advance of one run") {
+    FnMeasurer measurer(perChar(10.0f));
+
+    CHECK(measurer.measureRun("Hello", 16.0f, {}) == doctest::Approx(50.0f));
+    CHECK(measurer.measureRun("", 16.0f, {}) == doctest::Approx(0.0f));
+    // A substring view measures by its own length, not its parent buffer's.
+    std::string buffer = "Hello, world";
+    CHECK(measurer.measureRun(std::string_view(buffer).substr(0, 5), 16.0f, {}) == doctest::Approx(50.0f));
+}
+
+TEST_CASE("FnMeasurer::fontMetrics scales with fontSize and matches measure() height") {
+    FnMeasurer measurer(perChar(10.0f));
+
+    FontMetrics m = measurer.fontMetrics(20.0f, {});
+    CHECK(m.ascent == doctest::Approx(16.0f));
+    CHECK(m.descent == doctest::Approx(4.0f));
+    // lineHeight == fontSize == what measure() reports for height, so line
+    // boxes derived from metrics agree with existing measured heights.
+    CHECK(m.lineHeight == doctest::Approx(20.0f));
+    CHECK(m.lineHeight == doctest::Approx(measurer.measure("x", 20.0f, 0, {}).height));
+}
+
+TEST_CASE("fallbackMeasureRun matches fallbackMeasure's width heuristic") {
+    // 5 chars * 0.6 * 16px = 48px — and the unclamped fallbackMeasure width.
+    CHECK(fallbackMeasureRun("Hello", 16.0f) == doctest::Approx(48.0f));
+    CHECK(fallbackMeasureRun("Hello", 16.0f) == doctest::Approx(fallbackMeasure("Hello", 16.0f, 0).width));
+    CHECK(fallbackMeasureRun("", 16.0f) == doctest::Approx(0.0f));
+}
+
+TEST_CASE("fallbackFontMetrics is sane and consistent with fallbackMeasure height") {
+    FontMetrics m = fallbackFontMetrics(16.0f);
+    CHECK(m.ascent == doctest::Approx(12.8f));
+    CHECK(m.descent == doctest::Approx(3.2f));
+    CHECK(m.lineHeight == doctest::Approx(16.0f));
+    // Metrics sanity: both extents positive, and the line box holds them.
+    CHECK(m.ascent > 0);
+    CHECK(m.descent > 0);
+    CHECK(m.ascent + m.descent <= doctest::Approx(m.lineHeight));
+    CHECK(m.lineHeight == doctest::Approx(fallbackMeasure("x", 16.0f, 0).height));
+}

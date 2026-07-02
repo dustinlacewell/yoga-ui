@@ -66,16 +66,47 @@ Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidt
 
     nvgFontSize(vg_, fontSize);
     selectFont(font);
+    // Explicit align: measurement must never inherit whatever align the last
+    // draw left on the shared context.
+    nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
 
-    float bounds[4];
-    float width = nvgTextBounds(vg_, 0, 0, text.c_str(), nullptr, bounds);
-    float height = bounds[3] - bounds[1];
+    // Width is the advance (nvgTextBounds' return value — align-independent);
+    // height is the face's line height, never the string's ink bounds, so a
+    // line of "ace" occupies the same vertical space as a line of "Ay".
+    float width = nvgTextBounds(vg_, 0, 0, text.c_str(), nullptr, nullptr);
+    float ascender = 0, descender = 0, lineHeight = 0;
+    nvgTextMetrics(vg_, &ascender, &descender, &lineHeight);
 
     if (maxWidth > 0 && width > maxWidth) {
         width = maxWidth;
     }
 
-    return {width, height};
+    return {width, lineHeight};
+}
+
+float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_view font) const {
+    if (!vg_) {
+        return fallbackMeasureRun(run, fontSize, font);
+    }
+
+    nvgFontSize(vg_, fontSize);
+    selectFont(std::string(font));
+    nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+    return nvgTextBounds(vg_, 0, 0, run.data(), run.data() + run.size(), nullptr);
+}
+
+FontMetrics NvgRenderer::fontMetrics(float fontSize, std::string_view font) const {
+    if (!vg_) {
+        return fallbackFontMetrics(fontSize, font);
+    }
+
+    nvgFontSize(vg_, fontSize);
+    selectFont(std::string(font));
+    float ascender = 0, descender = 0, lineHeight = 0;
+    nvgTextMetrics(vg_, &ascender, &descender, &lineHeight);
+    // nanovg reports the descender negative (below baseline); FontMetrics
+    // carries it positive.
+    return {ascender, -descender, lineHeight};
 }
 
 void NvgRenderer::render(Node* root) noexcept {

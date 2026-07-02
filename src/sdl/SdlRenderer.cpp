@@ -104,6 +104,32 @@ Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidt
     return {width, height};
 }
 
+float SdlRenderer::measureRun(std::string_view run, float fontSize, std::string_view font) const {
+    if (run.empty())
+        return 0;
+
+    TTF_Font* fontPtr = getFont(std::string(font), static_cast<int>(fontSize + 0.5f));
+    if (!fontPtr)
+        return fallbackMeasureRun(run, fontSize, font);
+
+    // TTF_SizeUTF8 needs a null-terminated string; the run may be a substring
+    // of a larger buffer, so a temporary copy is required.
+    int w = 0, h = 0;
+    TTF_SizeUTF8(fontPtr, std::string(run).c_str(), &w, &h);
+    return static_cast<float>(w);
+}
+
+FontMetrics SdlRenderer::fontMetrics(float fontSize, std::string_view font) const {
+    TTF_Font* fontPtr = getFont(std::string(font), static_cast<int>(fontSize + 0.5f));
+    if (!fontPtr)
+        return fallbackFontMetrics(fontSize, font);
+
+    // SDL_ttf reports the descent negative (below baseline); FontMetrics
+    // carries it positive.
+    return {static_cast<float>(TTF_FontAscent(fontPtr)), static_cast<float>(-TTF_FontDescent(fontPtr)),
+            static_cast<float>(TTF_FontLineSkip(fontPtr))};
+}
+
 void SdlRenderer::render(Node* root) noexcept {
     if (!root)
         return;

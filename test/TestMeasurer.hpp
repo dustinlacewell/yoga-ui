@@ -31,6 +31,18 @@ public:
         return fn_(text, fontSize, maxWidth);
     }
 
+    // The run primitive routes through the same fn (unconstrained, width only),
+    // so run advances and measure() widths agree by construction.
+    float measureRun(std::string_view run, float fontSize, std::string_view /*font*/) const override {
+        return fn_(std::string(run), fontSize, 0).width;
+    }
+
+    // lineHeight == fontSize matches what measure() reports for height, so
+    // layout expectations written against fn-based heights keep holding.
+    FontMetrics fontMetrics(float fontSize, std::string_view /*font*/) const override {
+        return {0.8f * fontSize, 0.2f * fontSize, fontSize};
+    }
+
     int calls() const { return calls_; }
     void resetCalls() { calls_ = 0; }
 

@@ -33,6 +33,8 @@ public:
 
     // ITextMeasurer: measure text using this renderer's nanovg context/font.
     Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const override;
+    float measureRun(std::string_view run, float fontSize, std::string_view font) const override;
+    FontMetrics fontMetrics(float fontSize, std::string_view font) const override;
 
     // Register a named font face usable from Text/Input `.font(name)`.
     //   - From a .ttf path: loads it via nvgCreateFont and returns the handle

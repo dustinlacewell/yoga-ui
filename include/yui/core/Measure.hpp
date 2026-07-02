@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -16,16 +17,36 @@ struct Size {
     float height = 0;
 };
 
-// Rough text size estimate used when no backend measurer is available.
-// Assumes ~0.6 * fontSize per character for width, fontSize for height.
-// maxWidth (0 = no limit) clamps the reported width for wrapping. The heuristic
-// is font-agnostic (a byte-count estimate), so it ignores any font name — the
-// parameter exists only to keep one uniform measure signature.
+// Vertical font metrics for one (face, size). All values are in pixels;
+// descent is positive (distance below the baseline), unlike the negative
+// convention some backends report natively.
+struct FontMetrics {
+    float ascent;      // baseline -> top of line box
+    float descent;     // baseline -> bottom of line box
+    float lineHeight;  // baseline-to-baseline advance
+};
+
+// Rough per-run advance estimate used when no backend measurer is available:
+// ~0.6 * fontSize per character (a byte-count estimate). Font-agnostic — the
+// name parameter exists only to keep one uniform measure signature.
+inline float fallbackMeasureRun(std::string_view run, float fontSize, std::string_view font = {}) {
+    (void)font;
+    return static_cast<float>(run.size()) * fontSize * 0.6f;
+}
+
+// Heuristic vertical metrics matching fallbackMeasure's height convention
+// (lineHeight == fontSize), split 80/20 across the baseline.
+inline FontMetrics fallbackFontMetrics(float fontSize, std::string_view font = {}) {
+    (void)font;
+    return {0.8f * fontSize, 0.2f * fontSize, fontSize};
+}
+
+// Rough text size estimate used when no backend measurer is available. Width
+// comes from fallbackMeasureRun; height is one fallback line (== fontSize).
+// maxWidth (0 = no limit) clamps the reported width for wrapping.
 inline Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth,
                             const std::string& font = {}) {
-    (void)font;
-    float charWidth = fontSize * 0.6f;
-    float width = static_cast<float>(text.length()) * charWidth;
+    float width = fallbackMeasureRun(text, fontSize, font);
     if (maxWidth > 0 && width > maxWidth) {
         width = maxWidth;
     }
@@ -64,6 +85,15 @@ struct ITextMeasurer {
     // layout). Implementations fall back to the default face for an unknown name.
     virtual Size measure(const std::string& text, float fontSize, float maxWidth,
                          const std::string& font) const = 0;
+
+    // Advance width of ONE run — no wrapping, and `run` must not contain
+    // newlines. This is the primitive the shared wrapping layer is built on;
+    // it must agree with drawTextRun so a run draws at the width it measured.
+    virtual float measureRun(std::string_view run, float fontSize, std::string_view font) const = 0;
+
+    // Vertical metrics for (face, size). Line boxes and baselines are derived
+    // from these, never from per-string ink bounds (which vary with content).
+    virtual FontMetrics fontMetrics(float fontSize, std::string_view font) const = 0;
 
 private:
     friend class Host;

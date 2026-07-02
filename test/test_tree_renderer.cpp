@@ -44,6 +44,14 @@ public:
         return {static_cast<float>(text.length()) * 10.0f, fontSize};
     }
 
+    float measureRun(std::string_view run, float /*fontSize*/, std::string_view /*font*/) const override {
+        return static_cast<float>(run.size()) * 10.0f;
+    }
+
+    FontMetrics fontMetrics(float fontSize, std::string_view /*font*/) const override {
+        return {0.8f * fontSize, 0.2f * fontSize, fontSize};
+    }
+
     void beginFrame() override {}
     void endFrame() override {}
 
