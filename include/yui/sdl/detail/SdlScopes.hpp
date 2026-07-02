@@ -1,47 +1,12 @@
 #pragma once
 
-#include <SDL.h>
-
 #include <utility>
+
+#include <SDL.h>
 
 namespace yui {
 namespace sdl {
 namespace detail {
-
-// RAII clip-rect save/restore. Captures the renderer's current clip rect on
-// construction and restores it on destruction — whether it was previously
-// enabled (restore to the saved rect) or disabled (restore to no clip). The
-// caller applies its own clip after constructing this scope; the restore happens
-// on any scope exit. Mirrors the SDL_RenderGetClipRect / SDL_RenderSetClipRect
-// pairing it replaces.
-class SdlClipScope {
-public:
-    explicit SdlClipScope(SDL_Renderer* renderer) : renderer_(renderer) {
-        hadClip_ = SDL_RenderIsClipEnabled(renderer_);
-        if (hadClip_) {
-            SDL_RenderGetClipRect(renderer_, &prevClip_);
-        }
-    }
-    ~SdlClipScope() {
-        if (hadClip_) {
-            SDL_RenderSetClipRect(renderer_, &prevClip_);
-        } else {
-            SDL_RenderSetClipRect(renderer_, nullptr);
-        }
-    }
-
-    // The saved clip rect, valid only when the renderer had a clip on entry.
-    SDL_bool hadClip() const { return hadClip_; }
-    const SDL_Rect& prevClip() const { return prevClip_; }
-
-    SdlClipScope(const SdlClipScope&) = delete;
-    SdlClipScope& operator=(const SdlClipScope&) = delete;
-
-private:
-    SDL_Renderer* renderer_;
-    SDL_Rect prevClip_{};
-    SDL_bool hadClip_ = SDL_FALSE;
-};
 
 // RAII render-target save/restore. Captures the current render target on
 // construction, switches to the supplied target, and restores the captured
@@ -72,8 +37,7 @@ public:
     explicit SdlTexture(SDL_Texture* texture) : texture_(texture) {}
     ~SdlTexture() { reset(); }
 
-    SdlTexture(SdlTexture&& other) noexcept
-        : texture_(std::exchange(other.texture_, nullptr)) {}
+    SdlTexture(SdlTexture&& other) noexcept : texture_(std::exchange(other.texture_, nullptr)) {}
     SdlTexture& operator=(SdlTexture&& other) noexcept {
         if (this != &other) {
             reset();

@@ -66,6 +66,7 @@ add_subdirectory(deps/yoga/yoga)
 # -----------------------------------------------------------------------------
 file(GLOB YUI_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp
 )
 
 add_library(yui STATIC ${YUI_CORE_SOURCES})
