@@ -1702,3 +1702,108 @@ TEST_CASE("Hooks - mixed effect/field/state/ref persists state with ZERO diagnos
     CHECK(textNode->props.text == "F:11:kept");  // state updated AND ref persisted
     CHECK(diagnostics == 0);                      // no false rules-of-hooks positives
 }
+
+// ─── Defect A: remount components on identity change ─────────────────────────
+
+TEST_CASE("Component - different lambda at same unkeyed slot remounts (fresh state)") {
+    // Two DISTINCT component lambdas occupy the same unkeyed position across two
+    // renders. The second must get a FRESH fiber (fresh hook state), NOT inherit
+    // the first's useState value. Pre-fix, typeMatches returned true for any
+    // component-vs-component, so the second lambda ran on the first's fiber and
+    // read its state.
+    TestHost host;
+
+    auto CompA = [](ComponentContext& ctx) -> VNode {
+        auto [v, set] = ctx.useState<int>(111);
+        (void)set;
+        return Text("A:" + std::to_string(v));
+    };
+    auto CompB = [](ComponentContext& ctx) -> VNode {
+        auto [v, set] = ctx.useState<int>(222);
+        (void)set;
+        return Text("B:" + std::to_string(v));
+    };
+
+    bool useA = true;
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        if (useA) return Box({Component(CompA)});
+        return Box({Component(CompB)});
+    }));
+
+    host.update(200, 200);
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "A:111");
+
+    // Swap the component identity at the same slot.
+    useA = false;
+    host.markDirty();
+    host.update(200, 200);
+
+    rootBox = static_cast<BoxNode*>(host.root());
+    REQUIRE(rootBox->children.size() == 1);
+    // Fresh mount => B's initial state, not A's inherited 111.
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "B:222");
+}
+
+TEST_CASE("Component - function-pointer components remount by address (&A vs &B)") {
+    // Function pointers all share one target_type; only the captured target
+    // address disambiguates them. Swapping &funcA -> &funcB at one slot must
+    // remount (fresh state), proving the address is part of the identity.
+    TestHost host;
+
+    struct Fns {
+        static VNode A(ComponentContext& ctx) {
+            auto [v, set] = ctx.useState<int>(111);
+            (void)set;
+            return Text("A:" + std::to_string(v));
+        }
+        static VNode B(ComponentContext& ctx) {
+            auto [v, set] = ctx.useState<int>(222);
+            (void)set;
+            return Text("B:" + std::to_string(v));
+        }
+    };
+
+    VNode (*fn)(ComponentContext&) = &Fns::A;
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        return Box({Component(ComponentFn(fn))});
+    }));
+
+    host.update(200, 200);
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "A:111");
+
+    fn = &Fns::B;
+    host.markDirty();
+    host.update(200, 200);
+
+    rootBox = static_cast<BoxNode*>(host.root());
+    REQUIRE(rootBox->children.size() == 1);
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "B:222");
+}
+
+TEST_CASE("Component - same lambda across renders preserves state (no false remount)") {
+    // Regression guard for defect A's fix: the SAME component lambda at a stable
+    // slot must be treated as the same component (identity match), so its hook
+    // state is PRESERVED across renders — no spurious remount.
+    TestHost host;
+    std::function<void(int)> setter;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        auto [v, set] = ctx.useState<int>(0);
+        setter = set;
+        return Text(std::to_string(v));
+    };
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        return Box({Component(Comp)});
+    }));
+
+    host.update(200, 200);
+    setter(77);
+    host.update(200, 200);
+
+    auto* rootBox = static_cast<BoxNode*>(host.root());
+    // State survived (would be 0 again if the fiber were spuriously remounted).
+    CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "77");
+}

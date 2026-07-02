@@ -60,6 +60,25 @@ static std::string getStringKey(const Child& child) {
         [](const auto& c) -> std::string { return c.key; }, child);
 }
 
+// Component identity: (target_type, target function-pointer address). The
+// closure type of a lambda-expression is unique per expression and stable across
+// renders, so target_type() distinguishes different component lambdas at the same
+// slot. Plain function pointers all share one closure-less target_type, so also
+// capture the pointed-to function address to disambiguate &A vs &B.
+struct CompId {
+    std::type_index type;
+    const void* ptr;
+};
+
+static CompId componentIdOf(const ComponentFn& fn) {
+    std::type_index t = std::type_index(fn.target_type());
+    const void* p = nullptr;
+    if (auto pp = fn.target<VNode (*)(ComponentContext&)>()) {
+        p = reinterpret_cast<const void*>(*pp);
+    }
+    return {t, p};
+}
+
 // --- Fiber child lookup (mirrors old ChildLookup but for fibers) ---
 
 struct FiberLookup {
@@ -83,7 +102,12 @@ struct FiberLookup {
     // Check if a Child matches a Fiber (type compatibility)
     static bool typeMatches(const Child& child, const Fiber& fiber) {
         if (isComponent(child)) {
-            return fiber.isComponent();
+            if (!fiber.isComponent()) return false;
+            // Same slot, DIFFERENT component identity => not a match; the caller's
+            // no-match branch remounts (fresh fiber, fresh hook state) rather than
+            // letting the new component inherit the old one's state.
+            CompId id = componentIdOf(std::get<Component>(child).fn);
+            return id.type == fiber.componentType && id.ptr == fiber.componentTargetPtr;
         } else {
             if (!fiber.isHost() || !fiber.renderNode) return false;
             return fiber.renderNode->type() == std::get<VNode>(child).type();
@@ -221,6 +245,11 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
     fiber->intKey = comp.intKey;
     fiber->sourcePosition = sourcePos;
     fiber->componentFn = comp.fn;
+    {
+        CompId id = componentIdOf(comp.fn);
+        fiber->componentType = id.type;
+        fiber->componentTargetPtr = id.ptr;
+    }
     fiber->host = host_;
 
     fiber->debugName = comp.debugName;  // unconditional: feeds always-on hook diagnostics
@@ -359,6 +388,12 @@ void Reconciler::reconcileHost(Fiber* fiber, const VNode& vnode) {
 void Reconciler::reconcileComponent(Fiber* fiber, const Component& comp) {
     if (!fiber || !fiber->isComponent()) return;
     fiber->componentFn = comp.fn;
+    {
+        CompId id = componentIdOf(comp.fn);
+        fiber->componentType = id.type;
+        fiber->componentTargetPtr = id.ptr;
+    }
+    fiber->debugName = comp.debugName;
     rerenderComponent(fiber);
 }
 

@@ -110,6 +110,15 @@ struct Fiber {
 
     // --- Component fiber fields ---
     ComponentFn componentFn;
+    // Component identity for reconciliation matching. A component at an unkeyed
+    // slot is "the same component" across renders only if its render function's
+    // identity is unchanged — otherwise it must remount (fresh hook state), not
+    // inherit the previous occupant's state. componentType is the closure/target
+    // type (unique per source lambda-expression, stable across renders);
+    // componentTargetPtr disambiguates plain function pointers, which all share
+    // one target_type. Stamped wherever componentFn is assigned.
+    std::type_index componentType = std::type_index(typeid(void));
+    const void* componentTargetPtr = nullptr;
     std::vector<std::any> hookState;
     // One HookTag per hook CALL, in call order (indexed by ComponentContext's
     // hookIndex_, which counts EVERY hook — effects and fields included — unlike
