@@ -536,6 +536,47 @@ TEST_CASE("renderTree: password input masks the display run") {
     CHECK(run->text == "***");
 }
 
+TEST_CASE("renderTree: password mask is one star per code point, not per byte") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // "aé" is 3 bytes but 2 code points ('é' = 0xC3 0xA9). Per-byte masking
+    // drew 3 stars; the mask must be per code point.
+    auto tree = Input().value("a\xC3\xA9").password(true).fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+    root->focused = true;  // fresh blink state: caret starts visible
+
+    render::renderTree(root, backend, {});
+
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    REQUIRE(run != nullptr);
+    CHECK(run->text == "**");
+
+    // The caret measures the MASKED run: pad + "**" (2 bytes * 10px), centered
+    // on the caret width — it sits at the end of the stars, not the raw bytes.
+    const Call* caret = backend.nthOf(Call::Kind::FillRect, 1);
+    REQUIRE(caret != nullptr);
+    CHECK(caret->rect.x == doctest::Approx(rd::kInputTextPad + 20.0f - rd::kCaretWidth / 2));
+}
+
+TEST_CASE("renderTree: non-password input shows multibyte text unmasked") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree = Input().value("a\xC3\xA9").fontSize(10).width(100).height(30);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 30);
+
+    render::renderTree(root, backend, {});
+
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    REQUIRE(run != nullptr);
+    CHECK(run->text == "a\xC3\xA9");
+}
+
 // ---------------------------------------------------------------------------
 // Caret: a fillRect past the measured run when focused and the blink phase says
 // visible; never present when unfocused. Blink is node state driven by

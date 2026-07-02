@@ -97,8 +97,8 @@ public:
     }
     void clearFocusTrap() { setFocusTrap(nullptr); }
 
-    // Read-and-clear the visual-state latch: true iff a hover, press, or focus
-    // TRANSITION occurred since the last consume. Latched (not returned per
+    // Read-and-clear the visual-state latch: true iff a hover, press, focus, or
+    // text-edit TRANSITION occurred since the last consume. Latched (not returned per
     // event) because handle*() may run between update() calls — the flag
     // persists until the next Host::update() folds it into needsRepaint. Any
     // transition marks, without per-node style introspection: a false-positive
@@ -289,7 +289,7 @@ private:
         return hoveredNode_;
     }
 
-    // Set the visual-state latch. Called ONLY on actual hover/press/focus
+    // Set the visual-state latch. Called ONLY on actual hover/press/focus/text-edit
     // transitions (never on a non-transition mouse move); consumed by
     // consumeVisualStateChanged.
     void markVisualStateChanged() noexcept { visualStateChanged_ = true; }
@@ -381,8 +381,8 @@ private:
     float lastClickY_ = 0;
     MouseButton lastClickButton_ = MouseButton::Left;
     int clickCount_ = 0;
-    // Visual-state latch: a hover/press/focus transition occurred since the
-    // last consumeVisualStateChanged (see markVisualStateChanged).
+    // Visual-state latch: a hover/press/focus/text-edit transition occurred
+    // since the last consumeVisualStateChanged (see markVisualStateChanged).
     bool visualStateChanged_ = false;
 };
 

@@ -22,6 +22,18 @@ void report(const ErrorHandler& onError, std::string_view where, const std::exce
     } catch (...) {}
 }
 
+// Number of UTF-8 code points in `text`: count the bytes that start a code
+// point, i.e. everything but continuation bytes (0b10xxxxxx) — the same scan
+// the backspace edit in EventHandler and TextWrap use.
+size_t codePointCount(std::string_view text) {
+    size_t count = 0;
+    for (char c : text) {
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+            ++count;
+    }
+    return count;
+}
+
 // The run an Input displays and its color: the (possibly password-masked)
 // displayText, else the placeholder in the placeholder color.
 struct InputRun {
@@ -32,8 +44,9 @@ struct InputRun {
 InputRun inputDisplayRun(const InputNode& node, uint32_t textColor) {
     const auto& p = node.props;
     if (!node.displayText.empty()) {
+        // One '*' per CODE POINT, not per byte: a 2-byte 'é' is one star.
         if (p.password.value_or(false))
-            return {std::string(node.displayText.length(), '*'), textColor};
+            return {std::string(codePointCount(node.displayText), '*'), textColor};
         return {node.displayText, textColor};
     }
     if (p.placeholder)

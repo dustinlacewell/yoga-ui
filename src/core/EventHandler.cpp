@@ -861,6 +861,11 @@ void EventHandler::handleTextInput(const std::string& text) noexcept {
     // the on-screen feedback (per the decided contract) instead of rolling it back.
     focused->displayText += text;
 
+    // An edit is a visual transition: latch the repaint so an Input with no
+    // onChange wired (no app-driven reconcile) still repaints. Repaint only —
+    // a single-line input's size is prop-driven, so layout is unaffected.
+    markVisualStateChanged();
+
     if (focused->props.onChange) {
         fireCallback(
             "onChange", [&] { focused->props.onChange(focused->displayText); },
@@ -884,6 +889,7 @@ void EventHandler::handleBackspace() noexcept {
             --i;
         } while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80);
         s.erase(i);
+        markVisualStateChanged();  // an edit is a visual transition (see handleTextInput)
 
         if (focused->props.onChange) {
             fireCallback(

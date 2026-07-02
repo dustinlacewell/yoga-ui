@@ -1512,6 +1512,35 @@ TEST_CASE("UpdateResult - autoFocus input animates from the mount frame on") {
     CHECK(idle.needsRepaint == false);
 }
 
+TEST_CASE("UpdateResult - text edits latch needsRepaint until the next update") {
+    // Regression: handleTextInput/handleBackspace mutated displayText without
+    // latching, so an Input with no onChange wired (no app-driven reconcile)
+    // reported needsRepaint == false for the edit — the typed text never showed
+    // in an embedder that honors UpdateResult.
+    EventTestHost host(repaintFixture);
+
+    host.update(200, 50);  // mount
+    host.update(200, 50);  // settle
+
+    // Focus the input, then drain the focus/press transitions. Tiny dt keeps
+    // the blink phase off its 530ms edge, so any repaint below is the edit's.
+    host.handleMouseDown(125, 25, MouseButton::Left);
+    host.handleMouseUp(125, 25, MouseButton::Left);
+    REQUIRE(host.getFocusedInput() != nullptr);
+    host.update(200, 50, 0.01f);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+
+    // Typing latches: the NEXT update repaints, the one after is clean.
+    host.handleTextInput("a");
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == true);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+
+    // Backspace (non-empty text) latches the same way.
+    host.handleBackspace();
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == true);
+    CHECK(host.update(200, 50, 0.01f).needsRepaint == false);
+}
+
 TEST_CASE("UpdateResult - a handler's deferred update() cannot eat the visual-state latch") {
     // A hover handler that calls host.update() mid-dispatch defers; the drain at
     // the tail of handleMouseMove runs a full update whose result nobody sees.
