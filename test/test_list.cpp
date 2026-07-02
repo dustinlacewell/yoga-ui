@@ -84,10 +84,10 @@ TEST_CASE("List with complex render function") {
     auto list = List(
         items, [](const Item& i) { return i.id; },
         [](const Item& i) {
-            return Row({
+            return Row(
                            Text(i.label).flexGrow(1),
-                           When(i.active, Text("*")),
-                       })
+                           When(i.active, Text("*"))
+                       )
                 .height(24)
                 .padding(4);
         });

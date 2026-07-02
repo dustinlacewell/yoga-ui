@@ -46,7 +46,7 @@ TEST_CASE("Reconciler drives reconciliation against a DirtyScheduler stub") {
     Reconciler reconciler;
     reconciler.setHost(&sched);  // takes a DirtyScheduler*, no concrete Host needed
 
-    auto tree = Box({Text("a").setKey("a")});
+    auto tree = Box(Text("a").setKey("a"));
     auto fiber = reconciler.mount(std::move(tree));
 
     REQUIRE(fiber != nullptr);

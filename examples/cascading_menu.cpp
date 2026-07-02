@@ -318,13 +318,13 @@ static lay::PlacedRect menuPlacement(int openBar, const std::vector<std::string>
 static VNode MenuItemRow(const MenuDef& item, int depth, const MenuState& ms) {
     bool isActive = depth < static_cast<int>(ms.activeItems.size()) && ms.activeItems[depth] == item.label;
 
-    return Row({
+    return Row(
         Text(item.label).fontSize(c::FONT_SIZE).color(c::TEXT).flexGrow(1),
         When(!item.shortcut.empty(),
             Text(item.shortcut).fontSize(c::FONT_SMALL).color(c::TEXT_DIM)),
         When(hasKids(item),
-            Text("\xe2\x96\xb8").fontSize(c::FONT_SMALL).color(c::TEXT_DIM)),  // ▸
-    })
+            Text("\xe2\x96\xb8").fontSize(c::FONT_SMALL).color(c::TEXT_DIM))  // ▸
+    )
     .height(c::ITEM_HEIGHT)
     .paddingLeft(12).paddingRight(12)
     .alignItems(AlignItems::Center)
@@ -374,11 +374,11 @@ static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
         }
     }
 
-    return Box({
+    return Box(
         Scroll(
             Column(std::move(rows))
         ).flexGrow(1)
-    })
+    )
     .positionType(PositionType::Absolute)
     .positionLeft(at.x).positionTop(at.y)
     .width(c::MENU_WIDTH)
@@ -397,7 +397,7 @@ static VNode MenuBar(const MenuState& ms) {
     for (int i = 0; i < static_cast<int>(g_menuBar.size()); i++) {
         bool isOpen = ms.openBar == i;
         items.push_back(
-            Box({Text(g_menuBar[i].label).fontSize(c::FONT_SIZE).color(c::TEXT)})
+            Box(Text(g_menuBar[i].label).fontSize(c::FONT_SIZE).color(c::TEXT))
                 .height(c::BAR_HEIGHT)
                 .paddingLeft(c::BAR_PAD_X).paddingRight(c::BAR_PAD_X)
                 .alignItems(AlignItems::Center)
@@ -438,10 +438,10 @@ static Component App() {
         const auto& ms = g_state->use();
 
         // Content area
-        auto content = Column({
+        auto content = Column(
             MenuBar(ms),
-            Box({
-                Column({
+            Box(
+                Column(
                     Text("Cascading Menu Demo").fontSize(20).color(c::TEXT),
                     Gap(12),
                     Text("Click a menu bar item to open its dropdown.").fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
@@ -450,18 +450,18 @@ static Component App() {
                         .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
                     Gap(24),
                     When(!ms.lastAction.empty(),
-                        Row({
+                        Row(
                             Text("Last action: ").fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
-                            Text(ms.lastAction).fontSize(c::FONT_SIZE).color(0x4ade80FF),
-                        })
-                    ),
-                }).gap(4)
-            })
+                            Text(ms.lastAction).fontSize(c::FONT_SIZE).color(0x4ade80FF)
+                        )
+                    )
+                ).gap(4)
+            )
             .flexGrow(1)
             .justifyContent(JustifyContent::Center)
             .alignItems(AlignItems::Center)
-            .backgroundColor(c::BG),
-        }).flexGrow(1);
+            .backgroundColor(c::BG)
+        ).flexGrow(1);
 
         // If no menu is open, just show content
         if (ms.openBar < 0) return content;

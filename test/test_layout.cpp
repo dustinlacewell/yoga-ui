@@ -37,10 +37,10 @@ TEST_CASE("Basic layout calculation") {
 TEST_CASE("flexGrow distributes space") {
     Reconciler reconciler;
 
-    auto tree = Row({
+    auto tree = Row(
                         Box().flexGrow(1).setKey("a"),
-                        Box().flexGrow(2).setKey("b"),
-                    })
+                        Box().flexGrow(2).setKey("b")
+                    )
                     .width(300)
                     .height(100);
 
@@ -55,9 +55,9 @@ TEST_CASE("flexGrow distributes space") {
 TEST_CASE("padding affects child position") {
     Reconciler reconciler;
 
-    auto tree = Box({
-                        Box().setKey("child"),
-                    })
+    auto tree = Box(
+                        Box().setKey("child")
+                    )
                     .padding(10)
                     .width(100)
                     .height(100);
@@ -73,11 +73,11 @@ TEST_CASE("padding affects child position") {
 TEST_CASE("Column layout stacks vertically") {
     Reconciler reconciler;
 
-    auto tree = Column({
+    auto tree = Column(
                            Box().height(20).setKey("a"),
                            Box().height(30).setKey("b"),
-                           Box().height(40).setKey("c"),
-                       })
+                           Box().height(40).setKey("c")
+                       )
                     .width(100);
 
     auto fiber = reconciler.mount(std::move(tree));
@@ -92,11 +92,11 @@ TEST_CASE("Column layout stacks vertically") {
 TEST_CASE("Row layout stacks horizontally") {
     Reconciler reconciler;
 
-    auto tree = Row({
+    auto tree = Row(
                         Box().width(20).setKey("a"),
                         Box().width(30).setKey("b"),
-                        Box().width(40).setKey("c"),
-                    })
+                        Box().width(40).setKey("c")
+                    )
                     .height(100);
 
     auto fiber = reconciler.mount(std::move(tree));
@@ -111,11 +111,11 @@ TEST_CASE("Row layout stacks horizontally") {
 TEST_CASE("gap adds space between children") {
     Reconciler reconciler;
 
-    auto tree = Column({
+    auto tree = Column(
                            Box().height(20).setKey("a"),
                            Box().height(20).setKey("b"),
-                           Box().height(20).setKey("c"),
-                       })
+                           Box().height(20).setKey("c")
+                       )
                     .gap(10)
                     .width(100);
 
@@ -131,9 +131,9 @@ TEST_CASE("gap adds space between children") {
 TEST_CASE("justifyContent center") {
     Reconciler reconciler;
 
-    auto tree = Row({
-                        Box().width(50).setKey("child"),
-                    })
+    auto tree = Row(
+                        Box().width(50).setKey("child")
+                    )
                     .width(200)
                     .height(100)
                     .justifyContent(JustifyContent::Center);
@@ -148,9 +148,9 @@ TEST_CASE("justifyContent center") {
 TEST_CASE("alignItems center") {
     Reconciler reconciler;
 
-    auto tree = Row({
-                        Box().width(50).height(30).setKey("child"),
-                    })
+    auto tree = Row(
+                        Box().width(50).height(30).setKey("child")
+                    )
                     .width(200)
                     .height(100)
                     .alignItems(AlignItems::Center);
@@ -165,20 +165,20 @@ TEST_CASE("alignItems center") {
 TEST_CASE("nested layout") {
     Reconciler reconciler;
 
-    auto tree = Column({
-                           Row({
+    auto tree = Column(
+                           Row(
                                    Box().flexGrow(1).setKey("a1"),
-                                   Box().flexGrow(1).setKey("a2"),
-                               })
+                                   Box().flexGrow(1).setKey("a2")
+                               )
                                .height(50)
                                .setKey("row1"),
-                           Row({
+                           Row(
                                    Box().width(30).setKey("b1"),
-                                   Box().flexGrow(1).setKey("b2"),
-                               })
+                                   Box().flexGrow(1).setKey("b2")
+                               )
                                .height(50)
-                               .setKey("row2"),
-                       })
+                               .setKey("row2")
+                       )
                     .width(100);
 
     auto fiber = reconciler.mount(std::move(tree));
@@ -199,9 +199,9 @@ TEST_CASE("nested layout") {
 TEST_CASE("margin adds space outside element") {
     Reconciler reconciler;
 
-    auto tree = Box({
-                        Box().width(50).height(50).margin(10).setKey("child"),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).margin(10).setKey("child")
+                    )
                     .width(100)
                     .height(100);
 
@@ -216,10 +216,10 @@ TEST_CASE("margin adds space outside element") {
 TEST_CASE("layout persists after reconciliation") {
     Reconciler reconciler;
 
-    auto tree1 = Row({
+    auto tree1 = Row(
                          Box().flexGrow(1).setKey("a"),
-                         Box().flexGrow(1).setKey("b"),
-                     })
+                         Box().flexGrow(1).setKey("b")
+                     )
                      .width(200)
                      .height(100);
 
@@ -230,10 +230,10 @@ TEST_CASE("layout persists after reconciliation") {
     CHECK(root->children[0]->layout.width == doctest::Approx(100));
 
     // Reconcile with different flex values
-    auto tree2 = Row({
+    auto tree2 = Row(
                          Box().flexGrow(1).setKey("a"),
-                         Box().flexGrow(3).setKey("b"),
-                     })
+                         Box().flexGrow(3).setKey("b")
+                     )
                      .width(200)
                      .height(100);
 
@@ -272,12 +272,12 @@ TEST_CASE("Box wraps Text child in Column with FlexStart") {
     h.setMeasurer(&measurer);
 
     // Box inside Column with alignItems FlexStart (prevents stretch)
-    auto tree = Column({
+    auto tree = Column(
         Box(Text("Hello").fontSize(16).setKey("txt"))
             .justifyContent(JustifyContent::Center)
             .alignItems(AlignItems::Center)
             .setKey("box")
-    }).width(200).alignItems(AlignItems::FlexStart);
+    ).width(200).alignItems(AlignItems::FlexStart);
 
     auto* root = h.mount(std::move(tree));
     root->calculateLayout(200, YGUndefined);
@@ -294,7 +294,7 @@ TEST_CASE("Box wraps Text in Column - real app scenario") {
 
     // Mimics the SessionScreen layout:
     // Column with fixed dimensions, Box header wrapping Text
-    auto tree = Column({
+    auto tree = Column(
         // Header Box - no explicit size, should wrap text HEIGHT
         Box(Text("Session Name").fontSize(12).setKey("txt"))
             .backgroundColor(0x202020FF)
@@ -303,7 +303,7 @@ TEST_CASE("Box wraps Text in Column - real app scenario") {
             .setKey("header"),
         // Other content
         Box().flexGrow(1).setKey("content")
-    })
+    )
     .width(180)
     .height(480)
     .padding(4)
@@ -331,14 +331,14 @@ TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
     // No measurer installed -> fallback heuristic (0.6 * fontSize per char).
     MeasureHarness h;
 
-    auto tree = Column({
+    auto tree = Column(
         Box(Text("Session Name").fontSize(12).setKey("txt"))
             .backgroundColor(0x202020FF)
             .justifyContent(JustifyContent::Center)
             .alignItems(AlignItems::Center)
             .setKey("header"),
         Box().flexGrow(1).setKey("content")
-    })
+    )
     .width(180)
     .height(480)
     .padding(4)
@@ -374,10 +374,10 @@ TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus patte
         .width(100);
 
     // Put it in a Column like the real app
-    auto tree = Column({
+    auto tree = Column(
         std::move(box),
         Box().flexGrow(1).setKey("content")
-    })
+    )
     .width(180)
     .height(480)
     .padding(4)
@@ -411,14 +411,14 @@ TEST_CASE("Header Box without explicit width - stretches and centers text") {
     h.setMeasurer(&measurer);
 
     // This is the header pattern - NO explicit width on Box
-    auto tree = Column({
+    auto tree = Column(
         Box(Text("Session").fontSize(12).setKey("txt"))
             .backgroundColor(0x202020FF)
             .justifyContent(JustifyContent::Center)
             .alignItems(AlignItems::Center)
             .setKey("header"),
         Box().flexGrow(1).setKey("content")
-    })
+    )
     .width(180)
     .height(480)
     .padding(4)
@@ -449,7 +449,7 @@ TEST_CASE("SessionScreen full structure - missing status box") {
     MeasureHarness h;
 
     // Exact structure from SessionScreen::render()
-    auto tree = Column({
+    auto tree = Column(
         // Header
         Box(Text("Session").fontSize(12).setKey("h_txt"))
             .backgroundColor(0x202020FF)
@@ -471,11 +471,11 @@ TEST_CASE("SessionScreen full structure - missing status box") {
             .setKey("scroll"),
 
         // Footer
-        Row({
+        Row(
             Text("127.0.0.1:9000").fontSize(12).flexGrow(1).setKey("addr"),
             Text("Unlocked").fontSize(12).setKey("lock")
-        }).setKey("footer")
-    })
+        ).setKey("footer")
+    )
     .flexGrow(1)
     .padding(4)
     .gap(4);

@@ -24,10 +24,10 @@ TEST_CASE("Box factory creates box node") {
 }
 
 TEST_CASE("Box with children") {
-    VNode node = Box({
+    VNode node = Box(
         Text("A"),
-        Text("B"),
-    });
+        Text("B")
+    );
     CHECK(node.children.size() == 2);
     CHECK(std::get<VNode>(node.children[0]).type() == PrimitiveType::Text);
     CHECK(std::get<VNode>(node.children[1]).type() == PrimitiveType::Text);
@@ -137,14 +137,14 @@ TEST_CASE("Key for reconciliation") {
 }
 
 TEST_CASE("Row helper") {
-    VNode node = Row({Text("A"), Text("B")});
+    VNode node = Row(Text("A"), Text("B"));
     CHECK(node.type() == PrimitiveType::Box);
     CHECK(std::get<BoxProps>(node.props).flexDirection == FlexDirection::Row);
     CHECK(node.children.size() == 2);
 }
 
 TEST_CASE("Column helper") {
-    VNode node = Column({Text("A"), Text("B")});
+    VNode node = Column(Text("A"), Text("B"));
     CHECK(std::get<BoxProps>(node.props).flexDirection == FlexDirection::Column);
 }
 

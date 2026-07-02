@@ -31,9 +31,9 @@ TEST_CASE("Text node uses intrinsic size") {
     MeasureHarness h;
     h.setMeasurer(&measurer);
 
-    auto tree = Column({
-                           Text("Hello").fontSize(20).setKey("txt"),
-                       })
+    auto tree = Column(
+                           Text("Hello").fontSize(20).setKey("txt")
+                       )
                     .width(200)
                     .alignItems(AlignItems::FlexStart);
 
@@ -64,10 +64,10 @@ TEST_CASE("Text node with flexGrow expands") {
     MeasureHarness h;
     h.setMeasurer(&measurer);
 
-    auto tree = Row({
+    auto tree = Row(
                         Text("Hi").fontSize(16).setKey("a"),
-                        Text("World").fontSize(16).flexGrow(1).setKey("b"),
-                    })
+                        Text("World").fontSize(16).flexGrow(1).setKey("b")
+                    )
                     .width(200)
                     .height(50);
 
@@ -130,7 +130,7 @@ TEST_CASE("Installing a measurer re-measures unchanged text laid out under fallb
     // its intrinsic width. NOTE: the string is identical across both renders, so
     // reconcile NEVER dirties this Text — only the measurer swap can.
     auto render = [] {
-        return Column({Text("abc").fontSize(10).setKey("t")})
+        return Column(Text("abc").fontSize(10).setKey("t"))
             .width(200)
             .alignItems(AlignItems::FlexStart);
     };
@@ -166,7 +166,7 @@ TEST_CASE("B7: two hosts with distinct measurers stay independent") {
     b.setMeasurer(&measurerB);
 
     auto makeTree = [] {
-        return Column({Text("Hello").fontSize(16).setKey("txt")})
+        return Column(Text("Hello").fontSize(16).setKey("txt"))
             .width(400)
             .alignItems(AlignItems::FlexStart);
     };
@@ -195,7 +195,7 @@ TEST_CASE("B7: destroying one host's measurer does not break the other") {
         FnMeasurer measurerA(perChar(10.0f));
         a.setMeasurer(&measurerA);
 
-        auto* rootA = a.mount(Column({Text("Hello").fontSize(16).setKey("t")})
+        auto* rootA = a.mount(Column(Text("Hello").fontSize(16).setKey("t"))
                                   .width(400)
                                   .alignItems(AlignItems::FlexStart));
         rootA->calculateLayout(400, 100);
@@ -206,7 +206,7 @@ TEST_CASE("B7: destroying one host's measurer does not break the other") {
     }
 
     // B is wholly unaffected by A's teardown.
-    auto* rootB = b.mount(Column({Text("Hello").fontSize(16).setKey("t")})
+    auto* rootB = b.mount(Column(Text("Hello").fontSize(16).setKey("t"))
                               .width(400)
                               .alignItems(AlignItems::FlexStart));
     rootB->calculateLayout(400, 100);
@@ -292,14 +292,14 @@ TEST_CASE("Config-context plumbing: deep tree carries host config at every node"
 
     // A few levels of nesting with text leaves, so the assertion is meaningful.
     host.setRender([] {
-        return Column({
-            Row({Text("a").setKey("a"), Text("bb").setKey("bb")}).setKey("r1"),
-            Column({
-                       Row({Text("ccc").setKey("ccc")}).setKey("r2"),
-                       Text("dddd").setKey("d"),
-                   })
-                .setKey("c2"),
-        });
+        return Column(
+            Row(Text("a").setKey("a"), Text("bb").setKey("bb")).setKey("r1"),
+            Column(
+                       Row(Text("ccc").setKey("ccc")).setKey("r2"),
+                       Text("dddd").setKey("d")
+                   )
+                .setKey("c2")
+        );
     });
     host.update(400, 300);
 
@@ -343,7 +343,7 @@ TEST_CASE("B6 general: destroying measurer before host clears context and falls 
     // A text leaf whose intrinsic width Yoga must measure (parent is wider and
     // left-aligns), so the measure callback actually fires.
     host.setRender([] {
-        return Column({Text("Test").fontSize(12).setKey("txt")})
+        return Column(Text("Test").fontSize(12).setKey("txt"))
             .width(400)
             .alignItems(AlignItems::FlexStart);
     });
@@ -373,7 +373,7 @@ TEST_CASE("B6 general: destroying measurer before host clears context and falls 
     // dead measurer is not called (severed above) and the fallback width is
     // produced. Reconcile keeps the same nodes, so `root` stays valid.
     host.setRender([] {
-        return Column({Text("Testing").fontSize(12).setKey("txt")})
+        return Column(Text("Testing").fontSize(12).setKey("txt"))
             .width(400)
             .alignItems(AlignItems::FlexStart);
     });
@@ -405,7 +405,7 @@ TEST_CASE("B6 general: destroying host before measurer is safe") {
         } host;
         host.install(&measurer);
         host.setRender([] {
-            return Column({Text("Hi").fontSize(16).setKey("t")})
+            return Column(Text("Hi").fontSize(16).setKey("t"))
                 .width(400)
                 .alignItems(AlignItems::FlexStart);
         });

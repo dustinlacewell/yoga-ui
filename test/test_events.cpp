@@ -15,9 +15,9 @@ TEST_CASE("Hit test finds deepest node") {
     EventHandler events;
 
     // Nested boxes
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner"),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner")
+                    )
                     .width(100)
                     .height(100);
 
@@ -78,9 +78,9 @@ TEST_CASE("Click bubbles to parent") {
     EventHandler events;
 
     bool parentClicked = false;
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner"),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner")
+                    )
                     .width(100)
                     .height(100)
                     .onClick([&]() { parentClicked = true; });
@@ -104,9 +104,9 @@ TEST_CASE("Click consumption stops bubbling") {
     bool innerClicked = false;
     bool outerClicked = false;
 
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner").onClick([&]() { innerClicked = true; }),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner").onClick([&]() { innerClicked = true; })
+                    )
                     .width(100)
                     .height(100)
                     .onClick([&]() { outerClicked = true; });
@@ -129,10 +129,10 @@ TEST_CASE("onClick requires press and release on the same node") {
 
     // Two side-by-side boxes, each with its own onClick.
     bool aClicked = false, bClicked = false;
-    auto tree = Box({
+    auto tree = Box(
                         Box().width(50).height(100).setKey("a").onClick([&]() { aClicked = true; }),
-                        Box().width(50).height(100).setKey("b").onClick([&]() { bClicked = true; }),
-                    })
+                        Box().width(50).height(100).setKey("b").onClick([&]() { bClicked = true; })
+                    )
                     .flexDirection(FlexDirection::Row)
                     .width(100).height(100);
 
@@ -167,9 +167,9 @@ TEST_CASE("onClick fires on a handler ancestor when press and release share it")
 
     // Only the PARENT has onClick; press and release both land on the inner child.
     bool parentClicked = false;
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner"),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner")
+                    )
                     .width(100).height(100)
                     .onClick([&]() { parentClicked = true; });
 
@@ -209,9 +209,9 @@ TEST_CASE("Hover tracks deepest node") {
     bool innerHovered = false;
     bool outerHovered = false;
 
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner").onHover([&](bool h) { innerHovered = h; }),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner").onHover([&](bool h) { innerHovered = h; })
+                    )
                     .width(100)
                     .height(100)
                     .onHover([&](bool h) { outerHovered = h; });
@@ -244,10 +244,10 @@ TEST_CASE("Hover - a sibling-to-sibling move does not re-fire the shared parent'
     EventHandler events;
 
     int parentHoverCalls = 0;
-    auto tree = Box({
+    auto tree = Box(
                         Box().width(50).height(100).setKey("childA").onHover([](bool) {}),
-                        Box().width(50).height(100).setKey("childB").onHover([](bool) {}),
-                    })
+                        Box().width(50).height(100).setKey("childB").onHover([](bool) {})
+                    )
                     .flexDirection(FlexDirection::Row)
                     .width(100)
                     .height(100)
@@ -309,9 +309,9 @@ TEST_CASE("Scroll bubbles to parent") {
     EventHandler events;
 
     float parentScrollY = 0;
-    auto tree = Box({
-                        Box().width(50).height(50).setKey("inner"),
-                    })
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner")
+                    )
                     .width(100)
                     .height(100)
                     .onScroll([&](float dx, float dy) { parentScrollY = dy; });
@@ -437,9 +437,9 @@ TEST_CASE("ScrollNode hit test accounts for scroll offset") {
     EventHandler events;
 
     bool childClicked = false;
-    auto tree = Scroll({
-                           Box().width(100).height(200).onClick([&]() { childClicked = true; }),
-                       })
+    auto tree = Scroll(
+                           Box().width(100).height(200).onClick([&]() { childClicked = true; })
+                       )
                     .width(100)
                     .height(100);
 
@@ -499,14 +499,14 @@ TEST_CASE("ScrollNode with flexGrow child") {
     Reconciler reconciler;
 
     // Child that wants to grow - common pattern with List
-    auto tree = Scroll(Box({
+    auto tree = Scroll(Box(
                                Box().height(50).setKey("item1"),
                                Box().height(50).setKey("item2"),
                                Box().height(50).setKey("item3"),
                                Box().height(50).setKey("item4"),
                                Box().height(50).setKey("item5"),
-                               Box().height(50).setKey("item6"),
-                           })
+                               Box().height(50).setKey("item6")
+                           )
                            .flexDirection(FlexDirection::Column))
                     .width(100)
                     .height(100);
@@ -580,38 +580,38 @@ TEST_CASE("ScrollNode scrolling works when content exceeds container") {
 TEST_CASE("ScrollNode with Column child (no explicit height) - mimics real UI pattern") {
     Reconciler reconciler;
 
-    // This mimics SessionScreen: Scroll(Column({sections...}).gap(6)).flexGrow(1)
+    // This mimics SessionScreen: Scroll(Column(sections...).gap(6)).flexGrow(1)
     // The Column has NO explicit height - it should size to fit its children
-    auto tree = Scroll(Column({
+    auto tree = Scroll(Column(
                                   // Section 1: header + 2 items
-                                  Column({
+                                  Column(
                                              Text("SECTION 1").height(14),
                                              Box().height(20).setKey("item1a"),
-                                             Box().height(20).setKey("item1b"),
-                                         })
+                                             Box().height(20).setKey("item1b")
+                                         )
                                       .gap(2)
                                       .setKey("section1"),
                                   // Section 2: header + 3 items
-                                  Column({
+                                  Column(
                                              Text("SECTION 2").height(14),
                                              Box().height(20).setKey("item2a"),
                                              Box().height(20).setKey("item2b"),
-                                             Box().height(20).setKey("item2c"),
-                                         })
+                                             Box().height(20).setKey("item2c")
+                                         )
                                       .gap(2)
                                       .setKey("section2"),
                                   // Section 3: header + 5 items
-                                  Column({
+                                  Column(
                                              Text("SECTION 3").height(14),
                                              Box().height(20).setKey("item3a"),
                                              Box().height(20).setKey("item3b"),
                                              Box().height(20).setKey("item3c"),
                                              Box().height(20).setKey("item3d"),
-                                             Box().height(20).setKey("item3e"),
-                                         })
+                                             Box().height(20).setKey("item3e")
+                                         )
                                       .gap(2)
-                                      .setKey("section3"),
-                              })
+                                      .setKey("section3")
+                              )
                            .gap(6)  // NO explicit height on the Column!
                        )
                     .width(100)
@@ -655,18 +655,18 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
     Reconciler reconciler;
 
     // This exactly mimics SessionScreen::render():
-    // Column({
+    // Column(
     //     Header stuff...
     //     renderUserList()  <- returns Scroll(...).flexGrow(1)
     //     Footer stuff...
-    // }).flexGrow(1).padding(4).gap(4)
+    // ).flexGrow(1).padding(4).gap(4)
     // Build a list with enough items to exceed the scroll container
     std::vector<Child> items;
     for (int i = 0; i < 20; i++) {
         items.push_back(Box().height(30).setKey("section" + std::to_string(i)));
     }
 
-    auto tree = Column({
+    auto tree = Column(
                            // Header
                            Box().height(20).setKey("header"),
                            // User list - Scroll with flexGrow(1) containing Column with many items
@@ -676,8 +676,8 @@ TEST_CASE("ScrollNode inside Column with flexGrow - mimics actual SessionScreen 
                                .flexShrink(1)
                                .setKey("scroll"),
                            // Footer
-                           Box().height(20).setKey("footer"),
-                       })
+                           Box().height(20).setKey("footer")
+                       )
                     .flexGrow(1)
                     .padding(4)
                     .gap(4);
@@ -798,12 +798,12 @@ TEST_CASE("Key - KeyUp skips an onKeyDown-only node and reaches the onKeyUp node
     // onKeyUp. KeyUp must skip the first and land on the second.
     bool downNodeGotUp = false;
     bool upNodeGotUp = false;
-    auto tree = Box({
+    auto tree = Box(
                         Box().width(50).height(50).setKey("downOnly").onKeyDown(
                             [&](int, uint16_t, bool) {}),
                         Box().width(50).height(50).setKey("upOnly").onKeyUp(
-                            [&](int, uint16_t) { upNodeGotUp = true; }),
-                    })
+                            [&](int, uint16_t) { upNodeGotUp = true; })
+                    )
                     .width(100)
                     .height(100);
     // (downNodeGotUp can never become true: downOnly has no onKeyUp.)
@@ -846,10 +846,10 @@ TEST_CASE("Exception - throwing onClick is isolated; bubble target still fires")
     bool parentClicked = false;
     // Inner box throws on click; the click bubbles to the parent, whose handler
     // must still run despite the inner throw.
-    auto tree = Box({
+    auto tree = Box(
                         Box().width(50).height(50).setKey("inner").onClick(
-                            [&]() { throw std::runtime_error("click boom"); }),
-                    })
+                            [&]() { throw std::runtime_error("click boom"); })
+                    )
                     .width(100)
                     .height(100)
                     .onClick([&]() { parentClicked = true; });
@@ -873,10 +873,10 @@ TEST_CASE("Exception - throwing onHover keeps hover state consistent") {
     int errorCount = 0;
     events.setErrorHandler([&](std::string_view, const std::exception*) { errorCount++; });
 
-    auto tree = Box({
+    auto tree = Box(
                         Box().width(50).height(50).setKey("inner").onHover(
-                            [&](bool) { throw std::runtime_error("hover boom"); }),
-                    })
+                            [&](bool) { throw std::runtime_error("hover boom"); })
+                    )
                     .width(100)
                     .height(100);
 
@@ -909,9 +909,9 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     EventHandler events;
 
     // Root Box with a focusable Input child.
-    auto tree = Box({
-                        Input().width(80).height(20).setKey("field"),
-                    })
+    auto tree = Box(
+                        Input().width(80).height(20).setKey("field")
+                    )
                     .width(100)
                     .height(100);
 
@@ -937,9 +937,9 @@ TEST_CASE("Focus - keystrokes are safe no-ops after the focused Input is reconci
     // type forces removal, which destroys the old InputNode (frees its memory).
     // No node-removed callback is wired, so focusedInput_ is NOT cleared by the
     // partial mitigation — exactly the dangling-pointer scenario.
-    auto next = Box({
-                        Box().width(80).height(20).setKey("field"),
-                    })
+    auto next = Box(
+                        Box().width(80).height(20).setKey("field")
+                    )
                     .width(100)
                     .height(100);
     reconciler.reconcile(fiber.get(), std::move(next));
@@ -967,9 +967,9 @@ TEST_CASE("Backspace deletes a whole UTF-8 code point, not a single byte") {
     Reconciler reconciler;
     EventHandler events;
 
-    auto tree = Box({
-                        Input().width(80).height(20).setKey("field"),
-                    })
+    auto tree = Box(
+                        Input().width(80).height(20).setKey("field")
+                    )
                     .width(100)
                     .height(100);
 
@@ -1012,9 +1012,9 @@ TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") 
     Reconciler reconciler;
     EventHandler events;
 
-    auto tree = Box({
-                        Box().width(80).height(20).setKey("field").onHover([](bool) {}),
-                    })
+    auto tree = Box(
+                        Box().width(80).height(20).setKey("field").onHover([](bool) {})
+                    )
                     .width(100)
                     .height(100);
 
@@ -1031,9 +1031,9 @@ TEST_CASE("Hover - a freed hovered node is reported as no-hover, not dangling") 
     // Reconcile the hovered child away (different primitive type forces removal).
     // No node-removed callback is wired: hoveredNode_ is NOT cleared by the partial
     // mitigation — exactly the dangling scenario.
-    auto next = Box({
-                        Text("x").width(80).height(20).setKey("field"),
-                    })
+    auto next = Box(
+                        Text("x").width(80).height(20).setKey("field")
+                    )
                     .width(100)
                     .height(100);
     reconciler.reconcile(fiber.get(), std::move(next));

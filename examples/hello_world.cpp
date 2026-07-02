@@ -15,7 +15,7 @@ using namespace yui;
 
 // UI: centered "Hello, World!" text
 VNode buildUI() {
-    return Box({Text("Hello, World!").fontSize(32).color(0xFFFFFFFF)})
+    return Box(Text("Hello, World!").fontSize(32).color(0xFFFFFFFF))
         .flexGrow(1)
         .justifyContent(JustifyContent::Center)
         .alignItems(AlignItems::Center)

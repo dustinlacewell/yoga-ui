@@ -22,9 +22,9 @@ TEST_CASE("absoluteRect: nested boxes accumulate parent offsets") {
 
     host.setRender(std::function<VNode()>([&]() {
         // Outer padded box → inner box offset by the padding within it.
-        return Box({
+        return Box(
             Box().ref(inner).width(40).height(20)
-        }).padding(15).width(200).height(100);
+        ).padding(15).width(200).height(100);
     }));
     host.update(300, 300);
 
@@ -44,13 +44,13 @@ TEST_CASE("absoluteRect: a scrolled ancestor subtracts its scroll offset") {
     ScrollNode* scrollNode = nullptr;
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({
-            Scroll(Column({
+        return Box(
+            Scroll(Column(
                 Box().height(50),
                 Box().ref(row).height(50),   // 2nd row → content y = 50
-                Box().height(50),
-            })).height(80)                   // viewport shorter than content
-        });
+                Box().height(50)
+            )).height(80)                   // viewport shorter than content
+        );
     }));
     host.update(200, 200);
 
@@ -88,7 +88,7 @@ TEST_CASE("NodeRef::current returns null during render, valid after") {
         return Box().ref(r).width(30).height(30);
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
     host.update(200, 200);
 
     CHECK(nullDuringRender);             // null while rendering
@@ -141,7 +141,7 @@ TEST_CASE("useElementRef returns a stable handle across re-renders") {
         return Box().ref(r).width(30).height(30);
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
     host.update(200, 200);
     bump(1);                             // state change → re-render of the SAME fiber
     host.update(200, 200);
@@ -160,9 +160,9 @@ TEST_CASE("ref attaches to the element it's set on, not a descendant") {
 
     host.setRender(std::function<VNode()>([&]() {
         // A row with text children; the ref is on the ROW.
-        return Box({
-            Row({ Text("label"), Text("x") }).ref(rowRef).width(120).height(26)
-        }).padding(5);
+        return Box(
+            Row( Text("label"), Text("x") ).ref(rowRef).width(120).height(26)
+        ).padding(5);
     }));
     host.update(300, 300);
 

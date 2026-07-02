@@ -26,7 +26,7 @@ TEST_CASE("Component - basic mount and render") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(SimpleComp)});
+        return Box(Component(SimpleComp));
     }));
 
     auto result = host.update(200, 200);
@@ -58,7 +58,7 @@ TEST_CASE("Component - useState initial value") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Counter)});
+        return Box(Component(Counter));
     }));
 
     host.update(200, 200);
@@ -84,7 +84,7 @@ TEST_CASE("Component - useState setter triggers re-render") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Counter)});
+        return Box(Component(Counter));
     }));
 
     host.update(200, 200);
@@ -118,7 +118,7 @@ TEST_CASE("Component - useState preserves state across re-renders") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Counter)});
+        return Box(Component(Counter));
     }));
 
     host.update(200, 200);
@@ -146,7 +146,7 @@ TEST_CASE("Component - useRef does not trigger re-render") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(RefComponent)});
+        return Box(Component(RefComponent));
     }));
 
     host.update(200, 200);
@@ -172,7 +172,7 @@ TEST_CASE("Component - useRef persists across re-renders triggered by useState")
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({yui::Component(Comp)});
+        return Box(yui::Component(Comp));
     }));
 
     host.update(200, 200);
@@ -202,7 +202,7 @@ TEST_CASE("Component - useEffect runs after mount") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(EffectComponent)});
+        return Box(Component(EffectComponent));
     }));
 
     CHECK(effectRan == false);
@@ -228,7 +228,7 @@ TEST_CASE("Component - useEffect cleanup runs on unmount") {
 
     host.setRender(std::function<VNode()>([&]() {
         if (showComponent.use()) {
-            return Box({Component(EffectComponent)});
+            return Box(Component(EffectComponent));
         }
         return Box();
     }));
@@ -270,7 +270,7 @@ TEST_CASE("Component - multiple effects run in order") {
 
     host.setRender(std::function<VNode()>([&]() {
         if (showComponent.use()) {
-            return Box({Component(MultiEffectComponent)});
+            return Box(Component(MultiEffectComponent));
         }
         return Box();
     }));
@@ -305,10 +305,10 @@ TEST_CASE("Component - Store subscription triggers selective re-render") {
 
     host.setRender(std::function<VNode()>([&]() {
         topRenderCount++;
-        return Box({
+        return Box(
             Component(Component1),
             Component(Component2)
-        });
+        );
     }));
 
     host.update(200, 200);
@@ -349,7 +349,7 @@ TEST_CASE("Component - Store subscription cleanup prevents use-after-free") {
         };
 
         host.setRender(std::function<VNode()>([&]() {
-            return Box({yui::Component(Comp)});
+            return Box(yui::Component(Comp));
         }));
 
         host.update(200, 200);
@@ -377,11 +377,11 @@ TEST_CASE("Component - nested components work correctly") {
 
     auto OuterComponent = [&](ComponentContext& ctx) {
         outerRenderCount++;
-        return Box({Component(InnerComponent)});
+        return Box(Component(InnerComponent));
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(OuterComponent)});
+        return Box(Component(OuterComponent));
     }));
 
     host.update(200, 200);
@@ -408,7 +408,7 @@ TEST_CASE("Component - returning empty VNode") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(ConditionalComponent)});
+        return Box(Component(ConditionalComponent));
     }));
 
     host.update(200, 200);
@@ -438,7 +438,7 @@ TEST_CASE("Component - changing child type") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(SwitchingComponent)});
+        return Box(Component(SwitchingComponent));
     }));
 
     host.update(200, 200);
@@ -469,7 +469,7 @@ TEST_CASE("Component - multiple useState calls") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(MultiStateComponent)});
+        return Box(Component(MultiStateComponent));
     }));
 
     host.update(200, 200);
@@ -496,7 +496,7 @@ TEST_CASE("Component - UpdateResult reflects component changes") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({yui::Component(Comp)});
+        return Box(yui::Component(Comp));
     }));
 
     auto result = host.update(200, 200);
@@ -538,7 +538,7 @@ TEST_CASE("Component - useState setter is a safe no-op after unmount") {
 
     host.setRender(std::function<VNode()>([&]() {
         if (showComponent.use()) {
-            return Box({Component(Counter)});
+            return Box(Component(Counter));
         }
         return Box();
     }));
@@ -648,7 +648,7 @@ TEST_CASE("Component - useField binds to Store field") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(FormComponent)});
+        return Box(Component(FormComponent));
     }));
 
     host.update(200, 200);
@@ -696,7 +696,7 @@ TEST_CASE("Exception - throwing component fn is isolated and tree stays intact")
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Throwing)});
+        return Box(Component(Throwing));
     }));
 
     // First render succeeds: good subtree present.
@@ -767,7 +767,7 @@ TEST_CASE("Exception - throw BEFORE use() keeps subscription (re-render still fi
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Throwing)});
+        return Box(Component(Throwing));
     }));
 
     // Render 1 subscribes.
@@ -814,7 +814,7 @@ TEST_CASE("Exception - throw AFTER use() leaves exactly one live subscription") 
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Throwing)});
+        return Box(Component(Throwing));
     }));
 
     host.update(200, 200);
@@ -851,7 +851,7 @@ TEST_CASE("Component - successful re-render keeps exactly one subscription") {
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     host.update(200, 200);
@@ -893,7 +893,7 @@ TEST_CASE("Component - conditional subscription tears down old store, no stale n
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     // Render 1: subscribed to A.
@@ -952,7 +952,7 @@ TEST_CASE("Exception - throwing effect body is isolated, other effects still run
     };
 
     host.setRender(std::function<VNode()>([&]() {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     CHECK_NOTHROW(host.update(200, 200));
@@ -987,7 +987,7 @@ TEST_CASE("Exception - throwing cleanup is isolated; ~Host teardown does not cra
 
         host.setRender(std::function<VNode()>([&]() {
             if (show.use()) {
-                return Box({Component(Comp)});
+                return Box(Component(Comp));
             }
             return Box();
         }));
@@ -1225,7 +1225,7 @@ TEST_CASE("Threading - Store::set marks atomic dirty flag, re-render on host thr
     host.setRender(std::function<VNode()>([&]() {
         topRenderCount++;
         int n = counter.use();  // top-level use() -> subscribes the whole host
-        return Box({Text(std::to_string(n))});
+        return Box(Text(std::to_string(n)));
     }));
 
     host.update(200, 200);
@@ -1264,7 +1264,7 @@ TEST_CASE("Threading - cross-thread Store::set smoke test (no crash, change appl
     host.setRender(std::function<VNode()>([&]() {
         renderCount++;
         int n = counter.use();
-        return Box({Text(std::to_string(n))});
+        return Box(Text(std::to_string(n)));
     }));
 
     host.update(200, 200);
@@ -1334,7 +1334,7 @@ TEST_CASE("Store - reentrant set() from a re-rendered subscriber does not deadlo
             return Text(std::to_string(n));
         };
 
-        host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+        host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
         host.update(200, 200);                 // initial render: bumps counter to 1
         host.update(200, 200);                 // applies the deferred re-render
@@ -1371,7 +1371,7 @@ TEST_CASE("Store - unconditional set() during render is diagnosed once (livelock
         return Text(std::to_string(n));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     // Several frames, each of which renders the component and hits the in-render set.
     for (int i = 0; i < 5; ++i) {
@@ -1438,7 +1438,7 @@ TEST_CASE("Store - concurrent set() vs fiber unmount does not use a freed subscr
         bool present = true;
         host.setRender(std::function<VNode()>([&]() -> VNode {
             if (present)
-                return Box({Component(Sub)});
+                return Box(Component(Sub));
             return Box(std::vector<Child>{});
         }));
 
@@ -1489,7 +1489,7 @@ TEST_CASE("Store - set(mutator) re-entered from its own mutator is diagnosed, no
             return Text(std::to_string(n));
         };
 
-        host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+        host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
         host.update(200, 200);
         host.update(200, 200);
@@ -1532,7 +1532,7 @@ TEST_CASE("Hooks - changing a hook's TYPE at a stable index is diagnosed (FIX #7
         return Text(std::to_string(n));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);                 // render 1: index 0 == useState<int>
     CHECK(diagnostics.empty());            // no false positive on the clean first render
@@ -1576,7 +1576,7 @@ TEST_CASE("Hooks - reordering different-KIND hooks at an index is diagnosed (FIX
         return Text(std::to_string(r + n));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);
     CHECK(diagnostics.empty());
@@ -1613,7 +1613,7 @@ TEST_CASE("Hooks - changing the hook COUNT between renders is diagnosed (FIX #8)
         return Text(std::to_string(a));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);
     CHECK(diagnostics.empty());
@@ -1653,7 +1653,7 @@ TEST_CASE("Hooks - stable hooks across many renders produce ZERO diagnostics (no
         return Text(std::to_string(n + r) + label);
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     for (int i = 0; i < 5; ++i) {
         bump.set(i + 1);          // re-render the same fiber each frame
@@ -1686,7 +1686,7 @@ TEST_CASE("Hooks - useEffect BEFORE useState keeps state at the right slot") {
         return Text(std::to_string(count));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);
     auto* rootBox = static_cast<BoxNode*>(host.root());
@@ -1716,7 +1716,7 @@ TEST_CASE("Hooks - useField BEFORE useState/useRef keeps state at the right slot
         return Text(label + ":" + std::to_string(count) + ":" + std::to_string(r));
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);
     auto* rootBox = static_cast<BoxNode*>(host.root());
@@ -1753,7 +1753,7 @@ TEST_CASE("Hooks - mixed effect/field/state/ref persists state with ZERO diagnos
         return Text(label + ":" + std::to_string(n) + ":" + s);
     };
 
-    host.setRender(std::function<VNode()>([&]() { return Box({Component(Comp)}); }));
+    host.setRender(std::function<VNode()>([&]() { return Box(Component(Comp)); }));
 
     host.update(200, 200);
     auto* rootBox = static_cast<BoxNode*>(host.root());
@@ -1791,8 +1791,8 @@ TEST_CASE("Component - different lambda at same unkeyed slot remounts (fresh sta
 
     bool useA = true;
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        if (useA) return Box({Component(CompA)});
-        return Box({Component(CompB)});
+        if (useA) return Box(Component(CompA));
+        return Box(Component(CompB));
     }));
 
     host.update(200, 200);
@@ -1831,7 +1831,7 @@ TEST_CASE("Component - function-pointer components remount by address (&A vs &B)
 
     VNode (*fn)(ComponentContext&) = &Fns::A;
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        return Box({Component(ComponentFn(fn))});
+        return Box(Component(ComponentFn(fn)));
     }));
 
     host.update(200, 200);
@@ -1861,7 +1861,7 @@ TEST_CASE("Component - same lambda across renders preserves state (no false remo
     };
 
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     host.update(200, 200);
@@ -1890,7 +1890,7 @@ TEST_CASE("Component - self-triggered setState during render is not lost") {
     };
 
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     // Drive frames until it settles (bounded — a lost update would freeze early).
@@ -1926,7 +1926,7 @@ TEST_CASE("Component - Store::set targeting the rendering component is not lost"
     };
 
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     host.update(200, 200);          // render 1: v=0, self-sets to 1
@@ -1976,8 +1976,8 @@ TEST_CASE("Component - swapping A->B runs A's cleanup BEFORE B's effect") {
 
     bool useA = true;
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        if (useA) return Box({Component(CompA)});
-        return Box({Component(CompB)});
+        if (useA) return Box(Component(CompA));
+        return Box(Component(CompB));
     }));
 
     host.update(200, 200);
@@ -2005,11 +2005,11 @@ TEST_CASE("Component - nested unmount runs CHILD cleanup before PARENT cleanup")
     };
     auto Parent = [&](ComponentContext& ctx) -> VNode {
         ctx.useEffect([&]() { return [&]() { cleanupOrder.push_back("parent"); }; });
-        return Box({Component(Child)});
+        return Box(Component(Child));
     };
 
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        if (show.use()) return Box({Component(Parent)});
+        if (show.use()) return Box(Component(Parent));
         return Box();
     }));
 
@@ -2039,7 +2039,7 @@ TEST_CASE("Component - mount effect sees useElementRef already bound") {
     };
 
     host.setRender(std::function<VNode()>([&]() -> VNode {
-        return Box({Component(Comp)});
+        return Box(Component(Comp));
     }));
 
     host.update(200, 200);

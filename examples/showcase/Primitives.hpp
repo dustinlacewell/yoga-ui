@@ -109,7 +109,7 @@ inline InputBuilder TextInput(const std::string& value, std::function<void(const
 inline VNode LabeledInput(const std::string& label, const std::string& value,
                           std::function<void(const std::string&)> onChange, const std::string& placeholder = "",
                           bool password = false) {
-    return Column({Label(label), TextInput(value, std::move(onChange), placeholder, password)}).gap(4).flexGrow(1);
+    return Column(Label(label), TextInput(value, std::move(onChange), placeholder, password)).gap(4).flexGrow(1);
 }
 
 // ============================================================================

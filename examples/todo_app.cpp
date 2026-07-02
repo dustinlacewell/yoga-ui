@@ -44,7 +44,7 @@ constexpr uint32_t RED_COLOR = 0xf87171FF;
 
 // Checkbox component using Canvas
 VNode Checkbox(bool checked, std::function<void()> onToggle) {
-    return Box({Canvas([checked](void* ctx, float w, float h) {
+    return Box(Canvas([checked](void* ctx, float w, float h) {
                     auto* vg = static_cast<NVGcontext*>(ctx);
                     float size = std::min(w, h);
                     float x = (w - size) / 2;
@@ -77,7 +77,7 @@ VNode Checkbox(bool checked, std::function<void()> onToggle) {
                     }
                 })
                     .width(20)
-                    .height(20)})
+                    .height(20))
         .padding(8)
         .onClick(std::move(onToggle));
 }
@@ -96,7 +96,7 @@ auto TodoInput() -> Component {
             }
         };
 
-        return Row({
+        return Row(
             Input()
                 .value(draft)
                 .onChange(setDraft)
@@ -109,18 +109,18 @@ auto TodoInput() -> Component {
                 .flexGrow(1)
                 .onSubmit(addTodo),
 
-            Box({Text("Add").fontSize(16).color(TEXT_COLOR)})
+            Box(Text("Add").fontSize(16).color(TEXT_COLOR))
                 .backgroundColor(ACCENT_COLOR)
                 .borderRadius(4)
                 .padding(12)
                 .marginLeft(8)
-                .onClick(addTodo),
-        });
+                .onClick(addTodo)
+        );
     };
 }
 
 VNode TodoItemView(const TodoItem& item) {
-    return Row({
+    return Row(
                    // Checkbox
                    Checkbox(item.completed, [id = item.id]() {
                        store->set([id](AppState& s) {
@@ -134,12 +134,12 @@ VNode TodoItemView(const TodoItem& item) {
                    }),
 
                    // Text
-                   Box({Text(item.text).fontSize(16).color(item.completed ? MUTED_COLOR : TEXT_COLOR)})
+                   Box(Text(item.text).fontSize(16).color(item.completed ? MUTED_COLOR : TEXT_COLOR))
                        .flexGrow(1)
                        .justifyContent(JustifyContent::Center),
 
                    // Delete button (circle with X)
-                   Box({Canvas([](void* ctx, float w, float h) {
+                   Box(Canvas([](void* ctx, float w, float h) {
                             auto* vg = static_cast<NVGcontext*>(ctx);
                             float size = std::min(w, h);
                             float cx = w / 2;
@@ -166,7 +166,7 @@ VNode TodoItemView(const TodoItem& item) {
                             nvgStroke(vg);
                         })
                             .width(20)
-                            .height(20)})
+                            .height(20))
                        .padding(8)
                        .onClick([id = item.id]() {
                            store->set([id](AppState& s) {
@@ -174,8 +174,8 @@ VNode TodoItemView(const TodoItem& item) {
                                                             [id](const TodoItem& t) { return t.id == id; }),
                                              s.todos.end());
                            });
-                       }),
-               })
+                       })
+               )
         .backgroundColor(CARD_COLOR)
         .borderRadius(4)
         .marginBottom(8)
@@ -191,7 +191,7 @@ Component TodoApp() {
             todoItems.push_back(TodoItemView(item));
         }
 
-        return Column({
+        return Column(
                           // Title
                           Text("Todo App").fontSize(28).color(TEXT_COLOR).marginBottom(20),
 
@@ -207,8 +207,8 @@ Component TodoApp() {
                           Text(std::to_string(state.todos.size()) + " items")
                               .fontSize(12)
                               .color(MUTED_COLOR)
-                              .marginTop(12),
-                      })
+                              .marginTop(12)
+                      )
             .padding(24)
             .flexGrow(1)
             .backgroundColor(BG_COLOR);

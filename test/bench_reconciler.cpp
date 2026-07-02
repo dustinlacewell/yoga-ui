@@ -64,10 +64,10 @@ Component QuadTree(int depth) {
             return Box().backgroundColor(0x3366CCFF);
         }
 
-        return Column({
-                          Row({QuadTree(depth - 1), QuadTree(depth - 1)}).flexGrow(1).gap(1),
-                          Row({QuadTree(depth - 1), QuadTree(depth - 1)}).flexGrow(1).gap(1),
-                      })
+        return Column(
+                          Row(QuadTree(depth - 1), QuadTree(depth - 1)).flexGrow(1).gap(1),
+                          Row(QuadTree(depth - 1), QuadTree(depth - 1)).flexGrow(1).gap(1)
+                      )
             .flexGrow(1)
             .gap(1);
     };
@@ -128,7 +128,7 @@ void benchmarkMount() {
         int nodes = countNodes(depth);
         auto result = measure(20, [=] {
             Host host;
-            host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+            host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
             host.update(800, 800, 0.016f);
         });
         char name[64];
@@ -139,7 +139,7 @@ void benchmarkMount() {
     for (int count : {100, 500, 1000, 2000}) {
         auto result = measure(20, [=] {
             Host host;
-            host.setRender([=]() -> VNode { return Box({FlatList(count)}); });
+            host.setRender([=]() -> VNode { return Box(FlatList(count)); });
             host.update(800, 800, 0.016f);
         });
         char name[64];
@@ -161,10 +161,10 @@ VNode QuadTreeVNode(int depth) {
     if (depth <= 1) {
         return Box().backgroundColor(0x3366CCFF);
     }
-    return Column({
-                      Row({QuadTreeVNode(depth - 1), QuadTreeVNode(depth - 1)}).flexGrow(1).gap(1),
-                      Row({QuadTreeVNode(depth - 1), QuadTreeVNode(depth - 1)}).flexGrow(1).gap(1),
-                  })
+    return Column(
+                      Row(QuadTreeVNode(depth - 1), QuadTreeVNode(depth - 1)).flexGrow(1).gap(1),
+                      Row(QuadTreeVNode(depth - 1), QuadTreeVNode(depth - 1)).flexGrow(1).gap(1)
+                  )
         .flexGrow(1)
         .gap(1);
 }
@@ -176,10 +176,10 @@ Component QuadTreeCounted(int depth) {
         if (depth <= 1) {
             return Box().backgroundColor(0x3366CCFF);
         }
-        return Column({
-                          Row({QuadTreeCounted(depth - 1), QuadTreeCounted(depth - 1)}).flexGrow(1).gap(1),
-                          Row({QuadTreeCounted(depth - 1), QuadTreeCounted(depth - 1)}).flexGrow(1).gap(1),
-                      })
+        return Column(
+                          Row(QuadTreeCounted(depth - 1), QuadTreeCounted(depth - 1)).flexGrow(1).gap(1),
+                          Row(QuadTreeCounted(depth - 1), QuadTreeCounted(depth - 1)).flexGrow(1).gap(1)
+                      )
             .flexGrow(1)
             .gap(1);
     };
@@ -335,7 +335,7 @@ void benchmarkMountBreakdown() {
     {
         auto result = measure(1, [=] {
             Host host;
-            host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+            host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
             host.update(800, 800, 0.016f);
         });
         printResult("Full mount (Components)", countNodes(depth), result);
@@ -353,7 +353,7 @@ void benchmarkMountBreakdown() {
     printf("\n  Phase 6: Layout only (tree already mounted)\n");
     {
         Host host;
-        host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+        host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
         host.update(800, 800, 0.016f);
 
         auto result = measure(50, [&] { host.root()->calculateLayout(800, 800); });
@@ -487,7 +487,7 @@ void benchmarkMountBreakdown() {
         auto DeepTree = [](int n) -> VNode {
             VNode node = Box().backgroundColor(0x3366CCFF);
             for (int i = 0; i < n; i++) {
-                node = Box({std::move(node)});
+                node = Box(std::move(node));
             }
             return node;
         };
@@ -659,7 +659,7 @@ void benchmarkReconcileNoChange() {
         int nodes = countNodes(depth);
 
         Host host;
-        host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+        host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
         host.update(800, 800, 0.016f);
 
         auto result = measure(50, [&] {
@@ -680,7 +680,7 @@ void benchmarkReconcileReorder() {
 
         Host host;
         host.setRender([&, count]() -> VNode {
-            return Box({reversed ? FlatListReversed(count) : FlatList(count)});
+            return Box(reversed ? FlatListReversed(count) : FlatList(count));
         });
         host.update(800, 800, 0.016f);
 
@@ -702,7 +702,7 @@ void benchmarkLayout() {
         int nodes = countNodes(depth);
 
         Host host;
-        host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+        host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
         host.update(800, 800, 0.016f);
 
         auto result = measure(50, [&] { host.root()->calculateLayout(800, 800); });
@@ -713,7 +713,7 @@ void benchmarkLayout() {
 
     for (int count : {100, 500, 1000, 2000}) {
         Host host;
-        host.setRender([=]() -> VNode { return Box({FlatList(count)}); });
+        host.setRender([=]() -> VNode { return Box(FlatList(count)); });
         host.update(800, 800, 0.016f);
 
         auto result = measure(50, [&] { host.root()->calculateLayout(800, 800); });
@@ -730,7 +730,7 @@ void benchmarkFullFrame() {
         int nodes = countNodes(depth);
 
         Host host;
-        host.setRender([=]() -> VNode { return Box({QuadTree(depth)}); });
+        host.setRender([=]() -> VNode { return Box(QuadTree(depth)); });
         host.update(800, 800, 0.016f);
 
         auto result = measure(50, [&] {
@@ -777,7 +777,7 @@ void testComponentSubscriptions() {
 
     // Root render function
     auto renderFn = [&]() -> VNode {
-        return Box({FastComponent(), SlowComponent()});
+        return Box(FastComponent(), SlowComponent());
     };
 
     // Create host
@@ -839,7 +839,7 @@ void benchmarkComponentDirty() {
                 treeRenderCount++;
                 // Use the Component version - wrap its result in a Box
                 // Note: QuadTree returns Component, we return its invocation result
-                return Box({QuadTree(depth)});
+                return Box(QuadTree(depth));
             };
         };
 
@@ -855,7 +855,7 @@ void benchmarkComponentDirty() {
         int nodes = countNodes(depth);
 
         auto renderFn = [&]() -> VNode {
-            return Box({TreeComponent(), StatsComponent()});
+            return Box(TreeComponent(), StatsComponent());
         };
 
         Host host;

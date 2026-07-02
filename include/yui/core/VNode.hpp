@@ -393,21 +393,34 @@ public:
 // result (e.g. `Box().width(100);` as a statement) is always a mistake —
 // [[nodiscard]] turns it into a compile-time warning.
 
-// Box with children (accepts both VNode and Component via Child variant)
+// Detects a single std::vector<Child> argument, so the variadic child factories
+// below defer to the dedicated vector overload (dynamic path) instead of trying
+// to pack a whole vector into one Child slot.
+template<class... Cs>
+inline constexpr bool is_single_child_vector_v =
+    sizeof...(Cs) == 1
+    && (std::is_same_v<std::decay_t<Cs>, std::vector<Child>> && ...);
+
+// Box with children (dynamic path: a runtime-built vector, e.g. from List).
 [[nodiscard]] inline BoxBuilder Box(std::vector<Child> children) {
     BoxBuilder b;
     b.setChildren(std::move(children));
     return b;
 }
 
-// Box with single child (VNode)
-[[nodiscard]] inline BoxBuilder Box(VNode child) {
-    return Box(std::vector<Child>{std::move(child)});
-}
-
-// Box with single child (Component)
-[[nodiscard]] inline BoxBuilder Box(Component child) {
-    return Box(std::vector<Child>{std::move(child)});
+// Box with children (static path): each argument is forwarded into a Child slot.
+// Collecting into a reserved vector avoids the per-render subtree copies the old
+// braced initializer_list<Child> forced (initializer_list elements are const, so
+// they could never be moved out — every child VNode was deep-copied on build).
+template<class... Cs,
+         typename = std::enable_if_t<!is_single_child_vector_v<Cs...>>>
+[[nodiscard]] inline BoxBuilder Box(Cs&&... cs) {
+    std::vector<Child> v;
+    v.reserve(sizeof...(Cs));
+    (v.emplace_back(std::forward<Cs>(cs)), ...);
+    BoxBuilder b;
+    b.setChildren(std::move(v));
+    return b;
 }
 
 // Empty box
@@ -425,23 +438,24 @@ public:
     return InputBuilder{};
 }
 
-// Scroll: scrollable container with clipping
-// Child content can exceed container bounds; overflow is clipped and scrollable
-[[nodiscard]] inline ScrollBuilder Scroll(VNode child) {
-    ScrollBuilder b;
-    b.setChildren(std::vector<Child>{std::move(child)});
-    return b;
-}
-
-[[nodiscard]] inline ScrollBuilder Scroll(Component child) {
-    ScrollBuilder b;
-    b.setChildren(std::vector<Child>{std::move(child)});
-    return b;
-}
-
+// Scroll: scrollable container with clipping.
+// Child content can exceed container bounds; overflow is clipped and scrollable.
+// Dynamic path (a runtime-built vector).
 [[nodiscard]] inline ScrollBuilder Scroll(std::vector<Child> children) {
     ScrollBuilder b;
     b.setChildren(std::move(children));
+    return b;
+}
+
+// Static path: each argument forwarded into a Child slot (see Box variadic).
+template<class... Cs,
+         typename = std::enable_if_t<!is_single_child_vector_v<Cs...>>>
+[[nodiscard]] inline ScrollBuilder Scroll(Cs&&... cs) {
+    std::vector<Child> v;
+    v.reserve(sizeof...(Cs));
+    (v.emplace_back(std::forward<Cs>(cs)), ...);
+    ScrollBuilder b;
+    b.setChildren(std::move(v));
     return b;
 }
 
@@ -455,12 +469,26 @@ public:
 
 // --- Helpers ---
 
+// Dynamic path (a runtime-built vector).
 [[nodiscard]] inline BoxBuilder Row(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Row);
 }
 
 [[nodiscard]] inline BoxBuilder Column(std::vector<Child> children) {
     return Box(std::move(children)).flexDirection(FlexDirection::Column);
+}
+
+// Static path: forward args straight into the variadic Box (no init-list copy).
+template<class... Cs,
+         typename = std::enable_if_t<!is_single_child_vector_v<Cs...>>>
+[[nodiscard]] inline BoxBuilder Row(Cs&&... cs) {
+    return Box(std::forward<Cs>(cs)...).flexDirection(FlexDirection::Row);
+}
+
+template<class... Cs,
+         typename = std::enable_if_t<!is_single_child_vector_v<Cs...>>>
+[[nodiscard]] inline BoxBuilder Column(Cs&&... cs) {
+    return Box(std::forward<Cs>(cs)...).flexDirection(FlexDirection::Column);
 }
 
 [[nodiscard]] inline BoxBuilder Spacer() {

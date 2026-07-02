@@ -263,13 +263,13 @@ static lay::PlacedRect menuPlacement(const MenuState& ms, int depth,
 static VNode MenuItemRow(const MenuDef& item, int depth, const MenuState& ms) {
     bool isActive = depth < static_cast<int>(ms.activeItems.size()) && ms.activeItems[depth] == item.label;
 
-    return Row({
+    return Row(
         Text(item.label).fontSize(c::FONT_SIZE).color(c::TEXT).flexGrow(1),
         When(!item.shortcut.empty(),
             Text(item.shortcut).fontSize(c::FONT_SMALL).color(c::TEXT_DIM)),
         When(hasKids(item),
-            Text("\xe2\x96\xb8").fontSize(c::FONT_SMALL).color(c::TEXT_DIM)),  // ▸
-    })
+            Text("\xe2\x96\xb8").fontSize(c::FONT_SMALL).color(c::TEXT_DIM))  // ▸
+    )
     .height(c::ITEM_HEIGHT)
     .paddingLeft(12).paddingRight(12)
     .alignItems(AlignItems::Center)
@@ -325,11 +325,11 @@ static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
         }
     }
 
-    return Box({
+    return Box(
         Scroll(
             Column(std::move(rows))
         ).flexGrow(1)
-    })
+    )
     .positionType(PositionType::Absolute)
     .positionLeft(at.x).positionTop(at.y)
     .width(c::MENU_WIDTH)
@@ -347,7 +347,7 @@ static VNode ClickMarker(const MenuState& ms) {
     if (!ms.open) return Box();  // nothing to draw
 
     // A thin crosshair so you can see exactly where the menu was anchored.
-    return Box({
+    return Box(
         Box()  // vertical line
             .positionType(PositionType::Absolute)
             .positionLeft(ms.anchorX).positionTop(0)
@@ -357,8 +357,8 @@ static VNode ClickMarker(const MenuState& ms) {
             .positionType(PositionType::Absolute)
             .positionLeft(0).positionTop(ms.anchorY)
             .widthPercent(100).height(1)
-            .backgroundColor(c::CROSSHAIR),
-    })
+            .backgroundColor(c::CROSSHAIR)
+    )
     .positionType(PositionType::Absolute)
     .positionLeft(0).positionTop(0)
     .widthPercent(100).heightPercent(100);
@@ -370,8 +370,8 @@ static Component App() {
     return [](ComponentContext&) -> VNode {
         const auto& ms = g_state->use();
 
-        auto content = Box({
-            Column({
+        auto content = Box(
+            Column(
                 Text("Context Menu Demo").fontSize(22).color(c::TEXT),
                 Gap(14),
                 Text("Right-click anywhere to open the menu at the cursor.")
@@ -386,12 +386,12 @@ static Component App() {
                     .fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
                 Gap(24),
                 When(!ms.lastAction.empty(),
-                    Row({
+                    Row(
                         Text("Last action: ").fontSize(c::FONT_SIZE).color(c::TEXT_DIM),
-                        Text(ms.lastAction).fontSize(c::FONT_SIZE).color(c::ACCENT),
-                    })),
-            }).gap(4)
-        })
+                        Text(ms.lastAction).fontSize(c::FONT_SIZE).color(c::ACCENT)
+                    ))
+            ).gap(4)
+        )
         .flexGrow(1)
         .justifyContent(JustifyContent::Center)
         .alignItems(AlignItems::Center)

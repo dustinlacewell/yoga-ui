@@ -81,7 +81,7 @@ Component CanvasDemo() {
 // ============================================================================
 
 VNode buildUI() {
-    return Box({App("YUI Showcase", "SDL2", CanvasDemo())}).flexGrow(1);
+    return Box(App("YUI Showcase", "SDL2", CanvasDemo())).flexGrow(1);
 }
 
 class SdlHost : public Host {

@@ -387,22 +387,22 @@ VNode ScoreBoard() {
     float speed = std::sqrt(s.ballVX * s.ballVX + s.ballVY * s.ballVY);
     int speedInt = static_cast<int>(speed);
 
-    return Column({
-                      Row({
+    return Column(
+                      Row(
                               // Player score
-                              Column({
+                              Column(
                                          Text("PLAYER").fontSize(11).color(MUTED_COLOR),
-                                         Text(std::to_string(s.playerScore)).fontSize(52).color(PLAYER_COLOR),
-                                     })
+                                         Text(std::to_string(s.playerScore)).fontSize(52).color(PLAYER_COLOR)
+                                     )
                                   .alignItems(AlignItems::Center)
                                   .flexGrow(1),
 
                               // Ball speed in center
-                              Column({
+                              Column(
                                          Text("SPEED").fontSize(9).color(MUTED_COLOR),
                                          Text(std::to_string(speedInt)).fontSize(20).color(BALL_COLOR),
-                                         Text("px/s").fontSize(9).color(MUTED_COLOR),
-                                     })
+                                         Text("px/s").fontSize(9).color(MUTED_COLOR)
+                                     )
                                   .alignItems(AlignItems::Center)
                                   .paddingLeft(16)
                                   .paddingRight(16)
@@ -410,15 +410,15 @@ VNode ScoreBoard() {
                                   .paddingBottom(12),
 
                               // AI score
-                              Column({
+                              Column(
                                          Text("CPU").fontSize(11).color(MUTED_COLOR),
-                                         Text(std::to_string(s.aiScore)).fontSize(52).color(AI_COLOR),
-                                     })
+                                         Text(std::to_string(s.aiScore)).fontSize(52).color(AI_COLOR)
+                                     )
                                   .alignItems(AlignItems::Center)
-                                  .flexGrow(1),
-                          })
-                          .alignItems(AlignItems::Center),
-                  })
+                                  .flexGrow(1)
+                          )
+                          .alignItems(AlignItems::Center)
+                  )
         .paddingTop(16)
         .paddingBottom(16)
         .paddingLeft(20)
@@ -428,15 +428,15 @@ VNode ScoreBoard() {
 
 // Controls help
 VNode ControlsHelp() {
-    return Row({
+    return Row(
                    Text("W/S").fontSize(11).color(PLAYER_COLOR),
                    Text(" or ").fontSize(11).color(MUTED_COLOR),
                    Text("\u2191/\u2193").fontSize(11).color(PLAYER_COLOR),
                    Text(" to move").fontSize(11).color(MUTED_COLOR),
                    Box().flexGrow(1),
                    Text("SPACE").fontSize(11).color(BALL_COLOR),
-                   Text(" to start/reset").fontSize(11).color(MUTED_COLOR),
-               })
+                   Text(" to start/reset").fontSize(11).color(MUTED_COLOR)
+               )
         .paddingTop(10)
         .paddingBottom(10)
         .paddingLeft(16)
@@ -446,7 +446,7 @@ VNode ControlsHelp() {
 }
 
 VNode buildUI() {
-    return Column({
+    return Column(
                       // Score at top
                       ScoreBoard(),
 
@@ -454,8 +454,8 @@ VNode buildUI() {
                       GameCanvas(),
 
                       // Controls at bottom
-                      ControlsHelp(),
-                  })
+                      ControlsHelp()
+                  )
         .flexGrow(1)
         .backgroundColor(BG_COLOR);
 }

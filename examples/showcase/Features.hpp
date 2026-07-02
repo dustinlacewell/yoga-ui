@@ -45,26 +45,26 @@ inline Component ThemeSwitcher() {
                 .hoverStyle(BoxStyle{.backgroundColor = t.border});
         };
 
-        return Column({
-                          Row({
+        return Column(
+                          Row(
                                   themeButton("Midnight", 0),
                                   themeButton("Ember", 1),
                                   themeButton("Violet", 2),
                                   themeButton("Mono", 3),
                                   themeButton("Cyber", 4),
-                                  themeButton("Forest", 5),
-                              })
+                                  themeButton("Forest", 5)
+                              )
                               .gap(t.gap)
                               .flexWrap(FlexWrap::Wrap),
-                          Row({
+                          Row(
                                   Label("Size:"),
                                   sizeButton("Default", 0),
                                   sizeButton("Compact", 1),
-                                  sizeButton("Spacious", 2),
-                              })
+                                  sizeButton("Spacious", 2)
+                              )
                               .gap(t.gap)
-                              .alignItems(AlignItems::Center),
-                      })
+                              .alignItems(AlignItems::Center)
+                      )
             .gap(t.gap);
     };
 }
@@ -83,10 +83,10 @@ inline auto LoginForm() -> Component {
         return Section(
             "Login",
             {
-                Column({Label("Username"), TextInput(username, setUsername, "Enter username").autoFocus()}).gap(4).flexGrow(1),
+                Column(Label("Username"), TextInput(username, setUsername, "Enter username").autoFocus()).gap(4).flexGrow(1),
                 LabeledInput("Password", password, setPassword, "Password", true),
 
-                Row({
+                Row(
                         Button(
                             "Sign In",
                             [] {
@@ -107,8 +107,8 @@ inline auto LoginForm() -> Component {
                                 });
                                 setStatus("Cleared", theme().textMuted);
                             },
-                            t.surfaceAlt),
-                    })
+                            t.surfaceAlt)
+                    )
                     .gap(t.gap),
             });
     };
@@ -121,8 +121,8 @@ inline auto LoginForm() -> Component {
 inline VNode ListItem(const std::string& text, size_t index) {
     const auto& t = theme();
 
-    return Box({
-                   Row({
+    return Box(
+                   Row(
                            Body(text),
                            Spacer(),
                            IconButton("x",
@@ -135,10 +135,10 @@ inline VNode ListItem(const std::string& text, size_t index) {
                                                   s.statusColor = s.theme.warning;
                                               }
                                           });
-                                      }),
-                       })
-                       .alignItems(AlignItems::Center),
-               })
+                                      })
+                       )
+                       .alignItems(AlignItems::Center)
+               )
         .backgroundColor(t.surfaceAlt)
         .borderRadius(t.radiusSm)
         .padding(t.gap)
@@ -161,7 +161,7 @@ inline auto DynamicList() -> Component {
 
         return Section(
             "List", {
-                        Row({
+                        Row(
                                 TextInput(newItemText, setNewItemText, "New item...").flexGrow(1),
                                 Button(
                                     "+",
@@ -175,14 +175,14 @@ inline auto DynamicList() -> Component {
                                             }
                                         });
                                     },
-                                    t.success),
-                            })
+                                    t.success)
+                            )
                             .gap(t.gap)
                             .alignItems(AlignItems::Center),
 
                         Scroll(Column(std::move(items)).gap(4)).height(140).backgroundColor(t.bg).borderRadius(t.radiusSm),
 
-                        Row({
+                        Row(
                                 Label(std::to_string(s.items.size()) + " items"),
                                 Spacer(),
                                 SmallButton(
@@ -191,8 +191,8 @@ inline auto DynamicList() -> Component {
                                         state().set([](AppState& s) { s.items.clear(); });
                                         setStatus("List cleared", theme().warning);
                                     },
-                                    t.danger),
-                            })
+                                    t.danger)
+                            )
                             .alignItems(AlignItems::Center),
                     });
     };
@@ -209,7 +209,7 @@ inline Component Counter() {
 
         return Section("Counter",
                        {
-                           Row({
+                           Row(
                                    Button(
                                        "-", [] { state().set([](AppState& s) { s.clickCount--; }); }, t.surfaceAlt),
                                    Box(Text_(std::to_string(s.clickCount), t.text, 20.0f))
@@ -217,8 +217,8 @@ inline Component Counter() {
                                        .justifyContent(JustifyContent::Center)
                                        .alignItems(AlignItems::Center),
                                    Button(
-                                       "+", [] { state().set([](AppState& s) { s.clickCount++; }); }, t.surfaceAlt),
-                               })
+                                       "+", [] { state().set([](AppState& s) { s.clickCount++; }); }, t.surfaceAlt)
+                               )
                                .gap(t.gap)
                                .alignItems(AlignItems::Center)
                                .justifyContent(JustifyContent::Center),
@@ -243,18 +243,18 @@ inline Component LayoutDemo() {
 
         return Section("Layout", {
                                      Label("Space between"),
-                                     Row({
+                                     Row(
                                              swatch(t.accent),
                                              swatch(t.success),
-                                             swatch(t.warning),
-                                         })
+                                             swatch(t.warning)
+                                         )
                                          .justifyContent(JustifyContent::SpaceBetween)
                                          .backgroundColor(t.bg)
                                          .padding(t.gap)
                                          .borderRadius(t.radiusSm),
 
                                      Label("Flex grow 1:2:1"),
-                                     Row({
+                                     Row(
                                              Box(Text_("1", t.textOnAccent, 12.0f))
                                                  .flexGrow(1)
                                                  .height(28)
@@ -275,8 +275,8 @@ inline Component LayoutDemo() {
                                                  .backgroundColor(t.warning)
                                                  .borderRadius(t.radiusSm)
                                                  .justifyContent(JustifyContent::Center)
-                                                 .alignItems(AlignItems::Center),
-                                         })
+                                                 .alignItems(AlignItems::Center)
+                                         )
                                          .gap(t.gap),
                                  });
     };
@@ -383,18 +383,18 @@ inline Component KeyboardDemo() {
             {
                 Label("Press any key (click outside inputs first)"),
 
-                Box({
-                        Column({
-                                   Row({Label("Key:"), Body(s.lastKeyName)}).gap(t.gap).alignItems(AlignItems::Center),
-                                   Row({Label("Code:"), Body(std::to_string(s.lastKeyCode))})
+                Box(
+                        Column(
+                                   Row(Label("Key:"), Body(s.lastKeyName)).gap(t.gap).alignItems(AlignItems::Center),
+                                   Row(Label("Code:"), Body(std::to_string(s.lastKeyCode)))
                                        .gap(t.gap)
                                        .alignItems(AlignItems::Center),
-                                   Row({Label("Mods:"), Body(s.keyModifiers.empty() ? "None" : s.keyModifiers)})
+                                   Row(Label("Mods:"), Body(s.keyModifiers.empty() ? "None" : s.keyModifiers))
                                        .gap(t.gap)
-                                       .alignItems(AlignItems::Center),
-                               })
-                            .gap(4),
-                    })
+                                       .alignItems(AlignItems::Center)
+                               )
+                            .gap(4)
+                    )
                     .backgroundColor(t.bg)
                     .borderRadius(t.radiusSm)
                     .borderWidth(2)
@@ -414,7 +414,7 @@ inline Component HookCounter() {
         auto [count, setCount] = ctx.useState<int>(0);
         const auto& t = theme();
 
-        return Row({
+        return Row(
                        Box(Text_("-", t.textOnAccent, 16.0f))
                            .backgroundColor(t.surfaceAlt)
                            .borderRadius(t.radiusSm)
@@ -430,8 +430,8 @@ inline Component HookCounter() {
                            .borderRadius(t.radiusSm)
                            .padding(8)
                            .onClick([setCount, count] { setCount(count + 1); })
-                           .hoverStyle(BoxStyle{.backgroundColor = t.border}),
-                   })
+                           .hoverStyle(BoxStyle{.backgroundColor = t.border})
+                   )
             .gap(8)
             .alignItems(AlignItems::Center);
     };
@@ -443,7 +443,7 @@ inline Component HookToggle(const std::string& label) {
         auto [on, setOn] = ctx.useState<bool>(false);
         const auto& t = theme();
 
-        return Row({
+        return Row(
                        Text_(label, t.text, 12.0f),
                        Box(Box()
                                .width(16)
@@ -457,8 +457,8 @@ inline Component HookToggle(const std::string& label) {
                            .height(20)
                            .backgroundColor(on ? t.success : t.border)
                            .borderRadius(10)
-                           .onClick([setOn, on] { setOn(!on); }),
-                   })
+                           .onClick([setOn, on] { setOn(!on); })
+                   )
             .gap(8)
             .alignItems(AlignItems::Center);
     };
@@ -471,12 +471,12 @@ inline Component HooksDemo() {
         return Section("Hooks",
                        {
                            Label("Local component state with useState:"),
-                           Column({
-                                      Row({Label("Counter 1:"), HookCounter()}).gap(t.gap).alignItems(AlignItems::Center),
-                                      Row({Label("Counter 2:"), HookCounter()}).gap(t.gap).alignItems(AlignItems::Center),
+                           Column(
+                                      Row(Label("Counter 1:"), HookCounter()).gap(t.gap).alignItems(AlignItems::Center),
+                                      Row(Label("Counter 2:"), HookCounter()).gap(t.gap).alignItems(AlignItems::Center),
                                       HookToggle("Feature A"),
-                                      HookToggle("Feature B"),
-                                  })
+                                      HookToggle("Feature B")
+                                  )
                                .gap(t.gap),
                        });
     };
@@ -507,11 +507,11 @@ inline Component RightClickDemo() {
         return Section("Right-Click",
                        {
                            Body(message),
-                           Row({
+                           Row(
                                    clickBox("Box A", t.accent),
                                    clickBox("Box B", t.success),
-                                   clickBox("Box C", t.warning),
-                               })
+                                   clickBox("Box C", t.warning)
+                               )
                                .gap(t.gap),
                        });
     };
@@ -530,11 +530,11 @@ inline Component AutoFocusDemo() {
         std::vector<Child> children;
         children.push_back(Label("Toggle to show an auto-focused input:"));
         children.push_back(
-            Row({
+            Row(
                     Button(visible ? "Hide" : "Show Input", [setVisible, visible] { setVisible(!visible); }, t.surfaceAlt),
                     Spacer(),
-                    When(!text.empty(), Badge("Typed: " + text, t.surfaceAlt)),
-                })
+                    When(!text.empty(), Badge("Typed: " + text, t.surfaceAlt))
+                )
                 .alignItems(AlignItems::Center));
 
         if (visible) {

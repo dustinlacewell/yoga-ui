@@ -132,10 +132,10 @@ Component QuadView(Quad& quad) {
         }
 
         // Subdivided - 2x2 grid of children
-        return Column({
-                          Row({QuadView(*quad.children[0]), QuadView(*quad.children[1])}).flexGrow(1).gap(1),
-                          Row({QuadView(*quad.children[2]), QuadView(*quad.children[3])}).flexGrow(1).gap(1),
-                      })
+        return Column(
+                          Row(QuadView(*quad.children[0]), QuadView(*quad.children[1])).flexGrow(1).gap(1),
+                          Row(QuadView(*quad.children[2]), QuadView(*quad.children[3])).flexGrow(1).gap(1)
+                      )
             .flexGrow(1)
             .gap(1);
     };
@@ -149,10 +149,10 @@ constexpr uint32_t STAT_ACCENT_COLOR = 0x00FF88FF;
 // Helper to create a stat line
 Component StatLine(const std::string& label, const std::string& value, uint32_t valueColor = STAT_TEXT_COLOR) {
     return [=](ComponentContext&) -> VNode {
-        return Row({
+        return Row(
                        Text(label).fontSize(12).color(STAT_MUTED_COLOR),
-                       Text(value).fontSize(12).color(valueColor),
-                   })
+                       Text(value).fontSize(12).color(valueColor)
+                   )
             .gap(4);
     };
 }
@@ -175,7 +175,7 @@ Component StatsOverlay() {
         snprintf(updateBuf, sizeof(updateBuf), "%.2f ms", s.updateTime);
         snprintf(renderBuf, sizeof(renderBuf), "%.2f ms", s.renderTime);
 
-        return Column({
+        return Column(
                           Text("YUI Benchmark").fontSize(16).color(STAT_TEXT_COLOR),
                           Box().height(8),
                           StatLine("Nodes: ", std::to_string(s.nodeCount)),
@@ -187,8 +187,8 @@ Component StatsOverlay() {
                           StatLine("Render: ", renderBuf),
                           Box().height(8),
                           Text("Click squares to subdivide").fontSize(11).color(STAT_MUTED_COLOR),
-                          Text("Press R to reset").fontSize(11).color(STAT_MUTED_COLOR),
-                      })
+                          Text("Press R to reset").fontSize(11).color(STAT_MUTED_COLOR)
+                      )
             .positionType(PositionType::Absolute)
             .positionTop(12)
             .positionLeft(12)
@@ -202,15 +202,15 @@ Component StatsOverlay() {
 Component QuadTreeView() {
     return [](ComponentContext&) -> VNode {
         auto& q = const_cast<QuadState&>(quadStore->use());
-        return Box({QuadView(q.root)}).flexGrow(1);
+        return Box(QuadView(q.root)).flexGrow(1);
     };
 }
 
 VNode buildUI() {
-    return Box({
+    return Box(
                    QuadTreeView(),
-                   StatsOverlay(),
-               })
+                   StatsOverlay()
+               )
         .flexGrow(1)
         .padding(2)
         .backgroundColor(0x111111FF);
