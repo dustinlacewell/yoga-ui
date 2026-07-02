@@ -1881,3 +1881,102 @@ TEST_CASE("Component - Store::set targeting the rendering component is not lost"
     rootBox = static_cast<BoxNode*>(host.root());
     CHECK(static_cast<TextNode*>(rootBox->children[0].get())->props.text == "42");
 }
+
+// ─── Defects C + D: deferred effects/cleanups (commit phase) ─────────────────
+
+TEST_CASE("Component - swapping A->B runs A's cleanup BEFORE B's effect") {
+    // A and B share a "resource" flag. A's effect acquires it; A's cleanup releases
+    // it; B's effect asserts it was free when B mounted. With a proper commit phase,
+    // the removed fiber's cleanup drains before the mounted fiber's effect, so B sees
+    // the resource released. Pre-fix (inline effect on mount, inline cleanup on
+    // unmount interleaved with the pass) the ordering was not guaranteed.
+    TestHost host;
+    bool resourceHeld = false;
+    bool bSawResourceFree = false;
+
+    auto CompA = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() {
+            resourceHeld = true;               // acquire
+            return [&]() { resourceHeld = false; };  // release on unmount
+        });
+        return Text("A");
+    };
+    auto CompB = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() {
+            bSawResourceFree = !resourceHeld;  // must be free: A's cleanup ran first
+            return nullptr;
+        });
+        return Text("B");
+    };
+
+    bool useA = true;
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        if (useA) return Box({Component(CompA)});
+        return Box({Component(CompB)});
+    }));
+
+    host.update(200, 200);
+    CHECK(resourceHeld == true);   // A acquired
+
+    useA = false;
+    host.markDirty();
+    host.update(200, 200);
+
+    CHECK(resourceHeld == false);       // A's cleanup released it
+    CHECK(bSawResourceFree == true);    // and it ran BEFORE B's effect
+}
+
+TEST_CASE("Component - nested unmount runs CHILD cleanup before PARENT cleanup") {
+    // Parent renders Child; both register cleanups. Unmounting the pair together must
+    // run the child's cleanup before the parent's (React child-first unmount order),
+    // which the commit queue records via enqueueCleanups' post-order recursion.
+    TestHost host;
+    std::vector<std::string> cleanupOrder;
+    Store<bool> show(true);
+
+    auto Child = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() { return [&]() { cleanupOrder.push_back("child"); }; });
+        return Text("child");
+    };
+    auto Parent = [&](ComponentContext& ctx) -> VNode {
+        ctx.useEffect([&]() { return [&]() { cleanupOrder.push_back("parent"); }; });
+        return Box({Component(Child)});
+    };
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        if (show.use()) return Box({Component(Parent)});
+        return Box();
+    }));
+
+    host.update(200, 200);
+    show.set(false);
+    host.update(200, 200);
+
+    REQUIRE(cleanupOrder.size() == 2);
+    CHECK(cleanupOrder[0] == "child");   // child-first
+    CHECK(cleanupOrder[1] == "parent");
+}
+
+TEST_CASE("Component - mount effect sees useElementRef already bound") {
+    // A mount effect that reads a useElementRef must observe it BOUND (non-null):
+    // mountHost binds the ref during the pass; the deferred effect drains after, so
+    // the ref is live when the effect runs (defect C, mount side).
+    TestHost host;
+    bool refBoundInEffect = false;
+
+    auto Comp = [&](ComponentContext& ctx) -> VNode {
+        auto r = ctx.useElementRef();
+        ctx.useEffect([&, r]() {
+            refBoundInEffect = (r.current() != nullptr);
+            return nullptr;
+        });
+        return Box().ref(r).width(20).height(20);
+    };
+
+    host.setRender(std::function<VNode()>([&]() -> VNode {
+        return Box({Component(Comp)});
+    }));
+
+    host.update(200, 200);
+    CHECK(refBoundInEffect == true);
+}

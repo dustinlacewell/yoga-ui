@@ -150,6 +150,12 @@ struct FiberLookup {
 // ============================================================================
 
 std::unique_ptr<Fiber> Reconciler::mount(const VNode& vnode) {
+    auto fiber = mountImpl(vnode);
+    drainCommit();
+    return fiber;
+}
+
+std::unique_ptr<Fiber> Reconciler::mountImpl(const VNode& vnode) {
     if (vnode.isEmpty) {
         return nullptr;
     }
@@ -275,8 +281,12 @@ std::unique_ptr<Fiber> Reconciler::mountComponent(const Component& comp, size_t 
         }
     }
 
-    // Run pending effects (each effect body isolated in runPendingEffects)
-    fiber->runPendingEffects();
+    // Defer effects to the commit phase. mountHost (below) runs during the pass and
+    // binds this fiber's element refs; the deferred effect drains after the whole
+    // pass, so a mount effect reading a useElementRef sees it already bound (defect
+    // C, mount side). The fiber stays owned by the live tree, so a raw pointer is
+    // safe in the effects queue.
+    commit_.effects.push_back(fiber.get());
 
     // Mount the result — render parent is the SAME as ours (component is invisible)
     if (!result.isEmpty) {
@@ -306,6 +316,11 @@ std::unique_ptr<Fiber> Reconciler::mountChild(const Child& child, size_t sourceP
 // ============================================================================
 
 void Reconciler::reconcile(Fiber* fiber, const VNode& vnode) {
+    reconcileImpl(fiber, vnode);
+    drainCommit();
+}
+
+void Reconciler::reconcileImpl(Fiber* fiber, const VNode& vnode) {
     if (!fiber || vnode.isEmpty) return;
 
     // Must be a host fiber
@@ -340,7 +355,15 @@ void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
     // renderRoot_ slot so mount() can populate it without clobbering live nodes.
     auto oldRenderRoot = std::move(renderRoot_);
 
-    auto fresh = mount(vnode);          // populates renderRoot_ with the new tree
+    // If mount() throws (a callback, bad_alloc, …), restore the old render root so
+    // the tree stays intact and the next frame does not fault on a null renderRoot_.
+    std::unique_ptr<Fiber> fresh;
+    try {
+        fresh = mount(vnode);           // populates renderRoot_ with the new tree
+    } catch (...) {
+        renderRoot_ = std::move(oldRenderRoot);
+        throw;
+    }
     auto freshRenderRoot = takeRenderRoot();
 
     // The new tree is built and safely parked in freshRenderRoot. Only now tear
@@ -351,6 +374,12 @@ void Reconciler::remountRoot(Fiber* fiber, const VNode& vnode) {
     notifyRenderRemoved(fiber->renderNode);
     fiber->willUnmount();
     oldRenderRoot.reset();
+
+    // Falsify the OLD root fiber's liveness token BEFORE the move overwrites it with
+    // fresh's token. Consumers (useState setters, refs) captured the old token; the
+    // move would otherwise drop it without flipping it false, leaving those callbacks
+    // believing the (now-replaced) fiber is still live.
+    if (fiber->alive) *fiber->alive = false;
 
     // Move the fresh fiber's state into the existing root fiber so the host's
     // fiberRoot_ pointer (and any parent links into it) stay valid.
@@ -467,12 +496,16 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
         childrenUnchanged = false;
     }
 
-    // Unmount fibers that weren't reused. The live vector is still fully populated
-    // here, so these reads are safe and unmount happens through the real owned
-    // fibers — preserving the normal unmount/destruction path (~Fiber clears alive).
+    // Unmount fibers that weren't reused. unmountFiber removes render nodes INLINE
+    // (needed during the pass for correct layout) and RECORDS child-first cleanup
+    // order into the commit queue, but does NOT run cleanups inline. The swap below
+    // would drop these unique_ptrs and destroy the subtrees, dangling the raw
+    // pointers the commit queue holds — so transfer OWNERSHIP into commit_.removedRoots
+    // here, keeping the subtrees alive until drainCommit runs their deferred cleanups.
     for (size_t i = 0; i < parentFiber->children.size(); ++i) {
         if (!reused[i] && parentFiber->children[i]) {
             unmountFiber(parentFiber->children[i].get(), renderParent);
+            commit_.removedRoots.push_back(std::move(parentFiber->children[i]));
         }
     }
 
@@ -502,6 +535,12 @@ void Reconciler::reconcileChildren(Fiber* parentFiber, const std::vector<Child>&
 // ============================================================================
 
 bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
+    bool anyReconciled = reconcileDirtyComponentsImpl(fiber);
+    drainCommit();
+    return anyReconciled;
+}
+
+bool Reconciler::reconcileDirtyComponentsImpl(Fiber* fiber) {
     if (!fiber) return false;
 
     bool anyReconciled = false;
@@ -513,7 +552,8 @@ bool Reconciler::reconcileDirtyComponents(Fiber* fiber) {
         anyReconciled = true;
     } else {
         for (auto& child : fiber->children) {
-            if (reconcileDirtyComponents(child.get())) {
+            // Recurse via the IMPL so drain happens once, at the top-level wrapper.
+            if (reconcileDirtyComponentsImpl(child.get())) {
                 anyReconciled = true;
             }
         }
@@ -640,14 +680,20 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
     // load pass picks it up. In steady state the render does not re-dirty, dirty
     // stays cleared, componentsDirty_ is not re-armed, and the pass terminates.
 
-    // Run pending effects
-    fiber->runPendingEffects();
+    // Defer effects to the commit phase (drains after the whole pass, so effects
+    // observe the fully-reconciled tree and any refs bound during the pass). The
+    // fiber remains owned by the live tree, so a raw pointer is safe here.
+    commit_.effects.push_back(fiber);
 
     Node* renderParent = findRenderParent(fiber);
 
     if (result.isEmpty) {
+        // Remove render nodes + record cleanup order inline, then TRANSFER ownership
+        // to the commit queue so the subtrees outlive children.clear() and their
+        // deferred cleanups can run at drain (raw pointers in cleanupOrder stay valid).
         for (auto& child : fiber->children) {
             unmountFiber(child.get(), renderParent);
+            commit_.removedRoots.push_back(std::move(child));
         }
         fiber->children.clear();
     } else if (!fiber->children.empty()) {
@@ -657,6 +703,7 @@ void Reconciler::rerenderComponent(Fiber* fiber) {
             reconcileHost(existingChild.get(), result);
         } else {
             unmountFiber(existingChild.get(), renderParent);
+            commit_.removedRoots.push_back(std::move(existingChild));
             fiber->children.clear();
 
             size_t renderIndex = findRenderIndex(fiber);
@@ -809,25 +856,60 @@ void Reconciler::rebuildRenderChildren(Fiber* parentFiber, Node* renderParent) {
 
 void Reconciler::unmountFiber(Fiber* fiber, Node* renderParent) {
     if (!fiber) return;
+    // Two phases, split so cleanups run AFTER the pass (defect D):
+    //   1. Remove render nodes INLINE (correct layout during the pass).
+    //   2. RECORD child-first cleanup order into the commit queue (run at drain).
+    // Ownership of the removed subtree is transferred to commit_.removedRoots by the
+    // caller, keeping the pointers enqueueCleanups records valid until drainCommit.
+    removeRenderSubtree(fiber, renderParent);
+    enqueueCleanups(fiber);
+}
+
+void Reconciler::removeRenderSubtree(Fiber* fiber, Node* renderParent) {
+    if (!fiber) return;
 
     if (fiber->isHost() && fiber->renderNode) {
+        // Removing the host render node cascade-destroys its render descendants, so
+        // host children need no further render removal — but component-fiber children
+        // hold their own render nodes under this renderParent and still do.
         notifyRenderRemoved(fiber->renderNode);
         removeRenderNode(renderParent, fiber->renderNode);
         fiber->renderNode = nullptr;
-    }
-
-    if (fiber->isComponent()) {
-        // Component: per-fiber cleanup, then recurse via unmountFiber
-        // (children share renderParent, need individual render node removal)
-        fiber->runCleanups();
         for (auto& child : fiber->children) {
-            unmountFiber(child.get(), renderParent);
+            if (child && child->isComponent()) removeRenderSubtree(child.get(), renderParent);
         }
-    } else {
-        // Host: render nodes already cascade-destroyed by removeRenderNode
-        // willUnmount handles recursive lifecycle cleanup for all descendants
-        fiber->willUnmount();
+    } else if (fiber->isComponent()) {
+        for (auto& child : fiber->children) {
+            removeRenderSubtree(child.get(), renderParent);
+        }
     }
+}
+
+void Reconciler::enqueueCleanups(Fiber* fiber) {
+    if (!fiber) return;
+    // Child-first: recurse into children before recording self, so drainCommit runs
+    // a child's cleanup before its parent's (React unmount order).
+    for (auto& child : fiber->children) {
+        enqueueCleanups(child.get());
+    }
+    commit_.cleanupOrder.push_back(fiber);
+}
+
+void Reconciler::drainCommit() {
+    // Removed fibers' cleanups first (already child-first), then release the owned
+    // subtrees; then mounted/updated effects in mount order. Effects run last so a
+    // mounted component's effect never observes a not-yet-cleaned predecessor's
+    // resource (defect C: cleanup-before-effect across a same-slot swap).
+    for (Fiber* f : commit_.cleanupOrder) {
+        if (f) f->runCleanups();
+    }
+    commit_.cleanupOrder.clear();
+    commit_.removedRoots.clear();
+
+    for (Fiber* f : commit_.effects) {
+        if (f) f->runPendingEffects();
+    }
+    commit_.effects.clear();
 }
 
 void Reconciler::notifyRenderRemoved(Node* node) {

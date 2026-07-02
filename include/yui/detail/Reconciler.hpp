@@ -32,13 +32,16 @@ public:
 
     // Mount a VNode tree -> creates fiber tree AND render tree.
     // Returns the root fiber. The render tree root is stored internally.
+    // Top-level entry: drains the commit queue (mount effects) before returning.
     std::unique_ptr<Fiber> mount(const VNode& vnode);
 
-    // Reconcile existing fiber tree against new VNode tree
+    // Reconcile existing fiber tree against new VNode tree.
+    // Top-level entry: drains the commit queue before returning.
     void reconcile(Fiber* fiber, const VNode& vnode);
 
     // Walk fiber tree and re-render any dirty components.
     // Returns true if any components were re-rendered.
+    // Top-level entry: drains the commit queue before returning.
     bool reconcileDirtyComponents(Fiber* fiber);
 
     // Access the render tree root
@@ -48,6 +51,11 @@ public:
     std::unique_ptr<Node> takeRenderRoot() { return std::move(renderRoot_); }
 
 private:
+    // --- Top-level impls (no drain; the public wrappers drain) ---
+    std::unique_ptr<Fiber> mountImpl(const VNode& vnode);
+    void reconcileImpl(Fiber* fiber, const VNode& vnode);
+    bool reconcileDirtyComponentsImpl(Fiber* fiber);
+
     // --- Mounting ---
     std::unique_ptr<Fiber> mountHost(const VNode& vnode, size_t sourcePos,
                                      Node* renderParent, size_t& renderIndex);
@@ -86,7 +94,36 @@ private:
 
     // --- Cleanup ---
     void unmountFiber(Fiber* fiber, Node* renderParent);
+    // Remove a fiber subtree's render nodes INLINE (during the reconcile pass), no
+    // lifecycle cleanup — that is deferred via enqueueCleanups.
+    void removeRenderSubtree(Fiber* fiber, Node* renderParent);
     void notifyRenderRemoved(Node* node);
+
+    // --- Commit phase (deferred lifecycle) ---
+    // React model: reconcile builds the tree during the pass; a COMMIT phase then
+    // runs removed fibers' cleanups (child-first) and mounted/updated fibers'
+    // effects (mount order) AFTER the pass. Deferring matters because effects and
+    // cleanups may observe/mutate shared state and read element refs bound during
+    // the pass.
+    //
+    // Ownership subtlety: reconcileChildren destroys non-reused fibers during the
+    // pass (the children-vector swap drops their unique_ptrs). A deferred cleanup
+    // on such a fiber would be a use-after-free, so removedRoots OWNS the removed
+    // subtrees until drainCommit. Effects run on fibers still owned by the LIVE
+    // tree, so raw pointers are safe there.
+    struct CommitQueue {
+        std::vector<std::unique_ptr<Fiber>> removedRoots;  // owns removed subtrees until drain
+        std::vector<Fiber*> cleanupOrder;                  // child-first; points into removedRoots
+        std::vector<Fiber*> effects;                       // mounted/updated (owned by live tree)
+    };
+    CommitQueue commit_;
+
+    // Run removed fibers' cleanups (child-first), then mounted/updated effects
+    // (mount order), then clear the queue. Called once per top-level pass.
+    void drainCommit();
+    // Record child-first cleanup order for a removed subtree (does NOT transfer
+    // ownership — reconcileChildren moves the owning unique_ptr into removedRoots).
+    void enqueueCleanups(Fiber* fiber);
 
     // --- Diagnostics ---
     // Route a caught user-callback exception to the scheduler's sink via the
