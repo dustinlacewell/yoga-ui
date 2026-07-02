@@ -267,7 +267,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     std::function<void()>* onMiddleClick = nullptr;
     std::function<void()>* onMouseDown = nullptr;
     std::function<void(float, float)>* onScroll = nullptr;
-    std::function<void(int, uint16_t)>* onKeyDown = nullptr;
+    std::function<void(int, uint16_t, bool)>* onKeyDown = nullptr;
     std::function<void(int, uint16_t)>* onKeyUp = nullptr;
 
 #define YUI_EXTRACT_EVENTS(nodeType, castType) \
@@ -355,7 +355,7 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
 
     // Handle keyboard events
     if (event.type == Event::Type::KeyDown && onKeyDown && *onKeyDown) {
-        if (fireCallback("onKeyDown", [&] { (*onKeyDown)(event.keyCode, event.keyMod); }, report))
+        if (fireCallback("onKeyDown", [&] { (*onKeyDown)(event.keyCode, event.keyMod, event.keyRepeat); }, report))
             event.consume();
     }
     if (event.type == Event::Type::KeyUp && onKeyUp && *onKeyUp) {

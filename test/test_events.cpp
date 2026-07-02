@@ -718,7 +718,7 @@ TEST_CASE("Key - node with both handlers receives KeyDown and KeyUp") {
     auto tree = Box()
                     .width(100)
                     .height(100)
-                    .onKeyDown([&](int, uint16_t) { downFired = true; })
+                    .onKeyDown([&](int, uint16_t, bool) { downFired = true; })
                     .onKeyUp([&](int, uint16_t) { upFired = true; });
 
     auto fiber = reconciler.mount(tree);
@@ -731,6 +731,33 @@ TEST_CASE("Key - node with both handlers receives KeyDown and KeyUp") {
     CHECK(upFired);
 }
 
+TEST_CASE("Key - onKeyDown receives the repeat flag") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    bool lastRepeat = false;
+    int downCount = 0;
+    auto tree = Box()
+                    .width(100)
+                    .height(100)
+                    .onKeyDown([&](int, uint16_t, bool repeat) {
+                        lastRepeat = repeat;
+                        ++downCount;
+                    });
+
+    auto fiber = reconciler.mount(tree);
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleKeyDown(root, 65, 0, /*repeat=*/true);
+    CHECK(downCount == 1);
+    CHECK(lastRepeat == true);
+
+    events.handleKeyDown(root, 65, 0, /*repeat=*/false);
+    CHECK(downCount == 2);
+    CHECK(lastRepeat == false);
+}
+
 TEST_CASE("Key - KeyUp skips an onKeyDown-only node and reaches the onKeyUp node") {
     Reconciler reconciler;
     EventHandler events;
@@ -741,7 +768,7 @@ TEST_CASE("Key - KeyUp skips an onKeyDown-only node and reaches the onKeyUp node
     bool upNodeGotUp = false;
     auto tree = Box({
                         Box().width(50).height(50).setKey("downOnly").onKeyDown(
-                            [&](int, uint16_t) {}),
+                            [&](int, uint16_t, bool) {}),
                         Box().width(50).height(50).setKey("upOnly").onKeyUp(
                             [&](int, uint16_t) { upNodeGotUp = true; }),
                     })

@@ -233,7 +233,7 @@ public:
     Derived& onScroll(std::function<void(float, float)> fn) {
         return event([&](EventProps& p) { p.onScroll = std::move(fn); });
     }
-    Derived& onKeyDown(std::function<void(int, uint16_t)> fn) {
+    Derived& onKeyDown(std::function<void(int, uint16_t, bool)> fn) {
         return event([&](EventProps& p) { p.onKeyDown = std::move(fn); });
     }
     Derived& onKeyUp(std::function<void(int, uint16_t)> fn) {

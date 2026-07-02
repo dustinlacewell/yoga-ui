@@ -77,7 +77,7 @@ struct EventProps {
     std::function<void(bool)> onHover;
     std::function<void(bool)> onFocus;
     std::function<void(float, float)> onScroll;              // (deltaX, deltaY)
-    std::function<void(int, uint16_t)> onKeyDown;            // (keyCode, modifiers)
+    std::function<void(int, uint16_t, bool)> onKeyDown;      // (keyCode, modifiers, repeat)
     std::function<void(int, uint16_t)> onKeyUp;              // (keyCode, modifiers)
 };
 

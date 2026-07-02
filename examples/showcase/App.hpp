@@ -99,7 +99,8 @@ inline Component App(const std::string& title, const std::string& backend, Child
                       })
             .flexGrow(1)
             .backgroundColor(t.bg)
-            .onKeyDown([](int keyCode, uint16_t mods) { handleKeyboardEvent(keyCode, mods); });
+            .onKeyDown(
+                [](int keyCode, uint16_t mods, bool /*repeat*/) { handleKeyboardEvent(keyCode, mods); });
     };
 }
 
