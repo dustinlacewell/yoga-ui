@@ -359,14 +359,14 @@ TEST_CASE("Box wraps Text WITHOUT measure function (fallback)") {
     CHECK(headerText->layout.height == doctest::Approx(12));
 }
 
-TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus pattern") {
+TEST_CASE("Box with explicit width wraps Text into multiple lines - renderMissingStatus pattern") {
     FnMeasurer measurer(perChar10());
     MeasureHarness h;
     h.setMeasurer(&measurer);
 
     // This is the exact pattern from renderMissingStatus:
     // Box with explicit width(100) but no height, containing Label
-    std::string text = "Missing 7 modules (3 in patch)";  // 30 chars
+    std::string text = "Missing 7 modules (3 in patch)";  // 300px, box is 100px
     auto box = Box(Text(text).fontSize(12).color(0xFFFFFFFF))
         .backgroundColor(0xFF0000FF)
         .justifyContent(JustifyContent::Center)
@@ -393,16 +393,19 @@ TEST_CASE("Box with explicit width wraps Text height - renderMissingStatus patte
     MESSAGE("Status Text layout: " << statusText->layout.width << "x" << statusText->layout.height);
     MESSAGE("Status Text position: left=" << statusText->layout.left << " top=" << statusText->layout.top);
 
-    // Box width = 100 (explicit)
-    // Text width = 30 chars * 10 = 300px (but Box is only 100, text won't fit!)
-    // Box height should wrap text height = 12
+    // Greedy wrap at 100px (10px/char, spaces dropped at breaks):
+    //   "Missing 7"  = 90
+    //   "modules (3" = 100
+    //   "in patch)"  = 90
+    // Text: 100 wide (widest line), 3 lines * 12 = 36 tall; the Box wraps it.
     CHECK(statusBox->layout.width == doctest::Approx(100));
-    CHECK(statusBox->layout.height == doctest::Approx(12));  // Should wrap text
+    CHECK(statusBox->layout.height == doctest::Approx(36));
+    CHECK(statusText->layout.width == doctest::Approx(100));
+    CHECK(statusText->layout.height == doctest::Approx(36));
 
-    // BUG DETECTED: Text is positioned at left=-100 because Center alignment
-    // positions content as (containerWidth - contentWidth) / 2 = (100 - 300) / 2 = -100
-    // This causes text to render OUTSIDE the box boundaries!
-    MESSAGE("BUG: Text left=" << statusText->layout.left << " is negative, will render outside box!");
+    // The old single-line measurement centered a 300px line at left=-100,
+    // rendering outside the box. Wrapped, the text fits: no overflow.
+    CHECK(statusText->layout.left == doctest::Approx(0));
 }
 
 TEST_CASE("Header Box without explicit width - stretches and centers text") {
@@ -445,7 +448,8 @@ TEST_CASE("Header Box without explicit width - stretches and centers text") {
 
 TEST_CASE("SessionScreen full structure - missing status box") {
     // No measurer installed: simulates the first frame before a measurer is set.
-    // Triggers the fallback: width = text.length() * fontSize * 0.6, height = fontSize.
+    // Triggers the fallback heuristic (0.6 * fontSize per char), which wraps
+    // with the same shared algorithm a real measurer uses.
     MeasureHarness h;
 
     // Exact structure from SessionScreen::render()
@@ -495,9 +499,12 @@ TEST_CASE("SessionScreen full structure - missing status box") {
     MESSAGE("Missing Box yoga children: " << YGNodeGetChildCount(missing->yogaNode));
     MESSAGE("Missing Text yoga has measure: " << (YGNodeHasMeasureFunc(missingText->yogaNode) ? "yes" : "no"));
 
-    // With fallback: 30 chars * 12 * 0.6 = 216px width, 12px height
     // Box should stretch to column inner width
     CHECK(missing->layout.width == doctest::Approx(172));
-    // Box height should wrap text height (12px) - THIS IS THE KEY CHECK
-    CHECK(missing->layout.height >= 10);  // Should be ~12, NOT 0!
+    // Fallback wraps like a real measurer (7.2px/char at fontSize 12):
+    //   "Missing 7 modules (3 in" = 165.6 <= 172, "patch)" breaks to line 2.
+    // Box height wraps the WRAPPED text height: 2 lines * 12 - THE KEY CHECK.
+    CHECK(missing->layout.height == doctest::Approx(24));
+    CHECK(missingText->layout.height == doctest::Approx(24));
+    CHECK(missingText->layout.width == doctest::Approx(165.6f).epsilon(0.01));
 }

@@ -4,6 +4,8 @@
 #include "Props.hpp"
 #include "VNode.hpp"
 
+#include "../render/TextWrap.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -25,12 +27,22 @@ namespace yui {
 // the render API (see Host::setRender).
 constexpr int kMaxTreeDepth = 1024;
 
-// Computed layout result from Yoga
+// Computed layout result from Yoga. left/top/width/height are the BORDER box;
+// the insets are the per-edge padding+border Yoga resolved, synced alongside so
+// draw-time consumers get the content box without reaching back into the yoga
+// node. Text wraps and draws in the content box — the same width Yoga hands
+// the measure callback — so measure and paint agree for padded nodes too.
 struct LayoutResult {
     float left = 0;
     float top = 0;
     float width = 0;
     float height = 0;
+    float insetLeft = 0;
+    float insetTop = 0;
+    float insetRight = 0;
+    float insetBottom = 0;
+
+    float contentWidth() const { return width - insetLeft - insetRight; }
 };
 
 // Base class for all rendered nodes
@@ -114,10 +126,32 @@ public:
 
     TextProps props;
 
+    // The wrap of props.text at maxWidth (0 = no soft wrap) under `measurer`
+    // (nullptr ⇒ the fallback heuristic). Both the Yoga measure callback and the
+    // tree renderer read through this, so layout and paint share ONE wrap — and
+    // an unchanged node repaints without re-wrapping.
+    const std::vector<render::TextRun>& wrappedRuns(float maxWidth, const ITextMeasurer* measurer) const;
+
 private:
     void setupMeasureFunc();
     static YGSize measureFunc(YGNodeConstRef node, float width, YGMeasureMode widthMode, float height,
                               YGMeasureMode heightMode);
+
+    // Last wrap result, keyed by (measurer, maxWidth); text/fontSize/font/wrap
+    // prop changes invalidate it in updateProps, and a measurer swap misses on
+    // the key. mutable: filled from const paths (Yoga's measure callback, the
+    // const draw walk). Yoga may probe several widths during one layout — only
+    // the last is kept; a miss just recomputes. The measurer key is POINTER
+    // identity — the same sanctioned limitation as the measurer liveness design
+    // in Measure.hpp: a destroyed measurer whose address is reused by a new one
+    // can false-hit until any text/font/size/wrap change.
+    struct WrapCache {
+        const ITextMeasurer* measurer = nullptr;
+        float maxWidth = 0;
+        bool valid = false;
+        std::vector<render::TextRun> runs;
+    };
+    mutable WrapCache wrapCache_;
 };
 
 class InputNode : public Node {

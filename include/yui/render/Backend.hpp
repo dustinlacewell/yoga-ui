@@ -22,10 +22,11 @@ struct Rect {
 };
 
 // The primitive surface a backend provides to the backend-neutral tree walk
-// (render::renderTree). Backends implement these plus ITextMeasurer::measure;
-// everything above the primitives — the node switch, style cascade, scroll
-// clip/offset math, input chrome, caret — lives in the neutral layer and is
-// identical across backends by construction.
+// (render::renderTree). Backends implement these plus the ITextMeasurer
+// primitives (measureRun/fontMetrics); everything above the primitives — the
+// node switch, style cascade, text wrapping, scroll clip/offset math, input
+// chrome, caret — lives in the neutral layer and is identical across backends
+// by construction.
 class IRenderBackend : public ITextMeasurer {
 public:
     // Frame bracket around one renderTree walk. endFrame() restores every

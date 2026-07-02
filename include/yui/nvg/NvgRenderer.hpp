@@ -31,8 +31,8 @@ public:
     // boundary), so a throw must never escape.
     void render(Node* root) noexcept;
 
-    // ITextMeasurer: measure text using this renderer's nanovg context/font.
-    Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const override;
+    // ITextMeasurer primitives, backed by this renderer's nanovg context/font.
+    // Sizing (measure) is the shared base implementation over these.
     float measureRun(std::string_view run, float fontSize, std::string_view font) const override;
     FontMetrics fontMetrics(float fontSize, std::string_view font) const override;
 

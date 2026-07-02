@@ -1,6 +1,7 @@
 #include <yui/core/Node.hpp>
 #include <yui/core/RenderDefaults.hpp>
 #include <yui/render/StyleResolver.hpp>
+#include <yui/render/TextWrap.hpp>
 #include <yui/render/TreeRenderer.hpp>
 
 #include <chrono>
@@ -127,7 +128,26 @@ void TreeWalker::drawText(const TextNode* node, float x, float y) {
     if (p.text.empty())
         return;
     auto s = resolveText(p, node->hovered, node->focused);
-    backend_.drawTextRun(p.text, x, y, s.fontSize, s.color, p.font.value_or(std::string{}));
+    const std::string font = p.font.value_or(std::string{});
+
+    // Wrap and draw in the CONTENT box: Yoga hands the measure callback the
+    // content width (available minus the node's own padding+border), so paint
+    // must wrap at that same width — and start at the content origin — or a
+    // padded Text would re-wrap at the wider border-box width and disagree with
+    // the height layout reserved. Same width both sides also keeps the wrap
+    // cache shared between layout and paint. wrap(false) paints one
+    // unconstrained run ('\n' still breaks).
+    const LayoutResult& l = node->layout;
+    float maxWidth = p.wrap.value_or(true) ? l.contentWidth() : 0;
+    const auto& runs = node->wrappedRuns(maxWidth, &backend_);
+    float lineHeight = backend_.fontMetrics(s.fontSize, font).lineHeight;
+    for (size_t i = 0; i < runs.size(); ++i) {
+        const TextRun& run = runs[i];
+        if (run.begin == run.end)
+            continue;  // a blank line occupies its slot but draws nothing
+        backend_.drawTextRun(p.text.substr(run.begin, run.end - run.begin), x + l.insetLeft,
+                             y + l.insetTop + static_cast<float>(i) * lineHeight, s.fontSize, s.color, font);
+    }
 }
 
 void TreeWalker::drawScroll(const ScrollNode* node, const Rect& r) {

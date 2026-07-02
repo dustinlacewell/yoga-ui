@@ -130,6 +130,10 @@ struct TextProps : LayoutProps, EventProps {
     // font). Selected by NAME so it is backend-agnostic and stable across a GL
     // context rebuild; the renderer resolves the name to a backend handle.
     std::optional<std::string> font;
+    // Soft-wrap at the available layout width (unset ⇒ true). false keeps the
+    // text one run, measured/drawn at its full single-line advance ('\n' still
+    // breaks).
+    std::optional<bool> wrap;
 
     // State-based style overrides
     std::optional<TextStyle> hoverStyle;

@@ -296,6 +296,8 @@ public:
     TextBuilder& color(uint32_t v) { return p([&](TextProps& t) { t.color = v; }); }
     // Render/measure with a registered font face by name (see TextProps::font).
     TextBuilder& font(std::string v) { return p([&](TextProps& t) { t.font = std::move(v); }); }
+    // Soft-wrap at the available width (default true; see TextProps::wrap).
+    TextBuilder& wrap(bool v) { return p([&](TextProps& t) { t.wrap = v; }); }
     TextBuilder& hoverStyle(TextStyle s) {
         return p([&](TextProps& t) { t.hoverStyle = std::move(s); });
     }

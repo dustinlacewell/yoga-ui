@@ -59,31 +59,6 @@ void NvgRenderer::reportError(std::string_view where, const std::exception* eOrN
     } catch (...) {}
 }
 
-Size NvgRenderer::measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const {
-    if (!vg_) {
-        return fallbackMeasure(text, fontSize, maxWidth, font);
-    }
-
-    nvgFontSize(vg_, fontSize);
-    selectFont(font);
-    // Explicit align: measurement must never inherit whatever align the last
-    // draw left on the shared context.
-    nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-
-    // Width is the advance (nvgTextBounds' return value — align-independent);
-    // height is the face's line height, never the string's ink bounds, so a
-    // line of "ace" occupies the same vertical space as a line of "Ay".
-    float width = nvgTextBounds(vg_, 0, 0, text.c_str(), nullptr, nullptr);
-    float ascender = 0, descender = 0, lineHeight = 0;
-    nvgTextMetrics(vg_, &ascender, &descender, &lineHeight);
-
-    if (maxWidth > 0 && width > maxWidth) {
-        width = maxWidth;
-    }
-
-    return {width, lineHeight};
-}
-
 float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_view font) const {
     if (!vg_) {
         return fallbackMeasureRun(run, fontSize, font);
@@ -91,6 +66,9 @@ float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_
 
     nvgFontSize(vg_, fontSize);
     selectFont(std::string(font));
+    // Explicit align: measurement must never inherit whatever align the last
+    // draw left on the shared context. The return value is the advance
+    // (align-independent), never the string's ink bounds.
     nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
     return nvgTextBounds(vg_, 0, 0, run.data(), run.data() + run.size(), nullptr);
 }

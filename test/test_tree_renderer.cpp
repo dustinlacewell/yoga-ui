@@ -38,12 +38,8 @@ class FakeBackend : public render::IRenderBackend {
 public:
     std::vector<Call> calls;
 
-    // 10px per character, fontSize for height — deterministic caret arithmetic.
-    Size measure(const std::string& text, float fontSize, float /*maxWidth*/,
-                 const std::string& /*font*/) const override {
-        return {static_cast<float>(text.length()) * 10.0f, fontSize};
-    }
-
+    // 10px per byte, lineHeight == fontSize — deterministic wrap and caret
+    // arithmetic (sizing goes through the shared measure() over these).
     float measureRun(std::string_view run, float /*fontSize*/, std::string_view /*font*/) const override {
         return static_cast<float>(run.size()) * 10.0f;
     }
@@ -177,6 +173,85 @@ TEST_CASE("renderTree: draws parent chrome first, then children in order") {
     CHECK(backend.calls[2].y == doctest::Approx(20));  // below the 20px box
     CHECK(backend.calls[2].fontSize == doctest::Approx(10));
     CHECK(backend.calls[2].color == rd::kDefaultTextColor);
+}
+
+// ---------------------------------------------------------------------------
+// Wrapped text: one drawTextRun per line, stepped by lineHeight, with the
+// exact substrings the shared wrap produced. wrap(false) opts out.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("renderTree: wrapped text draws one run per line, stepped by lineHeight") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // 10px/char: "aaa bbb" (70px) in a 40px column wraps to "aaa" / "bbb".
+    auto tree = Column(Text("aaa bbb").fontSize(10).setKey("t")).width(40).alignItems(AlignItems::FlexStart);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(40, 100);
+
+    // Layout agrees with the wrap: 2 lines of lineHeight (== fontSize) each.
+    CHECK(root->children[0]->layout.height == doctest::Approx(20));
+
+    render::renderTree(root, backend, {});
+
+    REQUIRE(backend.count(Call::Kind::TextRun) == 2);
+    const Call* r0 = backend.nthOf(Call::Kind::TextRun, 0);
+    const Call* r1 = backend.nthOf(Call::Kind::TextRun, 1);
+    CHECK(r0->text == "aaa");
+    CHECK(r0->x == doctest::Approx(0));
+    CHECK(r0->y == doctest::Approx(0));
+    CHECK(r1->text == "bbb");
+    CHECK(r1->x == doctest::Approx(0));
+    CHECK(r1->y == doctest::Approx(10));  // one lineHeight below the first run
+}
+
+TEST_CASE("renderTree: padded text wraps at the content width and draws at the content origin") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    // 10px/char, padding 20: the text stretches to the column's 100px, so Yoga
+    // measures at the CONTENT width 100 - 2*20 = 60 → "aaaa" / "bbbb", and the
+    // node reserves 2 lines + vertical padding. Paint must wrap at that same 60
+    // (NOT the 100px border box, where "aaaa bbbb" = 90px fits one line) and
+    // start at the content origin.
+    auto tree = Column(Text("aaaa bbbb").fontSize(10).padding(20).setKey("t")).width(100);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(100, 200);
+
+    // What measure reserved: 2 lines * 10 + 40 vertical padding.
+    CHECK(root->children[0]->layout.height == doctest::Approx(60));
+
+    render::renderTree(root, backend, {});
+
+    REQUIRE(backend.count(Call::Kind::TextRun) == 2);
+    const Call* r0 = backend.nthOf(Call::Kind::TextRun, 0);
+    const Call* r1 = backend.nthOf(Call::Kind::TextRun, 1);
+    CHECK(r0->text == "aaaa");
+    CHECK(r0->x == doctest::Approx(20));  // content origin, inset by the padding
+    CHECK(r0->y == doctest::Approx(20));
+    CHECK(r1->text == "bbbb");
+    CHECK(r1->x == doctest::Approx(20));
+    CHECK(r1->y == doctest::Approx(30));  // content origin + one lineHeight
+}
+
+TEST_CASE("renderTree: wrap(false) text draws exactly one run") {
+    FakeBackend backend;
+    MeasureHarness h;
+    h.setMeasurer(&backend);
+
+    auto tree =
+        Column(Text("aaa bbb").fontSize(10).wrap(false).setKey("t")).width(40).alignItems(AlignItems::FlexStart);
+    auto* root = h.mount(std::move(tree));
+    root->calculateLayout(40, 100);
+
+    render::renderTree(root, backend, {});
+
+    REQUIRE(backend.count(Call::Kind::TextRun) == 1);
+    const Call* run = backend.nthOf(Call::Kind::TextRun, 0);
+    CHECK(run->text == "aaa bbb");  // the full single-line run, overflow and all
+    CHECK(run->y == doctest::Approx(0));
 }
 
 // ---------------------------------------------------------------------------

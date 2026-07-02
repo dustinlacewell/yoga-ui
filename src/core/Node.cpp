@@ -294,6 +294,11 @@ void Node::syncLayoutFromYoga() {
     layout.top = YGNodeLayoutGetTop(yogaNode);
     layout.width = YGNodeLayoutGetWidth(yogaNode);
     layout.height = YGNodeLayoutGetHeight(yogaNode);
+    layout.insetLeft = YGNodeLayoutGetPadding(yogaNode, YGEdgeLeft) + YGNodeLayoutGetBorder(yogaNode, YGEdgeLeft);
+    layout.insetTop = YGNodeLayoutGetPadding(yogaNode, YGEdgeTop) + YGNodeLayoutGetBorder(yogaNode, YGEdgeTop);
+    layout.insetRight = YGNodeLayoutGetPadding(yogaNode, YGEdgeRight) + YGNodeLayoutGetBorder(yogaNode, YGEdgeRight);
+    layout.insetBottom =
+        YGNodeLayoutGetPadding(yogaNode, YGEdgeBottom) + YGNodeLayoutGetBorder(yogaNode, YGEdgeBottom);
 
     for (auto& child : children) {
         child->syncLayoutFromYoga();
@@ -372,13 +377,16 @@ void TextNode::updateProps(PropsVariant&& p) {
     // The font affects measured width as much as the text/size do; without it in
     // the predicate a `.font()`-only change would not re-mark the Yoga node dirty
     // and would keep a stale measurement (the mis-sized-glyph class of bug).
+    // `wrap` toggles soft wrapping, which changes both the wrap result and the
+    // measured size, so it invalidates the same way.
     bool textChanged = newProps.text != props.text || newProps.fontSize != props.fontSize
-                       || newProps.font != props.font;
+                       || newProps.font != props.font || newProps.wrap != props.wrap;
     props = std::move(newProps);
     if (layoutChanged) {
         applyLayoutProps(props);
     }
     if (textChanged) {
+        wrapCache_.valid = false;
         YGNodeMarkDirty(yogaNode);
     }
 }
@@ -397,18 +405,40 @@ YGSize TextNode::measureFunc(YGNodeConstRef node, float width, YGMeasureMode wid
     }
 
     float fontSize = textNode->props.fontSize.value_or(render_defaults::kDefaultFontSize);
-    float maxWidth = (widthMode == YGMeasureModeUndefined) ? 0 : width;
+    // wrap(false) opts out of soft wrapping: measure unconstrained so the text
+    // stays a single run regardless of the available width.
+    bool wrapOn = textNode->props.wrap.value_or(true);
+    float maxWidth = (!wrapOn || widthMode == YGMeasureModeUndefined) ? 0 : width;
     // Measure in the node's requested font face (empty ⇒ default) so the measured
     // size matches what drawText will render with.
     const std::string& font = textNode->props.font.value_or(std::string{});
 
     // The host's text measurer lives in the per-host Yoga config context. Recover
-    // it from this node's config; fall back to the heuristic when none is set.
+    // it from this node's config; wrappedRuns falls back to the heuristic when
+    // none is set. Reading through the node's wrap cache keeps this and the tree
+    // renderer on the SAME wrap.
     auto* measurer = static_cast<const ITextMeasurer*>(
         YGConfigGetContext(YGNodeGetConfig(const_cast<YGNodeRef>(node))));
-    Size size = measurer ? measurer->measure(textNode->props.text, fontSize, maxWidth, font)
-                         : fallbackMeasure(textNode->props.text, fontSize, maxWidth, font);
+    const auto& runs = textNode->wrappedRuns(maxWidth, measurer);
+    FontMetrics metrics = measurer ? measurer->fontMetrics(fontSize, font) : fallbackFontMetrics(fontSize, font);
+    Size size = render::runsSize(runs, metrics.lineHeight);
     return {size.width, size.height};
+}
+
+const std::vector<render::TextRun>& TextNode::wrappedRuns(float maxWidth, const ITextMeasurer* measurer) const {
+    if (wrapCache_.valid && wrapCache_.measurer == measurer && wrapCache_.maxWidth == maxWidth) {
+        return wrapCache_.runs;
+    }
+
+    float fontSize = props.fontSize.value_or(render_defaults::kDefaultFontSize);
+    std::string_view font = props.font ? std::string_view(*props.font) : std::string_view{};
+    wrapCache_.runs = render::wrapText(props.text, maxWidth, [&](std::string_view run) {
+        return measurer ? measurer->measureRun(run, fontSize, font) : fallbackMeasureRun(run, fontSize, font);
+    });
+    wrapCache_.measurer = measurer;
+    wrapCache_.maxWidth = maxWidth;
+    wrapCache_.valid = true;
+    return wrapCache_.runs;
 }
 
 // --- InputNode ---

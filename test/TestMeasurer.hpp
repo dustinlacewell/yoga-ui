@@ -16,24 +16,19 @@ namespace yui::test {
 // so tests can assert a measurer was (or was not) called.
 class FnMeasurer : public ITextMeasurer {
 public:
-    // The function still takes only (text, fontSize, maxWidth) — existing tests
-    // construct it that way and don't care about the face. The ITextMeasurer
-    // override accepts the new `font` param and drops it. A font-aware test can
-    // use FnMeasurerF below.
+    // The function still takes (text, fontSize, maxWidth) — existing tests
+    // construct it that way and don't care about the face. Only .width is
+    // consumed: measureRun is the wrapping primitive sizing is built on, and
+    // heights come from fontMetrics.
     using Fn = std::function<Size(const std::string& text, float fontSize, float maxWidth)>;
 
     explicit FnMeasurer(Fn fn) : fn_(std::move(fn)) {}
 
-    Size measure(const std::string& text, float fontSize, float maxWidth,
-                 const std::string& font) const override {
-        (void)font;
-        ++calls_;
-        return fn_(text, fontSize, maxWidth);
-    }
-
-    // The run primitive routes through the same fn (unconstrained, width only),
-    // so run advances and measure() widths agree by construction.
+    // The run primitive the shared wrap layer (and the final measure()) is
+    // built on. Counted, so tests can assert the measurer was (or was not)
+    // reached from layout.
     float measureRun(std::string_view run, float fontSize, std::string_view /*font*/) const override {
+        ++calls_;
         return fn_(std::string(run), fontSize, 0).width;
     }
 

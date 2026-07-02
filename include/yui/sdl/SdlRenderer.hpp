@@ -34,10 +34,10 @@ public:
     // boundary), so a throw must never escape.
     void render(Node* root) noexcept;
 
-    // ITextMeasurer: measure text using this renderer's font cache. `font` selects
-    // a registered named face (empty/unknown ⇒ the default font this renderer was
-    // constructed with).
-    Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const override;
+    // ITextMeasurer primitives, backed by this renderer's font cache. `font`
+    // selects a registered named face (empty/unknown ⇒ the default font this
+    // renderer was constructed with). Sizing (measure) is the shared base
+    // implementation over these.
     float measureRun(std::string_view run, float fontSize, std::string_view font) const override;
     FontMetrics fontMetrics(float fontSize, std::string_view font) const override;
 
@@ -89,7 +89,8 @@ private:
     // the empty name "".
     struct FontFace {
         std::string path;
-        // Mutable: lazily populated by getFont, including from const measure().
+        // Mutable: lazily populated by getFont, including from the const
+        // measureRun/fontMetrics paths.
         mutable std::unordered_map<int, TTF_Font*> sizes;
     };
     std::unordered_map<std::string, FontFace> fonts_;

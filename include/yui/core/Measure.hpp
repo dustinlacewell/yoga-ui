@@ -41,17 +41,12 @@ inline FontMetrics fallbackFontMetrics(float fontSize, std::string_view font = {
     return {0.8f * fontSize, 0.2f * fontSize, fontSize};
 }
 
-// Rough text size estimate used when no backend measurer is available. Width
-// comes from fallbackMeasureRun; height is one fallback line (== fontSize).
-// maxWidth (0 = no limit) clamps the reported width for wrapping.
-inline Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth,
-                            const std::string& font = {}) {
-    float width = fallbackMeasureRun(text, fontSize, font);
-    if (maxWidth > 0 && width > maxWidth) {
-        width = maxWidth;
-    }
-    return {width, fontSize};
-}
+// Rough text size estimate used when no backend measurer is available: the
+// shared wrap algorithm (render::wrapText) over fallbackMeasureRun /
+// fallbackFontMetrics, so the fallback wraps exactly like a real measurer.
+// maxWidth (0 = no limit) is the wrapping constraint. Defined out-of-line in
+// src/render/Measure.cpp.
+Size fallbackMeasure(const std::string& text, float fontSize, float maxWidth, const std::string& font = {});
 
 // Backend-provided text measurement. A host installs one of these via
 // Host::setTextMeasurer; it is reached from a node's measure callback through
@@ -82,9 +77,14 @@ struct ITextMeasurer {
     // wrapping constraint from layout. `font` names a registered font face (empty
     // ⇒ the host/renderer default); it MUST be honored so a node's measured size
     // matches its drawn size (a glyph measured in the wrong face mis-sizes the
-    // layout). Implementations fall back to the default face for an unknown name.
-    virtual Size measure(const std::string& text, float fontSize, float maxWidth,
-                         const std::string& font) const = 0;
+    // layout).
+    //
+    // NON-virtual: there is exactly one sizing rule — the shared wrap algorithm
+    // (render::wrapText) over the measureRun/fontMetrics primitives below — so
+    // measure and paint agree by construction. Width is the widest wrapped run;
+    // height is (#runs * lineHeight). Defined out-of-line in
+    // src/render/Measure.cpp.
+    Size measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const;
 
     // Advance width of ONE run — no wrapping, and `run` must not contain
     // newlines. This is the primitive the shared wrapping layer is built on;

@@ -4,7 +4,6 @@
 #include "yui/sdl/detail/SdlScopes.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <exception>
 
 #include <SDL2_gfxPrimitives.h>
@@ -78,30 +77,6 @@ TTF_Font* SdlRenderer::getFont(const std::string& font, int size) const {
         face.sizes[size] = f;
     }
     return f;
-}
-
-Size SdlRenderer::measure(const std::string& text, float fontSize, float maxWidth, const std::string& font) const {
-    if (text.empty())
-        return {0, fontSize};
-
-    int size = static_cast<int>(fontSize + 0.5f);
-    TTF_Font* fontPtr = getFont(font, size);
-    if (!fontPtr)
-        return {0, fontSize};
-
-    int w = 0, h = 0;
-    TTF_SizeUTF8(fontPtr, text.c_str(), &w, &h);
-
-    float width = static_cast<float>(w);
-    float height = static_cast<float>(h);
-
-    if (maxWidth > 0 && width > maxWidth) {
-        int lines = static_cast<int>(std::ceil(width / maxWidth));
-        width = maxWidth;
-        height = height * lines;
-    }
-
-    return {width, height};
 }
 
 float SdlRenderer::measureRun(std::string_view run, float fontSize, std::string_view font) const {
