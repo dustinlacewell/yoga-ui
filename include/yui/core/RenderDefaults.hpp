@@ -64,5 +64,18 @@ inline constexpr float kCaretWidth = 1.0f;
 inline constexpr long kCaretBlinkPeriodMs = 1000;
 inline constexpr long kCaretBlinkOnMs = 530;
 
+// --- Pointer interaction ---
+
+// Chebyshev distance (px) the pointer must move from the press anchor before
+// the press becomes a drag: within this ring a release is a click; beyond it
+// Drag events stream and the release fires no click.
+inline constexpr float kDragThresholdPx = 4.0f;
+
+// Multi-click chaining: a press within this interval AND radius of the previous
+// click (same button) increments Event::clickCount (2 = double-click). The
+// clock is EventHandler::advanceClock's dt accumulation, not a wall clock.
+inline constexpr double kMultiClickIntervalMs = 500.0;
+inline constexpr float kMultiClickRadiusPx = 4.0f;
+
 }  // namespace render_defaults
 }  // namespace yui

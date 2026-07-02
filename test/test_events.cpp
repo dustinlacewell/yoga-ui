@@ -1594,3 +1594,410 @@ TEST_CASE("Scroll stays strict: clipped overflow below the viewport is not hitta
     events.handleMouseUp(root, 50, 150, MouseButton::Left);
     CHECK(!contentClicked);
 }
+
+// ============================================================================
+// Pointer capture / drag model (6a): a press gives its target implicit pointer
+// capture — moves and the release route to the captor (not the node under the
+// pointer), hover freezes for the gesture, a move past kDragThresholdPx turns
+// the press into a drag (no click), and presses chain into double-clicks
+// against the dt-accumulated clock (advanceClock).
+// ============================================================================
+
+TEST_CASE("Capture - moves and release route to the captor, not the node under the pointer") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    SUBCASE("off-node moves and release go to the captor; the sibling sees nothing") {
+        int aMove = 0, aUp = 0, aClick = 0;
+        int bMove = 0, bUp = 0, bClick = 0, bHoverEnter = 0;
+        auto tree = Box(
+                            Box().width(50).height(100).setKey("a")
+                                .onMouseMove([&](float, float) { ++aMove; })
+                                .onMouseUp([&](float, float, MouseButton) { ++aUp; })
+                                .onClick([&]() { ++aClick; }),
+                            Box().width(50).height(100).setKey("b")
+                                .onMouseMove([&](float, float) { ++bMove; })
+                                .onMouseUp([&](float, float, MouseButton) { ++bUp; })
+                                .onClick([&]() { ++bClick; })
+                                .onHover([&](bool h) { if (h) ++bHoverEnter; })
+                        )
+                        .flexDirection(FlexDirection::Row)
+                        .width(100).height(100);
+
+        auto fiber = reconciler.mount(std::move(tree));
+        auto* root = reconciler.renderRoot();
+        root->calculateLayout(100, 100);
+
+        events.handleMouseDown(root, 25, 50, MouseButton::Left);  // press on A -> capture
+        CHECK(events.hasCapture());
+
+        events.handleMouseMove(root, 75, 50);  // pointer now over B
+        CHECK(aMove == 1);
+        CHECK(bMove == 0);
+        CHECK(bHoverEnter == 0);  // hover frozen during capture
+
+        events.handleMouseUp(root, 75, 50, MouseButton::Left);  // release over B
+        CHECK(aUp == 1);   // release routed to the captor
+        CHECK(bUp == 0);
+        CHECK(aClick == 0);  // release leaf not in A's subtree (and it dragged)
+        CHECK(bClick == 0);  // B never received press or release dispatch
+        CHECK(!events.hasCapture());
+        CHECK(bHoverEnter == 1);  // hover resynced to B after release
+    }
+
+    SUBCASE("press and release split across siblings click only the shared ancestor") {
+        int aClick = 0, bClick = 0, parentClick = 0;
+        auto tree = Box(
+                            Box().width(50).height(100).setKey("a").onClick([&]() { ++aClick; }),
+                            Box().width(50).height(100).setKey("b").onClick([&]() { ++bClick; })
+                        )
+                        .flexDirection(FlexDirection::Row)
+                        .width(100).height(100)
+                        .onClick([&]() { ++parentClick; });
+
+        auto fiber = reconciler.mount(std::move(tree));
+        auto* root = reconciler.renderRoot();
+        root->calculateLayout(100, 100);
+
+        // 3px total motion: below the drag threshold, so the release still
+        // clicks — but only on the ancestor holding BOTH press and release.
+        events.handleMouseDown(root, 48, 50, MouseButton::Left);  // box A
+        events.handleMouseMove(root, 51, 50);                     // crosses into B
+        events.handleMouseUp(root, 51, 50, MouseButton::Left);    // box B
+        CHECK(aClick == 0);
+        CHECK(bClick == 0);
+        CHECK(parentClick == 1);
+    }
+}
+
+TEST_CASE("Capture - release outside the window fires onMouseUp on the captor, no click") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int ups = 0, clicks = 0;
+    float upX = 0, upY = 0;
+    MouseButton upButton = MouseButton::Middle;
+    auto tree = Box().width(100).height(100)
+                    .onMouseUp([&](float x, float y, MouseButton b) {
+                        ++ups;
+                        upX = x;
+                        upY = y;
+                        upButton = b;
+                    })
+                    .onClick([&]() { ++clicks; });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseDown(root, 50, 50, MouseButton::Left);
+    CHECK(events.hasCapture());
+
+    // Release lands outside the tree: hitTest misses, releaseTarget is null —
+    // the captor still gets onMouseUp with the off-window coords, but no click.
+    events.handleMouseUp(root, 150, 150, MouseButton::Left);
+    CHECK(ups == 1);
+    CHECK(upX == 150);
+    CHECK(upY == 150);
+    CHECK(upButton == MouseButton::Left);
+    CHECK(clicks == 0);
+    CHECK(!events.hasCapture());
+}
+
+TEST_CASE("Drag threshold - a small move stays a click; past the threshold it becomes a drag") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int clicks = 0, drags = 0;
+    DragEvent last{};
+    auto tree = Box().width(100).height(100)
+                    .onClick([&]() { ++clicks; })
+                    .onDrag([&](const DragEvent& e) {
+                        ++drags;
+                        last = e;
+                    });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    SUBCASE("2px wiggle: click, no drag") {
+        events.handleMouseDown(root, 50, 50, MouseButton::Left);
+        events.handleMouseMove(root, 52, 52);
+        events.handleMouseUp(root, 52, 52, MouseButton::Left);
+        CHECK(clicks == 1);
+        CHECK(drags == 0);
+    }
+
+    SUBCASE("5px move: drag stream with per-move deltas, no click") {
+        events.handleMouseDown(root, 50, 50, MouseButton::Left);
+        events.handleMouseMove(root, 55, 50);
+        CHECK(drags == 1);
+        CHECK(last.startX == 50);
+        CHECK(last.startY == 50);
+        CHECK(last.dx == 5);
+        CHECK(last.dy == 0);
+        CHECK(last.x == 55);
+        CHECK(last.button == MouseButton::Left);
+
+        events.handleMouseMove(root, 57, 53);  // delta from the PREVIOUS move
+        CHECK(drags == 2);
+        CHECK(last.dx == 2);
+        CHECK(last.dy == 3);
+
+        events.handleMouseUp(root, 57, 53, MouseButton::Left);
+        CHECK(clicks == 0);
+    }
+}
+
+TEST_CASE("Capture - survives a same-shape reconcile that preserves the captor") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int drags = 0;
+    float lastDx = 0;
+    auto buildTree = [&](uint32_t bg) -> VNode {
+        return Box(
+                       Box().width(50).height(50).setKey("target").backgroundColor(bg)
+                           .onDrag([&](const DragEvent& e) {
+                               ++drags;
+                               lastDx = e.dx;
+                           })
+                   )
+                   .width(100).height(100);
+    };
+
+    auto fiber = reconciler.mount(buildTree(0xFF0000FF));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    Node* target = root->children[0].get();
+
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
+    events.handleMouseMove(root, 35, 25);
+    CHECK(drags == 1);
+
+    // Same type + key, changed prop: the reconciler updates the node in place,
+    // so the captor (and its liveness token) survive.
+    reconciler.reconcile(fiber.get(), buildTree(0x00FF00FF));
+    CHECK(root->children[0].get() == target);
+
+    events.handleMouseMove(root, 45, 25);
+    CHECK(drags == 2);
+    CHECK(lastDx == 10);
+    CHECK(events.hasCapture());
+}
+
+TEST_CASE("Capture - a captor freed by reconcile ends capture silently, not with a UAF") {
+    // The load-bearing seam: a press captures a node, a reconcile frees it with
+    // NO node-removed callback wired (the raw-Reconciler escape path), and the
+    // next move/release must detect the dead liveness token — zero deref of the
+    // freed captor, nothing fires, capture reported gone. Pre-fix this is a real
+    // access violation, not a test failure.
+    Reconciler reconciler;
+    EventHandler events;
+
+    int drags = 0, ups = 0, clicks = 0;
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("victim")
+                            .onDrag([&](const DragEvent&) { ++drags; })
+                            .onMouseUp([&](float, float, MouseButton) { ++ups; })
+                            .onClick([&]() { ++clicks; })
+                    )
+                    .width(100).height(100);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    Node* victim = root->children[0].get();
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);
+    CHECK(events.hasCapture());
+    std::shared_ptr<bool> victimAlive = victim->alive;
+    CHECK(*victimAlive == true);
+
+    // Reconcile the captor away (different primitive type forces removal and
+    // frees the node). Its liveness token flips — the death point.
+    auto next = Box(
+                        Text("x").width(50).height(50).setKey("victim")
+                    )
+                    .width(100).height(100);
+    reconciler.reconcile(fiber.get(), std::move(next));
+    CHECK(*victimAlive == false);
+
+    // Move + release re-derive the captor via the token: capture ends silently.
+    CHECK_NOTHROW(events.handleMouseMove(reconciler.renderRoot(), 40, 40));
+    CHECK(!events.hasCapture());
+    CHECK_NOTHROW(events.handleMouseUp(reconciler.renderRoot(), 40, 40, MouseButton::Left));
+    CHECK(drags == 0);
+    CHECK(ups == 0);
+    CHECK(clicks == 0);
+    CHECK(!events.hasCapture());
+}
+
+TEST_CASE("Double click - chained by time, radius, and button; broken by delay, distance, drag") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int clicks = 0, doubles = 0;
+    auto tree = Box().width(100).height(100)
+                    .onClick([&]() { ++clicks; })
+                    .onDoubleClick([&]() { ++doubles; });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    auto click = [&](float x, float y) {
+        events.handleMouseDown(root, x, y, MouseButton::Left);
+        events.handleMouseUp(root, x, y, MouseButton::Left);
+    };
+
+    SUBCASE("two clicks 100ms apart in place: click twice, double once") {
+        click(50, 50);
+        events.advanceClock(0.1f);
+        click(50, 50);
+        CHECK(clicks == 2);
+        CHECK(doubles == 1);
+    }
+
+    SUBCASE("600ms apart: no double") {
+        click(50, 50);
+        events.advanceClock(0.6f);
+        click(50, 50);
+        CHECK(clicks == 2);
+        CHECK(doubles == 0);
+    }
+
+    SUBCASE("10px apart: no double") {
+        click(50, 50);
+        events.advanceClock(0.1f);
+        click(60, 50);
+        CHECK(clicks == 2);
+        CHECK(doubles == 0);
+    }
+
+    SUBCASE("a drag between clicks resets the chain") {
+        click(50, 50);  // click 1
+        events.advanceClock(0.05f);
+        // This press would be the double (count 2) — but it drags, so the chain
+        // resets and the release does not click.
+        events.handleMouseDown(root, 50, 50, MouseButton::Left);
+        events.handleMouseMove(root, 60, 50);
+        events.handleMouseUp(root, 60, 50, MouseButton::Left);
+        events.advanceClock(0.05f);
+        // Fresh chain after the drag: these two are counts 1 and 2 — exactly one
+        // double. Without the reset they would be counts 3 and 4 — none.
+        click(50, 50);
+        events.advanceClock(0.05f);
+        click(50, 50);
+        CHECK(doubles == 1);
+        CHECK(clicks == 3);  // the drag release clicked nothing
+    }
+}
+
+TEST_CASE("Capture - hover is frozen during the gesture and resyncs on release") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int aEnter = 0, aLeave = 0, bEnter = 0;
+    auto tree = Box(
+                        Box().width(50).height(100).setKey("a").onHover([&](bool h) {
+                            h ? ++aEnter : ++aLeave;
+                        }),
+                        Box().width(50).height(100).setKey("b").onHover([&](bool h) {
+                            if (h) ++bEnter;
+                        })
+                    )
+                    .flexDirection(FlexDirection::Row)
+                    .width(100).height(100);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+    Node* a = root->children[0].get();
+    Node* b = root->children[1].get();
+
+    events.handleMouseMove(root, 25, 50);
+    CHECK(aEnter == 1);
+    CHECK(events.getHoveredNode() == a);
+
+    events.handleMouseDown(root, 25, 50, MouseButton::Left);
+    events.handleMouseMove(root, 75, 50);  // over B, but captured: hover frozen
+    CHECK(aLeave == 0);
+    CHECK(bEnter == 0);
+    CHECK(events.getHoveredNode() == a);
+
+    events.handleMouseUp(root, 75, 50, MouseButton::Left);  // release: resync
+    CHECK(aLeave == 1);
+    CHECK(bEnter == 1);
+    CHECK(events.getHoveredNode() == b);
+}
+
+TEST_CASE("Drag - bubbles from a handler-less child to its parent") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int parentDrags = 0;
+    DragEvent last{};
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("child")
+                    )
+                    .width(100).height(100)
+                    .onDrag([&](const DragEvent& e) {
+                        ++parentDrags;
+                        last = e;
+                    });
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseDown(root, 25, 25, MouseButton::Left);  // captures the child
+    events.handleMouseMove(root, 40, 25);
+    CHECK(parentDrags == 1);  // child has no onDrag; the event bubbled
+    CHECK(last.startX == 25);
+    CHECK(last.startY == 25);
+    CHECK(last.dx == 15);
+}
+
+TEST_CASE("Cursor - explicit prop, Input default, and captor override during capture") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("plain"),
+                        Box().width(50).height(50).setKey("ew").cursor(CursorShape::ResizeEW),
+                        Input().width(50).height(50).setKey("in")
+                    )
+                    .flexDirection(FlexDirection::Row)
+                    .width(200).height(50);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 50);
+
+    // Nothing hovered: fallback.
+    CHECK(events.getCursor() == CursorShape::Arrow);
+
+    // Hovered node (and its chain) carry no cursor prop: fallback.
+    events.handleMouseMove(root, 25, 25);
+    CHECK(events.getCursor() == CursorShape::Arrow);
+
+    // Explicit prop wins.
+    events.handleMouseMove(root, 75, 25);
+    CHECK(events.getCursor() == CursorShape::ResizeEW);
+
+    // An Input without an explicit prop defaults to IBeam.
+    events.handleMouseMove(root, 125, 25);
+    CHECK(events.getCursor() == CursorShape::IBeam);
+
+    // During capture the captor's chain decides, wherever the pointer is.
+    events.handleMouseMove(root, 75, 25);
+    events.handleMouseDown(root, 75, 25, MouseButton::Left);
+    events.handleMouseMove(root, 125, 25);  // over the Input, but "ew" captured
+    CHECK(events.getCursor() == CursorShape::ResizeEW);
+
+    // Release resyncs hover to the Input: its default shows again.
+    events.handleMouseUp(root, 125, 25, MouseButton::Left);
+    CHECK(events.getCursor() == CursorShape::IBeam);
+}

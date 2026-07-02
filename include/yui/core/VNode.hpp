@@ -221,8 +221,28 @@ public:
     Derived& onMiddleClick(std::function<void()> fn) {
         return event([&](EventProps& p) { p.onMiddleClick = std::move(fn); });
     }
-    Derived& onMouseDown(std::function<void()> fn) {
+    // Second chained click (a double-click). The plain onClick also fires on
+    // both presses of the chain.
+    Derived& onDoubleClick(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onDoubleClick = std::move(fn); });
+    }
+    // (x, y, button): fires on PRESS, for any button, at absolute window coords.
+    Derived& onMouseDown(std::function<void(float, float, MouseButton)> fn) {
         return event([&](EventProps& p) { p.onMouseDown = std::move(fn); });
+    }
+    // (x, y, button): fires on RELEASE — delivered to the press target (the
+    // implicit captor) even when the pointer has moved off it or off-window.
+    Derived& onMouseUp(std::function<void(float, float, MouseButton)> fn) {
+        return event([&](EventProps& p) { p.onMouseUp = std::move(fn); });
+    }
+    // (x, y): pointer moved, absolute window coords. Routed to the captor while
+    // a press is held, the hovered node otherwise.
+    Derived& onMouseMove(std::function<void(float, float)> fn) {
+        return event([&](EventProps& p) { p.onMouseMove = std::move(fn); });
+    }
+    // Drag stream once a press moves past the drag threshold (see DragEvent).
+    Derived& onDrag(std::function<void(const DragEvent&)> fn) {
+        return event([&](EventProps& p) { p.onDrag = std::move(fn); });
     }
     Derived& onHover(std::function<void(bool)> fn) {
         return event([&](EventProps& p) { p.onHover = std::move(fn); });
@@ -238,6 +258,10 @@ public:
     }
     Derived& onKeyUp(std::function<void(int, uint16_t)> fn) {
         return event([&](EventProps& p) { p.onKeyUp = std::move(fn); });
+    }
+    // Pointer shape shown while this node is hovered (or holds the capture).
+    Derived& cursor(CursorShape v) {
+        return event([&](EventProps& p) { p.cursor = v; });
     }
 
     // --- Conversion seam: builders compose into the VNode/Child trees ---

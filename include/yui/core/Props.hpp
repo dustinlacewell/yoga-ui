@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Event.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -68,17 +70,28 @@ struct LayoutProps {
     bool operator==(const LayoutProps&) const = default;
 };
 
+// Mouse cursor shape a node can request via EventProps::cursor. Resolved by
+// Host::getCursor() (pull query): the platform polls it each frame and maps it
+// to its native cursor.
+enum class CursorShape { Arrow, IBeam, Pointer, Crosshair, ResizeEW, ResizeNS, ResizeAll };
+
 // Event handlers (shared by all primitives)
 struct EventProps {
     std::function<void()> onClick;
     std::function<void()> onRightClick;
     std::function<void()> onMiddleClick;
-    std::function<void()> onMouseDown;                        // fires on PRESS (not release)
+    std::function<void()> onDoubleClick;                     // second chained click (see Event::clickCount)
+    std::function<void(float, float, MouseButton)> onMouseDown;  // (x, y, button) on PRESS, any button
+    std::function<void(float, float, MouseButton)> onMouseUp;    // (x, y, button) on RELEASE — fires on the
+                                                                 // captor even off-node / off-window
+    std::function<void(float, float)> onMouseMove;           // (x, y) — the captor during a press, else hover
+    std::function<void(const DragEvent&)> onDrag;            // captured move past the drag threshold
     std::function<void(bool)> onHover;
     std::function<void(bool)> onFocus;
     std::function<void(float, float)> onScroll;              // (deltaX, deltaY)
     std::function<void(int, uint16_t, bool)> onKeyDown;      // (keyCode, modifiers, repeat)
     std::function<void(int, uint16_t)> onKeyUp;              // (keyCode, modifiers)
+    std::optional<CursorShape> cursor;                       // pointer shape while hovered/captured
 };
 
 // --- State-based style overrides ---

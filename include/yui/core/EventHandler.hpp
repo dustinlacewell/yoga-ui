@@ -43,6 +43,22 @@ public:
     // reconciliation is reported as no-hover rather than a dangling pointer.
     Node* getHoveredNode() const { return liveHoveredNode(); }
 
+    // True while a live press is being tracked — i.e. the press target holds
+    // implicit pointer capture (validated against its liveness token first).
+    bool hasCapture() const { return livePressedNode() != nullptr; }
+
+    // Resolve the cursor shape for the current pointer state: walk captor→root
+    // during capture (the captor owns the pointer), else hovered→root. The first
+    // explicit EventProps::cursor wins, an Input in the chain defaults to IBeam,
+    // fallback Arrow. Pull query — the platform polls it each frame.
+    CursorShape getCursor() const;
+
+    // Advance the multi-click clock by dt SECONDS (the same dt Host::update
+    // feeds the animation walk). Presses chain into double-clicks against this
+    // accumulated clock, so click timing follows the host's frame clock and
+    // stays deterministic under tests — no wall clock.
+    void advanceClock(float dt) noexcept { clockMs_ += static_cast<double>(dt) * 1000.0; }
+
     // Get the focused input node (for text input routing). Validates the
     // liveness token first: if the focused InputNode was freed by a
     // reconciliation, this clears the stale pointer and returns nullptr so a
@@ -102,6 +118,16 @@ private:
     // bubbling and emits one diagnostic instead of overflowing the stack.
     bool dispatchEvent(Node* node, Event& event, int depth = 0);
 
+    // One captured mouse move: MouseMove to the captor's chain, then the drag
+    // threshold machine (see the definition for the UAF reasoning on holding
+    // `captor` across the two dispatches).
+    bool dispatchCapturedMove(Node* captor, float x, float y);
+
+    // Advance the multi-click machine at a press: a press within the interval /
+    // radius of the previous click (same button) extends the chain, anything
+    // else restarts clickCount_ at 1.
+    void updateClickChain(float x, float y, MouseButton button);
+
     // Fire hover callbacks
     void updateHover(Node* newHovered);
 
@@ -139,14 +165,22 @@ private:
         return focusedInput_;
     }
 
-    // Record the node that received the most recent mouse press, with its button,
-    // capturing the liveness token in lockstep (mirrors setFocusedInput). The
-    // MouseUp dispatch matches a click against this so a release with no matching
-    // press on the same node fires nothing.
-    void setPressedNode(Node* node, MouseButton button = MouseButton::Left) {
+    // Record the node that received the most recent mouse press, with its button
+    // and press coordinates, capturing the liveness token in lockstep (mirrors
+    // setFocusedInput). The MouseUp dispatch matches a click against this so a
+    // release with no matching press on the same node fires nothing. Sole writer
+    // of the drag anchor: a press re-anchors pressX_/pressY_ and rearms the
+    // threshold machine (dragging_ = false); clearing (release / node removal)
+    // disarms it. A second press while captured simply overwrites — re-targeting
+    // capture and re-anchoring the drag (the single-capture-slot policy).
+    void setPressedNode(Node* node, MouseButton button = MouseButton::Left, float x = 0,
+                        float y = 0) {
         pressedNode_ = node;
         pressedButton_ = button;
         pressedNodeAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+        pressX_ = lastX_ = x;
+        pressY_ = lastY_ = y;
+        dragging_ = false;
     }
 
     // Return pressedNode_ only if its node is still alive; otherwise clear the
@@ -231,11 +265,33 @@ private:
     mutable InputNode* focusedInput_ = nullptr;
     mutable std::weak_ptr<bool> focusedInputAlive_;
     // The node that received the last mouse press (+ its button), for click
-    // press/release matching. mutable: livePressedNode() lazily clears a stale
-    // press; pressedNodeAlive_ observes the node's liveness token without owning.
+    // press/release matching — AND the implicit pointer-capture slot: while set,
+    // mouse moves and the release route to this node regardless of what is under
+    // the pointer (see handleMouseMove/handleMouseUp). mutable: livePressedNode()
+    // lazily clears a stale press; pressedNodeAlive_ observes the node's liveness
+    // token without owning.
     mutable Node* pressedNode_ = nullptr;
     mutable std::weak_ptr<bool> pressedNodeAlive_;
     MouseButton pressedButton_ = MouseButton::Left;
+    // Drag threshold machine, anchored by setPressedNode (its sole writer for
+    // the anchor/reset lifecycle). pressX_/pressY_ anchor the press;
+    // lastX_/lastY_ track the previous captured-move position for per-move
+    // deltas; dragging_ latches in dispatchCapturedMove once the pointer leaves
+    // the kDragThresholdPx ring and suppresses the click on release.
+    float pressX_ = 0;
+    float pressY_ = 0;
+    float lastX_ = 0;
+    float lastY_ = 0;
+    bool dragging_ = false;
+    // Multi-click machine: the dt-accumulated clock (advanceClock) plus the last
+    // press's time/pos/button, chained into clickCount_ by updateClickChain. A
+    // drag resets clickCount_ to 0 so the next press starts a fresh chain.
+    double clockMs_ = 0;
+    double lastClickTimeMs_ = 0;
+    float lastClickX_ = 0;
+    float lastClickY_ = 0;
+    MouseButton lastClickButton_ = MouseButton::Left;
+    int clickCount_ = 0;
     // Visual-state latch: a hover/press/focus transition occurred since the
     // last consumeVisualStateChanged (see markVisualStateChanged).
     bool visualStateChanged_ = false;

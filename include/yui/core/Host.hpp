@@ -347,6 +347,11 @@ public:
         guardedVoid("Host::handleMouseLeave", [&] {
             if (!renderRoot_)
                 return;
+            // During a captured drag the pointer legitimately leaves the window;
+            // synthesizing an off-window move here would inject a spurious
+            // captured move. Capture ends at release, which resyncs hover itself.
+            if (eventHandler_.hasCapture())
+                return;
             eventHandler_.handleMouseMove(renderRoot_.get(), -1, -1);
         });
     }
@@ -386,6 +391,12 @@ public:
     }
 
     InputNode* getFocusedInput() const { return eventHandler_.getFocusedInput(); }
+
+    // The mouse cursor the platform should show right now: the captured node's
+    // chain wins during a drag, else the hovered chain; the first explicit
+    // .cursor() prop wins, an Input defaults to IBeam, fallback Arrow. Pull
+    // query — poll it after update() and map to the native cursor.
+    CursorShape getCursor() const { return eventHandler_.getCursor(); }
 
     bool hasClickHandler(float x, float y, MouseButton btn) {
         if (!renderRoot_)

@@ -1,11 +1,23 @@
 #include <yui/core/EventHandler.hpp>
 
+#include <yui/core/RenderDefaults.hpp>
+
+#include <algorithm>
+#include <cmath>
 #include <exception>
 #include <unordered_set>
 
 namespace yui {
 
+namespace rd = render_defaults;
+
 namespace {
+
+// Chebyshev (max-axis) distance between two points: the square "ring" both the
+// drag threshold and the multi-click radius are measured in.
+float chebyshev(float ax, float ay, float bx, float by) {
+    return std::max(std::fabs(ax - bx), std::fabs(ay - by));
+}
 
 // Is `ancestor` the same node as `node` or one of its ancestors? Used by click
 // press/release matching: a click fires on a handler node when the press leaf is
@@ -47,13 +59,20 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     // Update focus on click
     updateFocus(target);
 
-    // Remember the press target (+ button) so the matching release fires a click
-    // only on the node that ALSO received the press. Recorded even when target is
-    // null so a press on empty space can't leave a stale prior press to match a
-    // later release. A change of pressed node is a visual transition.
+    // Chain the multi-click counter before recording the press, so the events
+    // this press produces carry its position in the chain.
+    updateClickChain(x, y, button);
+
+    // Remember the press target (+ button + anchor) so the matching release fires
+    // a click only on the node that ALSO received the press. Recorded even when
+    // target is null so a press on empty space can't leave a stale prior press to
+    // match a later release. pressedNode_ doubles as the implicit pointer-capture
+    // slot (see handleMouseMove); a second press while captured overwrites it —
+    // re-targeting capture and re-anchoring the drag threshold. A change of
+    // pressed node is a visual transition.
     if (target != livePressedNode())
         markVisualStateChanged();
-    setPressedNode(target, button);
+    setPressedNode(target, button, x, y);
 
     if (!target)
         return false;
@@ -63,36 +82,65 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
     event.x = x;
     event.y = y;
     event.button = button;
+    event.clickCount = clickCount_;
 
     return dispatchEvent(target, event);
 }
 
 bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton button) noexcept {
-    Node* target = hitTest(root, x, y);
+    // The pointer may have moved off the press target: the hit result records
+    // where the release LANDED (event payload, click gate, hover resync) — it is
+    // never the dispatch target while a captor holds the pointer.
+    Node* releaseTarget = hitTest(root, x, y);
 
-    // The press this release must match (null if the pressed node was reconciled
-    // away or the button differs). Read once, then clear: a press pairs with at
-    // most one release, and a stale press must not match a later unrelated one.
-    // Clearing a recorded press is a visual transition (pressed -> released).
-    if (livePressedNode())
+    // The captor this release must go to (null if the pressed node was reconciled
+    // away — its liveness token died). Read once, then clear: a press pairs with
+    // at most one release, and a stale press must not match a later unrelated
+    // one. Clearing a recorded press is a visual transition (pressed -> released).
+    Node* captor = livePressedNode();
+    if (captor)
         markVisualStateChanged();
-    Node* pressed = (livePressedNode() && pressedButton_ == button) ? pressedNode_ : nullptr;
+    Node* pressed = (captor && pressedButton_ == button) ? captor : nullptr;
+    bool wasDragging = dragging_;
     setPressedNode(nullptr);
 
-    if (!target)
-        return false;
+    // Captured: the release goes to the captor regardless of where it landed
+    // (even off-window, releaseTarget null). Uncaptured: to the hit node, as a
+    // plain (orphan) release.
+    Node* dispatchTarget = captor ? captor : releaseTarget;
 
-    Event event;
-    event.type = Event::Type::MouseUp;
-    event.x = x;
-    event.y = y;
-    event.button = button;
-    event.pressedTarget = pressed;
+    bool consumed = false;
+    if (dispatchTarget) {
+        Event event;
+        event.type = Event::Type::MouseUp;
+        event.x = x;
+        event.y = y;
+        event.button = button;
+        // A gesture that became a drag ends with onMouseUp but no click:
+        // withhold the press target the click gate matches against.
+        event.pressedTarget = wasDragging ? nullptr : pressed;
+        event.releaseTarget = releaseTarget;
+        event.clickCount = clickCount_;
+        consumed = dispatchEvent(dispatchTarget, event);
+    }
 
-    return dispatchEvent(target, event);
+    // Capture froze hover for the whole gesture; resync it to whatever is under
+    // the pointer now that capture has ended.
+    if (captor)
+        updateHover(releaseTarget);
+
+    return consumed;
 }
 
 bool EventHandler::handleMouseMove(Node* root, float x, float y) noexcept {
+    // While a press is held, the press target has implicit pointer capture:
+    // moves route to it regardless of what is under the pointer, and hover is
+    // frozen until the release resyncs it (handleMouseUp). The captor is
+    // re-derived from the liveness token on EVERY move — a captor freed by a
+    // reconcile between events ends capture silently, with zero deref.
+    if (Node* captor = livePressedNode())
+        return dispatchCapturedMove(captor, x, y);
+
     Node* target = hitTest(root, x, y);
 
     // Update hover state
@@ -107,6 +155,53 @@ bool EventHandler::handleMouseMove(Node* root, float x, float y) noexcept {
     event.y = y;
 
     return dispatchEvent(target, event);
+}
+
+// UAF safety: `captor` is held raw across the two dispatches below, which is
+// safe by deferral — a handler that calls host.update() mid-dispatch is forced
+// to UpdateStatus::Deferred (Host::inDispatch_), so no reconcile can free the
+// captor while this frame of the walk is live; the deferred reconcile drains
+// only after the top-level handle*() unwinds, and the NEXT move re-derives the
+// captor from its liveness token.
+bool EventHandler::dispatchCapturedMove(Node* captor, float x, float y) {
+    Event event;
+    event.type = Event::Type::MouseMove;
+    event.x = x;
+    event.y = y;
+    bool consumed = dispatchEvent(captor, event);
+
+    // Threshold machine: past kDragThresholdPx the press becomes a drag — the
+    // release will not click, and the multi-click chain restarts from scratch.
+    if (!dragging_ && chebyshev(x, y, pressX_, pressY_) >= rd::kDragThresholdPx) {
+        dragging_ = true;
+        clickCount_ = 0;
+    }
+    if (dragging_) {
+        Event drag;
+        drag.type = Event::Type::Drag;
+        drag.x = x;
+        drag.y = y;
+        drag.button = pressedButton_;
+        drag.dragStartX = pressX_;
+        drag.dragStartY = pressY_;
+        drag.dragDeltaX = x - lastX_;
+        drag.dragDeltaY = y - lastY_;
+        consumed = dispatchEvent(captor, drag) || consumed;
+    }
+    lastX_ = x;
+    lastY_ = y;
+    return consumed;
+}
+
+void EventHandler::updateClickChain(float x, float y, MouseButton button) {
+    bool chained = (clockMs_ - lastClickTimeMs_) <= rd::kMultiClickIntervalMs &&
+                   chebyshev(x, y, lastClickX_, lastClickY_) <= rd::kMultiClickRadiusPx &&
+                   button == lastClickButton_;
+    clickCount_ = chained ? clickCount_ + 1 : 1;
+    lastClickTimeMs_ = clockMs_;
+    lastClickX_ = x;
+    lastClickY_ = y;
+    lastClickButton_ = button;
 }
 
 bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, float deltaY) noexcept {
@@ -274,7 +369,40 @@ const std::function<void(bool)>* hoverHandlerFor(Node* node) {
     return nullptr;
 }
 
+// The explicit cursor prop of a node, dispatched on its primitive type (mirrors
+// hoverHandlerFor). nullopt when the node requests no particular shape.
+std::optional<CursorShape> cursorFor(Node* node) {
+    switch (node->type()) {
+    case PrimitiveType::Box:    return static_cast<BoxNode*>(node)->props.cursor;
+    case PrimitiveType::Text:   return static_cast<TextNode*>(node)->props.cursor;
+    case PrimitiveType::Input:  return static_cast<InputNode*>(node)->props.cursor;
+    case PrimitiveType::Scroll: return static_cast<ScrollNode*>(node)->props.cursor;
+    case PrimitiveType::Canvas: return static_cast<CanvasNode*>(node)->props.cursor;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+CursorShape EventHandler::getCursor() const {
+    // During capture the captor owns the pointer, so its chain decides the shape
+    // even while the pointer is over other nodes (hover is frozen anyway).
+    Node* start = livePressedNode();
+    if (!start)
+        start = liveHoveredNode();
+
+    // First explicit cursor prop wins walking toward the root; an Input without
+    // one contributes its editing affordance. Depth-bounded like the other
+    // ancestor walks (see isAncestorOrSelf).
+    int depth = 0;
+    for (Node* n = start; n && depth < maxTreeDepth_; n = n->parent, ++depth) {
+        if (auto shape = cursorFor(n))
+            return *shape;
+        if (n->type() == PrimitiveType::Input)
+            return CursorShape::IBeam;
+    }
+    return CursorShape::Arrow;
+}
 
 bool EventHandler::hasClickHandler(Node* root, float x, float y, MouseButton button) {
     Node* target = hitTest(root, x, y);
@@ -307,7 +435,11 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     std::function<void()>* onClick = nullptr;
     std::function<void()>* onRightClick = nullptr;
     std::function<void()>* onMiddleClick = nullptr;
-    std::function<void()>* onMouseDown = nullptr;
+    std::function<void()>* onDoubleClick = nullptr;
+    std::function<void(float, float, MouseButton)>* onMouseDown = nullptr;
+    std::function<void(float, float, MouseButton)>* onMouseUp = nullptr;
+    std::function<void(float, float)>* onMouseMove = nullptr;
+    std::function<void(const DragEvent&)>* onDrag = nullptr;
     std::function<void(float, float)>* onScroll = nullptr;
     std::function<void(int, uint16_t, bool)>* onKeyDown = nullptr;
     std::function<void(int, uint16_t)>* onKeyUp = nullptr;
@@ -318,7 +450,11 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
         onClick = n->props.onClick ? &n->props.onClick : nullptr; \
         onRightClick = n->props.onRightClick ? &n->props.onRightClick : nullptr; \
         onMiddleClick = n->props.onMiddleClick ? &n->props.onMiddleClick : nullptr; \
+        onDoubleClick = n->props.onDoubleClick ? &n->props.onDoubleClick : nullptr; \
         onMouseDown = n->props.onMouseDown ? &n->props.onMouseDown : nullptr; \
+        onMouseUp = n->props.onMouseUp ? &n->props.onMouseUp : nullptr; \
+        onMouseMove = n->props.onMouseMove ? &n->props.onMouseMove : nullptr; \
+        onDrag = n->props.onDrag ? &n->props.onDrag : nullptr; \
         onScroll = n->props.onScroll ? &n->props.onScroll : nullptr; \
         onKeyDown = n->props.onKeyDown ? &n->props.onKeyDown : nullptr; \
         onKeyUp = n->props.onKeyUp ? &n->props.onKeyUp : nullptr; \
@@ -340,22 +476,46 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
     // The user callback is isolated; it consumes the event only if it ran to
     // completion. A throwing handler does NOT consume, so the event bubbles on to
     // ancestor handlers — a throw never aborts the rest of the dispatch walk.
-    if (event.type == Event::Type::MouseDown) {
-        if (event.button == MouseButton::Left && onMouseDown && *onMouseDown) {
-            if (fireCallback("onMouseDown", [&] { (*onMouseDown)(); }, report))
-                event.consume();
-        }
+    if (event.type == Event::Type::MouseDown && onMouseDown && *onMouseDown) {
+        if (fireCallback("onMouseDown",
+                         [&] { (*onMouseDown)(event.x, event.y, event.button); }, report))
+            event.consume();
+    }
+
+    if (event.type == Event::Type::MouseMove && onMouseMove && *onMouseMove) {
+        if (fireCallback("onMouseMove", [&] { (*onMouseMove)(event.x, event.y); }, report))
+            event.consume();
+    }
+
+    if (event.type == Event::Type::Drag && onDrag && *onDrag) {
+        DragEvent drag{event.x,          event.y,          event.dragDeltaX, event.dragDeltaY,
+                       event.dragStartX, event.dragStartY, event.button};
+        if (fireCallback("onDrag", [&] { (*onDrag)(drag); }, report))
+            event.consume();
+    }
+
+    // onMouseUp fires on every release dispatch — the captor receives it even
+    // when the release landed elsewhere (or outside the window entirely); only
+    // the click below is gated on where press AND release landed.
+    if (event.type == Event::Type::MouseUp && onMouseUp && *onMouseUp) {
+        if (fireCallback("onMouseUp",
+                         [&] { (*onMouseUp)(event.x, event.y, event.button); }, report))
+            event.consume();
     }
 
     // Handle click events (mouseUp triggers click). A click fires on this
-    // handler-bearing node only if the press leaf (event.pressedTarget) is within
-    // this node's subtree — i.e. press and release both bubble through this node.
-    // So press-on-child + handler-on-parent still clicks, an in-node click works,
-    // but a release whose press landed elsewhere (an orphan release, e.g. from
-    // opening an overlay under the cursor) fires nothing.
+    // handler-bearing node only if BOTH the press leaf (event.pressedTarget) and
+    // the release leaf (event.releaseTarget) are within this node's subtree —
+    // press and release both bubble through it. So press-on-child +
+    // handler-on-parent still clicks, and a press/release split across two
+    // children still clicks their shared ancestor, but a release whose press
+    // landed elsewhere (an orphan release, e.g. from opening an overlay under
+    // the cursor) — or a press whose release landed elsewhere — fires nothing.
     bool pressMatches = event.pressedTarget
                         && isAncestorOrSelf(node, event.pressedTarget, maxTreeDepth_);
-    if (event.type == Event::Type::MouseUp && pressMatches) {
+    bool releaseMatches = event.releaseTarget
+                          && isAncestorOrSelf(node, event.releaseTarget, maxTreeDepth_);
+    if (event.type == Event::Type::MouseUp && pressMatches && releaseMatches) {
         if (event.button == MouseButton::Left && onClick && *onClick) {
             if (fireCallback("onClick", [&] { (*onClick)(); }, report))
                 event.consume();
@@ -364,6 +524,13 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
                 event.consume();
         } else if (event.button == MouseButton::Middle && onMiddleClick && *onMiddleClick) {
             if (fireCallback("onMiddleClick", [&] { (*onMiddleClick)(); }, report))
+                event.consume();
+        }
+        // The second chained click also fires onDoubleClick (onClick above fires
+        // on both presses of the chain; counts of 3+ ride in event.clickCount).
+        if (event.button == MouseButton::Left && event.clickCount == 2 && onDoubleClick &&
+            *onDoubleClick) {
+            if (fireCallback("onDoubleClick", [&] { (*onDoubleClick)(); }, report))
                 event.consume();
         }
     }

@@ -80,6 +80,10 @@ UpdateResult Host::update(float width, float height, float dt) noexcept {
     } inUpdateGuard(inUpdate_);
 
     try {
+        // The multi-click clock advances with the same dt the animations consume,
+        // so double-click timing follows the host's frame clock — no wall clock.
+        eventHandler_.advanceClock(dt);
+
         // Advance animations every frame. `anim.needsRepaint` reports what this
         // frame's advance visibly changed; `animating` alone does not imply a
         // repaint (a blinking caret animates every frame but changes pixels only
