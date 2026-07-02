@@ -303,6 +303,29 @@ void Node::syncLayoutFromYoga() {
     for (auto& child : children) {
         child->syncLayoutFromYoga();
     }
+
+    // Subtree AABB, folded bottom-up (children just synced theirs above): own
+    // border box unioned with each child's subtree bounds, shifted from the
+    // child's parent-relative space into this node's. Hit testing prunes by
+    // this box so unclipped overflowing children stay clickable.
+    layout.subtreeLeft = layout.left;
+    layout.subtreeTop = layout.top;
+    layout.subtreeRight = layout.left + layout.width;
+    layout.subtreeBottom = layout.top + layout.height;
+
+    // A Scroll CLIPS its content: overflow is invisible, so it must not widen
+    // the hit-test prune of the scroll or any ancestor. (Scroll children also
+    // lay out in a detached, scroll-offset coordinate space — their bounds are
+    // not commensurable with this node's parent space anyway.)
+    if (type() == PrimitiveType::Scroll)
+        return;
+
+    for (auto& child : children) {
+        layout.subtreeLeft = std::min(layout.subtreeLeft, layout.left + child->layout.subtreeLeft);
+        layout.subtreeTop = std::min(layout.subtreeTop, layout.top + child->layout.subtreeTop);
+        layout.subtreeRight = std::max(layout.subtreeRight, layout.left + child->layout.subtreeRight);
+        layout.subtreeBottom = std::max(layout.subtreeBottom, layout.top + child->layout.subtreeBottom);
+    }
 }
 
 static void layoutScrollContent(Node* node);

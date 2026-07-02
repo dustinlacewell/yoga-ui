@@ -177,13 +177,18 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
         return nullptr;
     }
 
-    float nodeX = offsetX + node->layout.left;
-    float nodeY = offsetY + node->layout.top;
-
-    // Check if point is inside this node
-    if (!containsPoint(node, x, y, offsetX, offsetY)) {
+    // Prune descent by the subtree AABB, not the node's own rect: children draw
+    // unclipped, so one may overflow this node's rect and must stay hittable.
+    // The node ITSELF is still only hit by its own rect (the fall-through below).
+    const LayoutResult& l = node->layout;
+    if (x < offsetX + l.subtreeLeft || x >= offsetX + l.subtreeRight || y < offsetY + l.subtreeTop ||
+        y >= offsetY + l.subtreeBottom) {
         return nullptr;
     }
+
+    float nodeX = offsetX + l.left;
+    float nodeY = offsetY + l.top;
+    bool inOwnRect = containsPoint(node, x, y, offsetX, offsetY);
 
     // Scroll content is clipped to the PADDED viewport (border box minus the
     // scroll's own insets), so a point in the padding band hits the Scroll
@@ -192,8 +197,14 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
     float childOffsetX = nodeX;
     float childOffsetY = nodeY;
     if (node->type() == PrimitiveType::Scroll) {
+        // A Scroll clips, so the subtree-bounds relaxation does NOT apply to it:
+        // nothing outside its own rect is visible or hittable. Its subtree
+        // bounds ARE its own rect (syncLayoutFromYoga excludes scroll content),
+        // so the prune above already enforces this; the explicit gate keeps the
+        // clipping contract local rather than resting on the sync invariant.
+        if (!inOwnRect)
+            return nullptr;
         auto* scrollNode = static_cast<ScrollNode*>(node);
-        const LayoutResult& l = node->layout;
         bool inViewport = x >= nodeX + l.insetLeft && x < nodeX + l.width - l.insetRight && y >= nodeY + l.insetTop &&
                           y < nodeY + l.height - l.insetBottom;
         if (!inViewport)
@@ -202,15 +213,19 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
         childOffsetY += l.insetTop - scrollNode->scrollOffsetY;
     }
 
-    // Check children in reverse order (front to back)
+    // Check children in reverse order (front to back): the last-drawn child that
+    // contains the point wins, exactly as before — overflow changes which points
+    // reach a child, never the priority among children that both contain a point.
     for (auto it = node->children.rbegin(); it != node->children.rend(); ++it) {
         Node* hit = hitTest(it->get(), x, y, childOffsetX, childOffsetY, depth + 1);
         if (hit)
             return hit;
     }
 
-    // No child hit, return this node
-    return node;
+    // No child hit: the node is hit only when the point is inside its OWN rect.
+    // A point that reached here through descendant overflow alone misses this
+    // node and falls back to whatever is behind it.
+    return inOwnRect ? node : nullptr;
 }
 
 bool EventHandler::containsPoint(Node* node, float x, float y, float offsetX, float offsetY) {

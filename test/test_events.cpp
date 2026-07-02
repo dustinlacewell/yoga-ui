@@ -1415,3 +1415,182 @@ TEST_CASE("Exception - Host::handleMouseUp noexcept backstop routes a throwing o
     CHECK_NOTHROW(host.handleMouseUp(50, 50, MouseButton::Left));
     CHECK(errorCount == 1);
 }
+
+// --- Hit testing with overflowing children (subtree-bounds prune) ---
+//
+// Children draw unclipped, so a child may extend beyond its parent's rect.
+// hitTest prunes descent by the subtree AABB and hits a node only by its own
+// rect: the overflowing part of a child is clickable, while a point that is
+// inside a subtree's bounds but on no actual node falls through to what is
+// behind. At HEAD (d13575f) the own-rect gate pruned descent, so the
+// overflowing part painted but ate no clicks.
+
+TEST_CASE("Overflowing child is clickable outside its parent's rect") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    bool childClicked = false;
+    auto tree = Box(
+                        Box(
+                            Box().width(50)
+                                 .height(50)
+                                 .positionType(PositionType::Absolute)
+                                 .positionLeft(80)
+                                 .positionTop(80)
+                                 .setKey("overflow")
+                                 .onClick([&]() { childClicked = true; })
+                        )
+                            .width(100)
+                            .height(100)
+                            .setKey("parent")
+                    )
+                    .width(200)
+                    .height(200);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 200);
+
+    Node* parent = root->children[0].get();
+    Node* child = parent->children[0].get();
+
+    // (120,120) is inside the child (80..130) but OUTSIDE the parent (0..100).
+    // At HEAD the own-rect gate on the parent dropped this point to the root.
+    events.handleMouseMove(root, 120, 120);
+    CHECK(events.getHoveredNode() == child);
+
+    events.handleMouseDown(root, 120, 120, MouseButton::Left);
+    events.handleMouseUp(root, 120, 120, MouseButton::Left);
+    CHECK(childClicked);
+
+    // Inside the parent-child overlap the hit is unchanged.
+    events.handleMouseMove(root, 90, 90);
+    CHECK(events.getHoveredNode() == child);
+
+    // Inside the parent's subtree bounds but on NO node: falls through to root.
+    events.handleMouseMove(root, 120, 20);
+    CHECK(events.getHoveredNode() == root);
+}
+
+TEST_CASE("Own-rect hits and sibling z-order are unchanged by subtree bounds") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box(
+                        Box().width(60)
+                             .height(60)
+                             .positionType(PositionType::Absolute)
+                             .positionLeft(0)
+                             .positionTop(0)
+                             .setKey("under"),
+                        Box().width(60)
+                             .height(60)
+                             .positionType(PositionType::Absolute)
+                             .positionLeft(30)
+                             .positionTop(0)
+                             .setKey("over")
+                    )
+                    .width(200)
+                    .height(100);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 100);
+
+    Node* under = root->children[0].get();
+    Node* over = root->children[1].get();
+
+    // Overlap region: the later (front-most, last-drawn) sibling wins — same
+    // winner as HEAD.
+    events.handleMouseMove(root, 40, 30);
+    CHECK(events.getHoveredNode() == over);
+
+    // Only the earlier sibling contains the point.
+    events.handleMouseMove(root, 10, 30);
+    CHECK(events.getHoveredNode() == under);
+
+    // Inside the parent but on no child: the parent itself, as at HEAD.
+    events.handleMouseMove(root, 150, 80);
+    CHECK(events.getHoveredNode() == root);
+}
+
+TEST_CASE("Nested overflow: click in the outermost overflow reaches the deepest node") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    auto tree = Box(
+                        Box(
+                            Box(
+                                Box().width(50)
+                                     .height(50)
+                                     .positionType(PositionType::Absolute)
+                                     .positionLeft(40)
+                                     .positionTop(40)
+                                     .setKey("c")
+                            )
+                                .width(50)
+                                .height(50)
+                                .positionType(PositionType::Absolute)
+                                .positionLeft(40)
+                                .positionTop(40)
+                                .setKey("p")
+                        )
+                            .width(50)
+                            .height(50)
+                            .setKey("g")
+                    )
+                    .width(300)
+                    .height(300);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(300, 300);
+
+    Node* g = root->children[0].get();
+    Node* p = g->children[0].get();
+    Node* c = p->children[0].get();
+
+    // c spans (80,80)-(130,130) absolutely: outside p (40..90) and g (0..50).
+    // The subtree-bounds prune admits the point at every level; c is the only
+    // node whose own rect contains it.
+    events.handleMouseMove(root, 120, 120);
+    CHECK(events.getHoveredNode() == c);
+}
+
+TEST_CASE("Scroll stays strict: clipped overflow below the viewport is not hittable") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    bool contentClicked = false;
+    auto tree = Box(
+                        Scroll(
+                            Box().height(300).setKey("content").onClick([&]() { contentClicked = true; })
+                        )
+                            .width(100)
+                            .height(100)
+                            .setKey("scroll")
+                    )
+                    .width(100)
+                    .height(200);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 200);
+
+    Node* scroll = root->children[0].get();
+    Node* content = scroll->children[0].get();
+
+    // Inside the viewport: content is hit as always.
+    events.handleMouseMove(root, 50, 50);
+    CHECK(events.getHoveredNode() == content);
+
+    // Below the viewport, where content y=150 would paint if it were NOT
+    // clipped: the Scroll clips, so the subtree-bounds relaxation must not
+    // leak the point into scrolled content — the root behind is hit instead.
+    events.handleMouseMove(root, 50, 150);
+    CHECK(events.getHoveredNode() == root);
+
+    events.handleMouseDown(root, 50, 150, MouseButton::Left);
+    events.handleMouseUp(root, 50, 150, MouseButton::Left);
+    CHECK(!contentClicked);
+}

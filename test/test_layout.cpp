@@ -508,3 +508,78 @@ TEST_CASE("SessionScreen full structure - missing status box") {
     CHECK(missingText->layout.height == doctest::Approx(24));
     CHECK(missingText->layout.width == doctest::Approx(165.6f).epsilon(0.01));
 }
+
+// --- Subtree bounds (hit-test prune AABB, synced in syncLayoutFromYoga) ---
+
+TEST_CASE("subtree bounds: leaf equals own rect") {
+    Reconciler reconciler;
+
+    auto tree = Box().width(100).height(50);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 50);
+
+    CHECK(root->layout.subtreeLeft == doctest::Approx(0));
+    CHECK(root->layout.subtreeTop == doctest::Approx(0));
+    CHECK(root->layout.subtreeRight == doctest::Approx(100));
+    CHECK(root->layout.subtreeBottom == doctest::Approx(50));
+}
+
+TEST_CASE("subtree bounds: parent unions an overflowing child, in parent-relative space") {
+    Reconciler reconciler;
+
+    auto tree = Box(
+                        Box(
+                            Box().width(50)
+                                 .height(50)
+                                 .positionType(PositionType::Absolute)
+                                 .positionLeft(80)
+                                 .positionTop(80)
+                                 .setKey("overflow")
+                        )
+                            .width(100)
+                            .height(100)
+                            .setKey("parent")
+                    )
+                    .width(200)
+                    .height(200);
+
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(200, 200);
+
+    Node* parent = root->children[0].get();
+    Node* child = parent->children[0].get();
+
+    // Child (a leaf): bounds == own rect, relative to ITS parent.
+    CHECK(child->layout.subtreeLeft == doctest::Approx(80));
+    CHECK(child->layout.subtreeTop == doctest::Approx(80));
+    CHECK(child->layout.subtreeRight == doctest::Approx(130));
+    CHECK(child->layout.subtreeBottom == doctest::Approx(130));
+
+    // Parent: own 100x100 rect unioned with the child's overhang.
+    CHECK(parent->layout.subtreeLeft == doctest::Approx(0));
+    CHECK(parent->layout.subtreeTop == doctest::Approx(0));
+    CHECK(parent->layout.subtreeRight == doctest::Approx(130));
+    CHECK(parent->layout.subtreeBottom == doctest::Approx(130));
+
+    // Root: the parent sits at (0,0), so the overhang propagates unshifted.
+    CHECK(root->layout.subtreeRight == doctest::Approx(200));
+    CHECK(root->layout.subtreeBottom == doctest::Approx(200));
+}
+
+TEST_CASE("subtree bounds: scroll excludes its clipped content") {
+    Reconciler reconciler;
+
+    auto tree = Scroll(Box().width(200).height(300)).width(100).height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // Content is 200x300 but clipped: the scroll's bounds stay its own rect,
+    // so no ancestor's hit-test prune widens toward invisible content.
+    CHECK(root->layout.subtreeLeft == doctest::Approx(0));
+    CHECK(root->layout.subtreeTop == doctest::Approx(0));
+    CHECK(root->layout.subtreeRight == doctest::Approx(100));
+    CHECK(root->layout.subtreeBottom == doctest::Approx(100));
+}

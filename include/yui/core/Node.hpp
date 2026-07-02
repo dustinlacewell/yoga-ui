@@ -32,6 +32,14 @@ constexpr int kMaxTreeDepth = 1024;
 // draw-time consumers get the content box without reaching back into the yoga
 // node. Text wraps and draws in the content box — the same width Yoga hands
 // the measure callback — so measure and paint agree for padded nodes too.
+//
+// subtree* is the subtree AABB: the union of this node's border box and every
+// descendant's subtree bounds, in the SAME parent-relative space as left/top.
+// Children draw unclipped, so one may extend beyond its parent's rect; hit
+// testing PRUNES descent by this box (keeping overflowing children clickable)
+// while a node is only itself HIT by its own border box. A Scroll clips its
+// content, so its subtree bounds are exactly its own rect (see
+// Node::syncLayoutFromYoga), keeping clipped overflow unhittable.
 struct LayoutResult {
     float left = 0;
     float top = 0;
@@ -41,6 +49,10 @@ struct LayoutResult {
     float insetTop = 0;
     float insetRight = 0;
     float insetBottom = 0;
+    float subtreeLeft = 0;
+    float subtreeTop = 0;
+    float subtreeRight = 0;
+    float subtreeBottom = 0;
 
     float contentWidth() const { return width - insetLeft - insetRight; }
     float contentHeight() const { return height - insetTop - insetBottom; }
