@@ -224,12 +224,28 @@ std::unique_ptr<Fiber> Reconciler::mountHost(VNode&& vnode, size_t sourcePos,
         [](const auto& p) { return static_cast<const EventProps&>(p).autoFocus.value_or(false); },
         vnode.props);
 
+    // Peek the portal focus trap alongside. Fired below BEFORE the children
+    // mount: the trap must be installed (and the previously-focused node saved)
+    // before any content autoFocus runs, or the save would capture the portal's
+    // own freshly-focused content instead of the pre-portal focus. That
+    // ordering requirement is why this is a mount peek and not a mount effect —
+    // effects run after the whole pass, after every content autoFocus.
+    bool wantsTrap = false;
+    if (const auto* portalProps = std::get_if<PortalProps>(&vnode.props))
+        wantsTrap = portalProps->trapFocus.value_or(false);
+
     node->updateProps(std::move(vnode.props));
     fiber->renderNode = node.get();
 
     // Insert into render tree
     insertRenderNode(renderParent, std::move(node), renderIndex);
     renderIndex++;
+
+    // Notify host of a portal focus trap FIRST — the trap's focus save must
+    // precede ANY mount focus change (this node's own autoFocus included).
+    if (wantsTrap && onTrapMounted_) {
+        onTrapMounted_(fiber->renderNode);
+    }
 
     // Notify host of autoFocus request
     if (wantsAutoFocus && onAutoFocus_) {

@@ -207,9 +207,15 @@ struct CanvasProps : LayoutProps, EventProps {
 // Portal: detached-content container (the Scroll detachment generalized). Its
 // content reconciles in place (state/hooks/refs in the logical parent) but is
 // laid out against the viewport and painted/hit-tested at root z-order. The
-// node itself is pure plumbing — zero-size, chrome-less — so it carries only
-// the shared prop slices.
-struct PortalProps : LayoutProps, EventProps {};
+// node itself is pure plumbing — zero-size, chrome-less — so beyond the shared
+// prop slices it carries only trap plumbing.
+struct PortalProps : LayoutProps, EventProps {
+    // Trap Tab traversal inside the portal's content while it is mounted.
+    // Applied by the reconciler's MOUNT PEEK (before the content mounts), so
+    // the previously-focused node is saved before any content autoFocus runs;
+    // unmounting the portal (or clearing the trap) restores that focus.
+    std::optional<bool> trapFocus;
+};
 
 // Variant holding any primitive's props
 using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps, PortalProps>;

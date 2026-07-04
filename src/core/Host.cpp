@@ -15,6 +15,11 @@ Host::Host() : reconciler_(std::make_unique<Reconciler>()) {
 
     reconciler_->setNodeRemovedCallback([this](Node* node) { eventHandler_.onNodeRemoved(node); });
     reconciler_->setAutoFocusCallback([this](Node* node) { eventHandler_.focusNode(node); });
+    // A .trapFocus() portal mounted: trap Tab to it and SAVE the focus held
+    // before the portal (save=true). The reconciler fires this before the
+    // portal's content mounts, so the save always precedes content autoFocus.
+    reconciler_->setTrapMountedCallback(
+        [this](Node* node) { eventHandler_.setFocusTrap(node, /*save=*/true); });
     reconciler_->setHost(this);
     reconciler_->setConfig(config_.get());
 

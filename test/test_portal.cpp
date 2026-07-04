@@ -101,6 +101,27 @@ void checkRect(const render::Rect& r, float x, float y, float w, float h) {
     CHECK(r.h == doctest::Approx(h));
 }
 
+// Mirror the Host ctor's focus wiring on a headless harness: node removal
+// clears the event slots, autoFocus routes to focusNode, and a mounted
+// .trapFocus() portal traps with save=true.
+void wireFocus(MeasureHarness& h, EventHandler& events) {
+    h.reconciler().setNodeRemovedCallback([&events](Node* n) { events.onNodeRemoved(n); });
+    h.reconciler().setAutoFocusCallback([&events](Node* n) { events.focusNode(n); });
+    h.reconciler().setTrapMountedCallback(
+        [&events](Node* n) { events.setFocusTrap(n, /*save=*/true); });
+}
+
+// First node with this key in pre-order (reconciles shuffle child indexes, so
+// tests re-find by key rather than navigating by position).
+Node* findByKey(Node* node, const std::string& key) {
+    if (node->key == key)
+        return node;
+    for (auto& child : node->children)
+        if (Node* found = findByKey(child.get(), key))
+            return found;
+    return nullptr;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -422,4 +443,235 @@ TEST_CASE("Portal content places in root space; absoluteRect breaks at the porta
     CHECK(r.y == doctest::Approx(100));
     CHECK(r.w == doctest::Approx(50));
     CHECK(r.h == doctest::Approx(40));
+}
+
+// ---------------------------------------------------------------------------
+// trapFocus (F2): the declarative trap. Applied by the reconciler's mount peek
+// BEFORE the portal's content mounts (so the focus save precedes any content
+// autoFocus), scoping Tab to the content; clearing the trap — explicitly or by
+// unmounting the portal — restores the saved focus.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Portal trapFocus: Tab cycles only the portal content, never outside") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto tree = Box(
+                    Box().width(50).height(50).focusable().setKey("out"),
+                    Portal(
+                        Box(
+                            Box().width(20).height(20).focusable().setKey("t1"),
+                            Box().width(20).height(20).focusable().setKey("t2")
+                        ).setKey("panel"))
+                        .trapFocus()
+                ).width(400).height(400);
+
+    auto* root = h.mount(std::move(tree));
+    Node* t1 = findByKey(root, "t1");
+    Node* t2 = findByKey(root, "t2");
+    REQUIRE(t1 != nullptr);
+    REQUIRE(t2 != nullptr);
+
+    // Traversal is scoped to the portal (the trap root): Tab enters at the
+    // first content focusable and wraps inside — "out" is unreachable.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t2);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);  // wraps inside the trap
+    events.focusPrev(root);
+    CHECK(events.getFocusedNode() == t2);
+}
+
+TEST_CASE("Portal trapFocus: pre-portal focus saved before content autoFocus; unmount restores") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto build = [](bool withModal) {
+        std::vector<Child> children;
+        children.push_back(Box().width(50).height(50).focusable().setKey("out"));
+        if (withModal) {
+            children.push_back(
+                Portal(Box().width(80).height(60).focusable().autoFocus().setKey("modal-box"))
+                    .trapFocus());
+        }
+        return VNode(Box(std::move(children)).width(400).height(400));
+    };
+
+    auto* root = h.mount(build(false));
+    Node* out = findByKey(root, "out");
+    REQUIRE(out != nullptr);
+    events.focusNode(out);
+    CHECK(events.getFocusedNode() == out);
+
+    // Mount the modal: the trap peek fires BEFORE the content mounts, so the
+    // save captures "out"; the content autoFocus then moves focus inside.
+    h.reconciler().reconcile(h.fiber(), build(true));
+    Node* modalBox = findByKey(root, "modal-box");
+    REQUIRE(modalBox != nullptr);
+    CHECK(events.getFocusedNode() == modalBox);  // autoFocus won mount focus
+    CHECK(findByKey(root, "out") == out);        // keyed sibling was reused
+
+    // Unmount the modal. Had the save happened AFTER the autoFocus, it would
+    // hold the (now freed) modal box and restore nothing — restoring to "out"
+    // proves the peek ordering.
+    h.reconciler().reconcile(h.fiber(), build(false));
+    CHECK(events.getFocusedNode() == out);
+}
+
+TEST_CASE("Portal trapFocus: explicit clearFocusTrap restores the saved focus and unscopes Tab") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto build = [](bool withModal) {
+        std::vector<Child> children;
+        children.push_back(Box().width(50).height(50).focusable().setKey("out"));
+        if (withModal) {
+            children.push_back(
+                Portal(Box().width(80).height(60).focusable().setKey("t1")).trapFocus());
+        }
+        return VNode(Box(std::move(children)).width(400).height(400));
+    };
+
+    auto* root = h.mount(build(false));
+    Node* out = findByKey(root, "out");
+    events.focusNode(out);
+
+    // Trap mounts (no content autoFocus): focus stays on "out", the save holds it.
+    h.reconciler().reconcile(h.fiber(), build(true));
+    CHECK(events.getFocusedNode() == out);
+
+    // Tab is scoped: it pulls focus into the trap.
+    Node* t1 = findByKey(root, "t1");
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);
+
+    // Explicit clear restores the saved focus...
+    events.clearFocusTrap();
+    CHECK(events.getFocusedNode() == out);
+
+    // ...and unscopes traversal: from "out", full document order reaches t1,
+    // then wraps back to "out" (under the trap, t1 wrapped onto itself).
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == t1);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == out);
+}
+
+TEST_CASE("Portal trapFocus: saved node removed while the modal is open -> no restore, no crash") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto build = [](bool withOut, bool withModal) {
+        std::vector<Child> children;
+        if (withOut)
+            children.push_back(Box().width(50).height(50).focusable().setKey("out"));
+        if (withModal) {
+            children.push_back(
+                Portal(Box().width(80).height(60).focusable().autoFocus().setKey("modal-box"))
+                    .trapFocus());
+        }
+        return VNode(Box(std::move(children)).width(400).height(400));
+    };
+
+    auto* root = h.mount(build(true, false));
+    events.focusNode(findByKey(root, "out"));
+
+    SUBCASE("eager path: onNodeRemoved drops the save when the saved node goes") {
+        h.reconciler().reconcile(h.fiber(), build(true, true));  // modal opens, saves "out"
+        h.reconciler().reconcile(h.fiber(), build(false, true)); // "out" removed mid-modal
+        CHECK(events.getFocusedNode() == findByKey(root, "modal-box"));
+
+        h.reconciler().reconcile(h.fiber(), build(false, false));  // modal closes
+        CHECK(events.getFocusedNode() == nullptr);  // nothing to restore to
+        CHECK_NOTHROW(events.focusNext(root));      // and traversal stays safe
+    }
+
+    SUBCASE("token path: a save freed with no onNodeRemoved degrades to no restore") {
+        h.reconciler().reconcile(h.fiber(), build(true, true));  // modal opens, saves "out"
+
+        // Simulate a reconciliation freeing the saved node WITHOUT the removal
+        // callback (the exact hole the weak liveness token exists for), then
+        // rewire for the close.
+        h.reconciler().setNodeRemovedCallback({});
+        h.reconciler().reconcile(h.fiber(), build(false, true));
+        h.reconciler().setNodeRemovedCallback([&events](Node* n) { events.onNodeRemoved(n); });
+
+        h.reconciler().reconcile(h.fiber(), build(false, false));  // modal closes
+        CHECK(events.getFocusedNode() == nullptr);  // dead token: no restore, no UAF
+        CHECK_NOTHROW(events.focusNext(root));
+    }
+}
+
+TEST_CASE("Portal trapFocus: nested traps restore to the OUTERMOST saved focus") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto build = [](bool withA, bool withB) {
+        std::vector<Child> children;
+        children.push_back(Box().width(50).height(50).focusable().setKey("out"));
+        if (withA) {
+            children.push_back(
+                Portal(Box().width(80).height(60).focusable().autoFocus().setKey("a1"))
+                    .trapFocus());
+        }
+        if (withB) {
+            children.push_back(
+                Portal(Box().width(80).height(60).focusable().autoFocus().setKey("b1"))
+                    .trapFocus());
+        }
+        return VNode(Box(std::move(children)).width(400).height(400));
+    };
+
+    auto* root = h.mount(build(false, false));
+    Node* out = findByKey(root, "out");
+    events.focusNode(out);
+
+    // Modal A opens: saves "out", focuses a1.
+    h.reconciler().reconcile(h.fiber(), build(true, false));
+    CHECK(events.getFocusedNode() == findByKey(root, "a1"));
+
+    // Modal B opens on top: the single saved slot keeps the OUTERMOST save
+    // ("out") — B's trap-with-save finds a live save and records nothing.
+    h.reconciler().reconcile(h.fiber(), build(true, true));
+    CHECK(events.getFocusedNode() == findByKey(root, "b1"));
+
+    // Closing B (the current trap root) restores straight to "out" — the
+    // ratified v1 single-slot rule: no trap stack, the inner close restores
+    // to the outermost save and clears the trap entirely.
+    h.reconciler().reconcile(h.fiber(), build(true, false));
+    CHECK(events.getFocusedNode() == out);
+
+    // Closing A finds no trap and no save left: focus stays on "out".
+    h.reconciler().reconcile(h.fiber(), build(false, false));
+    CHECK(events.getFocusedNode() == out);
+}
+
+TEST_CASE("Portal without trapFocus: no trap, no save — Tab reaches content AND outside") {
+    MeasureHarness h;
+    EventHandler events;
+    wireFocus(h, events);
+
+    auto tree = Box(
+                    Box().width(50).height(50).focusable().setKey("out"),
+                    Portal(Box().width(80).height(60).focusable().setKey("p1"))
+                ).width(400).height(400);
+
+    auto* root = h.mount(std::move(tree));
+    Node* out = findByKey(root, "out");
+    Node* p1 = findByKey(root, "p1");
+
+    // Full-tree traversal: outside and portal content alternate — no scoping.
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == out);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == p1);
+    events.focusNext(root);
+    CHECK(events.getFocusedNode() == out);
 }

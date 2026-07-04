@@ -431,8 +431,16 @@ public:
 class PortalBuilder : public BuilderBase<PortalBuilder> {
 public:
     PortalBuilder() { node_.props = PortalProps{}; }
-    // Portal has no primitive-specific setters: the node is pure plumbing —
-    // its content carries all the visuals.
+    // Portal has no visual setters: the node is pure plumbing — its content
+    // carries all the visuals.
+
+    // Trap Tab inside the portal content while mounted, saving the
+    // previously-focused node and restoring it when the trap clears (portal
+    // unmount or explicit clear). See PortalProps::trapFocus.
+    PortalBuilder& trapFocus(bool v = true) {
+        std::get<PortalProps>(node_.props).trapFocus = v;
+        return *this;
+    }
 };
 
 // --- Factory functions ---

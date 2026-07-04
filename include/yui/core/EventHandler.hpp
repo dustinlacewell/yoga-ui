@@ -110,11 +110,25 @@ public:
     // liveness-token pattern as the focus/hover/press slots: a trap root freed
     // by a reconciliation reads as no-trap and traversal falls back to the full
     // tree.
-    void setFocusTrap(Node* node) {
+    //
+    // `save` additionally records the currently-focused node so clearing the
+    // trap restores it (the declarative Portal .trapFocus() path; plain 6d
+    // callers pass no save and are unchanged). Recording is skipped while a
+    // live save already exists: with a single saved slot, nested traps restore
+    // to the OUTERMOST saved node — the inner trap's clear performs that
+    // restore and later clears find nothing left to do.
+    void setFocusTrap(Node* node, bool save = false) {
+        if (save && !liveSavedFocus())
+            setSavedFocus(liveFocusedNode());
         trapNode_ = node;
         trapAlive_ = node ? node->alive : std::weak_ptr<bool>{};
     }
-    void clearFocusTrap() { setFocusTrap(nullptr); }
+    // Clear the trap and restore the saved focus if one was recorded (a no-op
+    // for the plain setFocusTrap path, which records no save).
+    void clearFocusTrap() {
+        setFocusTrap(nullptr);
+        restoreSavedFocus();
+    }
 
     // Read-and-clear the visual-state latch: true iff a hover, press, focus, or
     // text-edit TRANSITION occurred since the last consume. Latched (not returned per
@@ -155,8 +169,19 @@ public:
         if (pressedNode_ == node) {
             setPressedNode(nullptr);
         }
+        // The saved slot drops BEFORE the trap branch below: focus must never
+        // be restored to a node that is itself going away (the dead-token
+        // degradation — no restore, focus simply ends up null).
+        if (savedFocus_ == node) {
+            setSavedFocus(nullptr);
+        }
+        // Removing the trap root clears the trap AND restores the saved focus
+        // — unmounting a .trapFocus() portal is the normal "modal closed" path
+        // (notifyRenderRemoved is parent-first, so this runs while the portal's
+        // content nodes are still alive for their onFocus(false)).
         if (trapNode_ == node) {
             setFocusTrap(nullptr);
+            restoreSavedFocus();
         }
     }
 
@@ -276,9 +301,48 @@ private:
         if (!alive || !*alive) {
             trapNode_ = nullptr;
             trapAlive_.reset();
+            // Lazy invalidation cannot RESTORE: it is a const validator, and a
+            // restore fires user onFocus callbacks. Production trap roots are
+            // cleared eagerly via onNodeRemoved (which does restore); this
+            // fallback only drops the saved slot so a stale save can never
+            // leak into a later trap session.
+            savedFocus_ = nullptr;
+            savedFocusAlive_.reset();
             return nullptr;
         }
         return trapNode_;
+    }
+
+    // Set the saved-focus slot — the node clearing the trap restores — and
+    // capture its liveness token in lockstep (mirrors setFocusedNode).
+    void setSavedFocus(Node* node) {
+        savedFocus_ = node;
+        savedFocusAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+    }
+
+    // Return savedFocus_ only if its node is still alive; otherwise clear the
+    // stale pointer and return nullptr (mirrors liveFocusedNode).
+    Node* liveSavedFocus() const {
+        if (!savedFocus_)
+            return nullptr;
+        auto alive = savedFocusAlive_.lock();
+        if (!alive || !*alive) {
+            savedFocus_ = nullptr;
+            savedFocusAlive_.reset();
+            return nullptr;
+        }
+        return savedFocus_;
+    }
+
+    // Consume the saved-focus slot: refocus the saved node iff it is still
+    // alive — a dead token degrades safely to no restore (focus stays wherever
+    // the clear left it, typically null after a subtree teardown). The slot is
+    // cleared either way.
+    void restoreSavedFocus() {
+        Node* target = liveSavedFocus();
+        setSavedFocus(nullptr);
+        if (target)
+            focusNode(target);
     }
 
     // Record the node that received the most recent mouse press, with its button
@@ -396,6 +460,11 @@ private:
     // its subtree. mutable: liveTrapRoot() lazily clears a stale trap.
     mutable Node* trapNode_ = nullptr;
     mutable std::weak_ptr<bool> trapAlive_;
+    // Saved focus to restore when the trap clears (see setFocusTrap's save
+    // param). mutable: liveSavedFocus() lazily clears a stale save;
+    // savedFocusAlive_ observes the node's liveness token without owning it.
+    mutable Node* savedFocus_ = nullptr;
+    mutable std::weak_ptr<bool> savedFocusAlive_;
     // The node that received the last mouse press (+ its button), for click
     // press/release matching — AND the implicit pointer-capture slot: while set,
     // mouse moves and the release route to this node regardless of what is under

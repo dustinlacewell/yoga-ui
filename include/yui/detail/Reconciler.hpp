@@ -20,9 +20,11 @@ class Reconciler {
 public:
     using NodeRemovedCallback = std::function<void(Node*)>;
     using AutoFocusCallback = std::function<void(Node*)>;
+    using TrapMountedCallback = std::function<void(Node*)>;
 
     void setNodeRemovedCallback(NodeRemovedCallback callback) { onNodeRemoved_ = std::move(callback); }
     void setAutoFocusCallback(AutoFocusCallback callback) { onAutoFocus_ = std::move(callback); }
+    void setTrapMountedCallback(TrapMountedCallback callback) { onTrapMounted_ = std::move(callback); }
     void setHost(DirtyScheduler* host) { host_ = host; }
 
     // The yoga config that render nodes are created against. Carries the host's
@@ -143,6 +145,7 @@ private:
     std::unique_ptr<Node> renderRoot_;
     NodeRemovedCallback onNodeRemoved_;
     AutoFocusCallback onAutoFocus_;
+    TrapMountedCallback onTrapMounted_;
     DirtyScheduler* host_ = nullptr;
     YGConfigRef config_ = nullptr;
 };
