@@ -105,6 +105,11 @@ void TreeWalker::drawNode(const Node* node, float offsetX, float offsetY) {
         drawCanvas(static_cast<const CanvasNode*>(node), r);
         handled = true;
         break;
+    case PrimitiveType::Portal:
+        // Painted by the DEFERRED portal pass in renderTree, never in place:
+        // the node itself is zero-size chrome, and its detached children draw
+        // after the main walk at root z-order.
+        return;
     }
     if (!handled) {  // only reachable for a corrupt type value
         report(onError_, "renderTree: unknown PrimitiveType", nullptr);
@@ -346,6 +351,22 @@ void renderTree(Node* root, IRenderBackend& backend, const ErrorHandler& onError
     try {
         TreeWalker walker(backend, onError);
         walker.drawNode(root, 0, 0);
+
+        // Deferred portal pass — THE clip escape. It runs AFTER the main walk,
+        // so every ancestor pushClip (a Scroll's viewport clip) has been popped:
+        // portal content starts from a clean clip stack and each content draw
+        // balances its own pushes, exactly like the main walk. Children draw at
+        // offset (0,0) because layoutDetachedContent laid them out in ROOT
+        // space. collectPortals is the SAME layer order topmostHit consumes in
+        // reverse, so what draws on top is what hits first — including nested
+        // portals, already appended after their spawners in this list.
+        std::vector<Node*> portals;
+        collectPortals(root, portals);
+        for (Node* portal : portals) {
+            for (auto& child : portal->children) {
+                walker.drawNode(child.get(), 0, 0);
+            }
+        }
     } catch (const std::exception& e) {
         report(onError, "renderTree", &e);
     } catch (...) {

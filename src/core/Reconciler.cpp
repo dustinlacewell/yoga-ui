@@ -802,13 +802,21 @@ size_t Reconciler::findRenderIndex(Fiber* fiber) {
     return index;
 }
 
+// Does this render parent keep its children OUT of the parent Yoga tree?
+// Scroll and Portal content roots are laid out separately against their own
+// constraint (see layoutDetachedContent in Node.cpp) rather than by the
+// parent's flex flow — the ONE detachment gate both insertion paths share.
+static bool detachesChildren(const Node* node) {
+    return node->type() == PrimitiveType::Scroll || node->type() == PrimitiveType::Portal;
+}
+
 void Reconciler::insertRenderNode(Node* renderParent, std::unique_ptr<Node> node, size_t index) {
     if (!renderParent) return;
 
     node->parent = renderParent;
 
-    // Insert into yoga tree (unless parent is ScrollNode)
-    if (renderParent->type() != PrimitiveType::Scroll && renderParent->yogaNode && node->yogaNode) {
+    // Insert into yoga tree (unless the parent detaches its content)
+    if (!detachesChildren(renderParent) && renderParent->yogaNode && node->yogaNode) {
         YGNodeInsertChild(renderParent->yogaNode, node->yogaNode, index);
     }
 
@@ -865,7 +873,7 @@ void Reconciler::rebuildRenderChildren(Fiber* parentFiber, Node* renderParent) {
     renderParent->children.clear();
 
     // Re-insert in the correct order
-    bool isScroll = (renderParent->type() == PrimitiveType::Scroll);
+    bool detached = detachesChildren(renderParent);
     size_t yogaIndex = 0;
 
     for (Node* desired : desiredOrder) {
@@ -873,7 +881,7 @@ void Reconciler::rebuildRenderChildren(Fiber* parentFiber, Node* renderParent) {
         if (it != nodeMap.end()) {
             auto& node = it->second;
             node->parent = renderParent;
-            if (!isScroll && renderParent->yogaNode && node->yogaNode) {
+            if (!detached && renderParent->yogaNode && node->yogaNode) {
                 YGNodeInsertChild(renderParent->yogaNode, node->yogaNode, yogaIndex++);
             }
             renderParent->children.push_back(std::move(node));

@@ -14,7 +14,7 @@
 
 namespace yui {
 
-enum class PrimitiveType { Box, Text, Input, Scroll, Canvas };
+enum class PrimitiveType { Box, Text, Input, Scroll, Canvas, Portal };
 
 // PrimitiveType must mirror the alternative order of PropsVariant so that
 // VNode::type() can derive the primitive from props.index() (single source of
@@ -28,6 +28,7 @@ static_assert(primitive_matches_v<PrimitiveType::Text, TextProps>);
 static_assert(primitive_matches_v<PrimitiveType::Input, InputProps>);
 static_assert(primitive_matches_v<PrimitiveType::Scroll, ScrollProps>);
 static_assert(primitive_matches_v<PrimitiveType::Canvas, CanvasProps>);
+static_assert(primitive_matches_v<PrimitiveType::Portal, PortalProps>);
 
 // Forward declarations
 struct VNode;
@@ -427,6 +428,13 @@ public:
     // Canvas has no primitive-specific setters beyond construction.
 };
 
+class PortalBuilder : public BuilderBase<PortalBuilder> {
+public:
+    PortalBuilder() { node_.props = PortalProps{}; }
+    // Portal has no primitive-specific setters: the node is pure plumbing —
+    // its content carries all the visuals.
+};
+
 // --- Factory functions ---
 
 // Factories build a fresh node and have no side effects, so discarding the
@@ -505,6 +513,30 @@ template<class... Cs,
 // Draw relative to (0,0) - the renderer handles positioning.
 [[nodiscard]] inline CanvasBuilder Canvas(CanvasDrawFn draw) {
     return CanvasBuilder{std::move(draw)};
+}
+
+// Portal: render children at ROOT z-order, escaping any ancestor clip.
+// Content is declared (and keeps its state/hooks/refs) where the Portal sits,
+// but lays out against the viewport — position it with
+// .positionType(Absolute).positionLeft/Top (Placement coordinates are already
+// root-space). The Portal itself occupies no space in its parent's layout.
+// Dynamic path (a runtime-built vector).
+[[nodiscard]] inline PortalBuilder Portal(std::vector<Child> children) {
+    PortalBuilder b;
+    b.setChildren(std::move(children));
+    return b;
+}
+
+// Static path: each argument forwarded into a Child slot (see Box variadic).
+template<class... Cs,
+         typename = std::enable_if_t<!is_single_child_vector_v<Cs...>>>
+[[nodiscard]] inline PortalBuilder Portal(Cs&&... cs) {
+    std::vector<Child> v;
+    v.reserve(sizeof...(Cs));
+    (v.emplace_back(std::forward<Cs>(cs)), ...);
+    PortalBuilder b;
+    b.setChildren(std::move(v));
+    return b;
 }
 
 // --- Helpers ---

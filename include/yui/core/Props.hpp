@@ -204,7 +204,14 @@ struct CanvasProps : LayoutProps, EventProps {
     CanvasDrawFn draw;
 };
 
+// Portal: detached-content container (the Scroll detachment generalized). Its
+// content reconciles in place (state/hooks/refs in the logical parent) but is
+// laid out against the viewport and painted/hit-tested at root z-order. The
+// node itself is pure plumbing — zero-size, chrome-less — so it carries only
+// the shared prop slices.
+struct PortalProps : LayoutProps, EventProps {};
+
 // Variant holding any primitive's props
-using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps>;
+using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps, PortalProps>;
 
 }  // namespace yui

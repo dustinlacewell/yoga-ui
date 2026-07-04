@@ -321,7 +321,11 @@ void Node::syncLayoutFromYoga() {
     // the hit-test prune of the scroll or any ancestor. (Scroll children also
     // lay out in a detached, scroll-offset coordinate space — their bounds are
     // not commensurable with this node's parent space anyway.)
-    if (type() == PrimitiveType::Scroll)
+    // A Portal's children are detached too, laid out in ROOT space — not
+    // commensurable with this node's parent-relative space — and reachable
+    // only through topmostHit's deferred pass, so they must not widen the
+    // main walk's hit pruning either.
+    if (type() == PrimitiveType::Scroll || type() == PrimitiveType::Portal)
         return;
 
     for (auto& child : children) {
@@ -332,12 +336,12 @@ void Node::syncLayoutFromYoga() {
     }
 }
 
-static void layoutScrollContent(Node* node);
+static void layoutDetachedContent(Node* node, float viewportWidth, float viewportHeight);
 
 void Node::calculateLayout(float availableWidth, float availableHeight) {
     YGNodeCalculateLayout(yogaNode, availableWidth, availableHeight, YGDirectionLTR);
     syncLayoutFromYoga();
-    layoutScrollContent(this);
+    layoutDetachedContent(this, availableWidth, availableHeight);
 }
 
 AnimationResult Node::update(float dt) {
@@ -372,24 +376,43 @@ AnimationResult Node::update(float dt) {
     return result;
 }
 
-static void layoutScrollContent(Node* node) {
+// Lay out one Yoga-detached content root and sync its results. The shared
+// mechanics of both detaching containers; Scroll and Portal differ only in
+// the constraint they hand Yoga (see layoutDetachedContent).
+static void layoutDetachedRoot(Node* child, float availableWidth, float availableHeight) {
+    if (!child->yogaNode)
+        return;
+    YGNodeCalculateLayout(child->yogaNode, availableWidth, availableHeight, YGDirectionLTR);
+    child->syncLayoutFromYoga();
+}
+
+// Walk the tree laying out every detaching container's content roots (the
+// children the reconciler kept OUT of the parent Yoga tree). Scroll content
+// lays against the scroll's own content width; Portal content lays against
+// the full VIEWPORT — percent sizes resolve to the window, and absolute
+// positionLeft/Top land in ROOT-SPACE coordinates (Yoga resolves a detached
+// root's position offsets against the owner dims passed here), which is what
+// lets the deferred paint/hit passes consume portal content at offset (0,0).
+static void layoutDetachedContent(Node* node, float viewportWidth, float viewportHeight) {
     if (node->type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(node);
         for (auto& child : scrollNode->children) {
-            if (child->yogaNode) {
-                // The detached content root lays out against the scroll's CONTENT
-                // width: the scroll's own insets (synced by the enclosing
-                // calculateLayout before this runs) shrink the viewport, so
-                // Scroll padding is honored the same way Box padding is.
-                YGNodeCalculateLayout(child->yogaNode, scrollNode->layout.contentWidth(), YGUndefined, YGDirectionLTR);
-                child->syncLayoutFromYoga();
-            }
+            // The detached content root lays out against the scroll's CONTENT
+            // width: the scroll's own insets (synced by the enclosing
+            // calculateLayout before this runs) shrink the viewport, so
+            // Scroll padding is honored the same way Box padding is.
+            layoutDetachedRoot(child.get(), scrollNode->layout.contentWidth(), YGUndefined);
         }
         scrollNode->updateContentSize();
         scrollNode->clampScrollOffset();
     }
+    if (node->type() == PrimitiveType::Portal) {
+        for (auto& child : node->children) {
+            layoutDetachedRoot(child.get(), viewportWidth, viewportHeight);
+        }
+    }
     for (auto& child : node->children) {
-        layoutScrollContent(child.get());
+        layoutDetachedContent(child.get(), viewportWidth, viewportHeight);
     }
 }
 
@@ -979,6 +1002,65 @@ void CanvasNode::updateProps(PropsVariant&& p) {
     }
 }
 
+// --- PortalNode ---
+
+PortalNode::PortalNode(YGConfigRef config) : Node(config) {
+    // A Portal is invisible to its logical parent's flex flow: display:none
+    // makes Yoga treat it as absent entirely — zero size AND no gap slot —
+    // so siblings lay out as if the portal weren't declared.
+    YGNodeStyleSetDisplay(yogaNode, YGDisplayNone);
+}
+
+void PortalNode::updateProps(PropsVariant&& p) {
+    auto& newProps = std::get<PortalProps>(p);
+    bool layoutChanged = static_cast<const LayoutProps&>(newProps) != static_cast<const LayoutProps&>(props);
+    props = std::move(newProps);
+    if (layoutChanged) {
+        applyLayoutProps(props);
+    }
+    // RE-FORCE display:none after any layout-prop application: applyLayoutProps
+    // resets display to Flex (and would honor a user display prop), but the
+    // zero-flow contract is unconditional — a portal with padding/margin props
+    // must still contribute nothing to its logical parent's layout.
+    YGNodeStyleSetDisplay(yogaNode, YGDisplayNone);
+}
+
+// --- collectPortals ---
+
+namespace {
+
+// Pre-order scan collecting PortalNodes WITHOUT descending into them: a
+// portal's content belongs to a LATER layer, scanned by collectPortals'
+// queue pass below.
+void scanForPortals(Node* node, std::vector<Node*>& out) {
+    if (node->type() == PrimitiveType::Portal) {
+        out.push_back(node);
+        return;
+    }
+    for (auto& child : node->children) {
+        scanForPortals(child.get(), out);
+    }
+}
+
+}  // namespace
+
+void collectPortals(Node* root, std::vector<Node*>& out) {
+    if (!root)
+        return;
+    // Main pass: portals in document order, content unexplored.
+    scanForPortals(root, out);
+    // Queue pass: scan each portal's content for nested portals, which append
+    // after every portal collected so far (out grows as the index advances) —
+    // so a portal inside a portal's content layers above its spawner. This IS
+    // the paint order (TreeRenderer's deferred pass, front-to-back) and, in
+    // reverse, the hit order (EventHandler::topmostHit, topmost-first).
+    for (size_t i = 0; i < out.size(); ++i) {
+        for (auto& child : out[i]->children) {
+            scanForPortals(child.get(), out);
+        }
+    }
+}
+
 // --- Factory ---
 
 std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config) {
@@ -1001,6 +1083,8 @@ std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config) {
         return std::make_unique<ScrollNode>(config);
     case PrimitiveType::Canvas:
         return std::make_unique<CanvasNode>(config);
+    case PrimitiveType::Portal:
+        return std::make_unique<PortalNode>(config);
     }
     assert(false && "createNode: PrimitiveType out of range");
     return nullptr;

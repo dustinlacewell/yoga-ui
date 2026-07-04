@@ -462,6 +462,32 @@ public:
     CanvasProps props;
 };
 
+// PortalNode: the Scroll detachment generalized to a pure detached-content
+// container. Its children stay in `children` (reconciled in the logical
+// parent, so state/hooks/refs survive — no reparenting) but are Yoga-detached
+// and laid out against the VIEWPORT (see layoutDetachedContent), then painted
+// and hit-tested at root z-order via collectPortals. The node itself carries
+// no state — no scroll offset, no chrome — and is forced Display::None so it
+// contributes zero size and no gap slot to its logical parent's flex flow.
+class PortalNode : public Node {
+public:
+    explicit PortalNode(YGConfigRef config);
+    PrimitiveType type() const override { return PrimitiveType::Portal; }
+    void updateProps(PropsVariant&& props) override;
+
+    PortalProps props;
+};
+
+// Collect every PortalNode reachable from `root` in LAYER order — the ONE
+// ordering both the deferred paint pass (TreeRenderer) and the hit path
+// (EventHandler::topmostHit) consume, so paint and hit can never disagree
+// about which portal is on top. Discipline: a pre-order scan of the main tree
+// that does NOT descend into portal content collects portals in document
+// order; then each collected portal's content is scanned for NESTED portals,
+// which append after every portal discovered so far — a portal spawned inside
+// a portal's content layers above its spawner.
+void collectPortals(Node* root, std::vector<Node*>& out);
+
 // Factory: create Node from VNode type. The yoga node is created against the
 // given config (may be nullptr, which resolves to Yoga's default config).
 std::unique_ptr<Node> createNode(PrimitiveType type, YGConfigRef config);

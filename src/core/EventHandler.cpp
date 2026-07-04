@@ -66,7 +66,7 @@ bool fireCallback(std::string_view where, Invoke&& invoke, Report&& report) {
 
 bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton button,
                                    uint16_t mods) noexcept {
-    Node* target = hitTest(root, x, y);
+    Node* target = topmostHit(root, x, y);
 
     // A press on a scroll node's overlay scrollbar is chrome, consumed before
     // any of the content-press machinery (focus, click chain, user dispatch).
@@ -159,7 +159,7 @@ bool EventHandler::handleMouseUp(Node* root, float x, float y, MouseButton butto
     // The pointer may have moved off the press target: the hit result records
     // where the release LANDED (event payload, click gate, hover resync) — it is
     // never the dispatch target while a captor holds the pointer.
-    Node* releaseTarget = hitTest(root, x, y);
+    Node* releaseTarget = topmostHit(root, x, y);
 
     // The captor this release must go to (null if the pressed node was reconciled
     // away — its liveness token died). Read once, then clear: a press pairs with
@@ -211,7 +211,7 @@ bool EventHandler::handleMouseMove(Node* root, float x, float y) noexcept {
     if (Node* captor = livePressedNode())
         return dispatchCapturedMove(captor, x, y);
 
-    Node* target = hitTest(root, x, y);
+    Node* target = topmostHit(root, x, y);
 
     // Update hover state
     updateHover(target);
@@ -380,7 +380,7 @@ void EventHandler::updateClickChain(float x, float y, MouseButton button) {
 }
 
 bool EventHandler::handleScroll(Node* root, float x, float y, float deltaX, float deltaY) noexcept {
-    Node* target = hitTest(root, x, y);
+    Node* target = topmostHit(root, x, y);
     if (!target)
         return false;
 
@@ -462,6 +462,14 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
     float nodeY = offsetY + l.top;
     bool inOwnRect = containsPoint(node, x, y, offsetX, offsetY);
 
+    // A Portal contributes NOTHING to the main-tree walk: its content is
+    // detached, laid out in root space, and reachable only through
+    // topmostHit's portal pass. The zero-size subtree AABB (display:none)
+    // already prunes it above; this gate makes the contract local and
+    // explicit rather than resting on that sync invariant.
+    if (node->type() == PrimitiveType::Portal)
+        return nullptr;
+
     // Scroll content is clipped to the PADDED viewport (border box minus the
     // scroll's own insets), so a point in the padding band hits the Scroll
     // itself — never the clipped-away content — and children are hit-tested
@@ -514,6 +522,22 @@ bool EventHandler::containsPoint(Node* node, float x, float y, float offsetX, fl
     return x >= left && x < right && y >= top && y < bottom;
 }
 
+Node* EventHandler::topmostHit(Node* root, float x, float y) {
+    std::vector<Node*> portals;
+    collectPortals(root, portals);
+    // collectPortals yields layer order back-to-front (paint order); hit wants
+    // topmost first, so iterate in REVERSE. Within a portal, children hit
+    // front-to-back exactly like the main walk (reverse child order), at
+    // offset (0,0) — portal content is laid out in root space.
+    for (auto pit = portals.rbegin(); pit != portals.rend(); ++pit) {
+        for (auto cit = (*pit)->children.rbegin(); cit != (*pit)->children.rend(); ++cit) {
+            if (Node* hit = hitTest(cit->get(), x, y))
+                return hit;
+        }
+    }
+    return hitTest(root, x, y);
+}
+
 namespace {
 
 // The shared EventProps of a node, dispatched on its primitive type: the ONE
@@ -526,6 +550,7 @@ EventProps* eventPropsOf(Node* node) {
     case PrimitiveType::Input:  return &static_cast<InputNode*>(node)->props;
     case PrimitiveType::Scroll: return &static_cast<ScrollNode*>(node)->props;
     case PrimitiveType::Canvas: return &static_cast<CanvasNode*>(node)->props;
+    case PrimitiveType::Portal: return &static_cast<PortalNode*>(node)->props;
     }
     return nullptr;
 }
@@ -598,7 +623,7 @@ CursorShape EventHandler::getCursor() const {
 }
 
 bool EventHandler::hasClickHandler(Node* root, float x, float y, MouseButton button) {
-    Node* target = hitTest(root, x, y);
+    Node* target = topmostHit(root, x, y);
 
     // Walk up from target to root checking for handlers
     while (target) {

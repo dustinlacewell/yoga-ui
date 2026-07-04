@@ -166,6 +166,14 @@ public:
     // than overflowing the stack.
     Node* hitTest(Node* node, float x, float y, float offsetX = 0, float offsetY = 0, int depth = 0);
 
+    // Portal-aware point→node lookup — what every mouse entry point routes
+    // through. Portal content layers ABOVE the main tree in collectPortals
+    // order (the same order the renderer's deferred pass paints), so portals
+    // are tested topmost-first (the list in reverse) at offset (0,0) — their
+    // content is laid out in root space — and only then does the point fall
+    // through to the main tree's hitTest.
+    Node* topmostHit(Node* root, float x, float y);
+
 private:
     // Check if point is inside node bounds
     bool containsPoint(Node* node, float x, float y, float offsetX, float offsetY);

@@ -18,6 +18,13 @@ layout::Rect absoluteRect(const Node* node) {
 
     const Node* cur = node->parent;
     while (cur) {
+        // A Portal boundary STOPS the accumulation: portal content is laid
+        // out in ROOT space (layoutDetachedContent lays it against the
+        // viewport), so the coords accumulated up to here are already
+        // absolute — folding in the portal's logical ancestors would
+        // double-count their offsets.
+        if (cur->type() == PrimitiveType::Portal)
+            break;
         if (cur->type() == PrimitiveType::Scroll) {
             // Scroll content lives at the PADDED viewport origin, shifted by
             // the scroll offset — the same accumulation hitTest and drawScroll
