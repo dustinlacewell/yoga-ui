@@ -274,6 +274,162 @@ TEST_CASE("Hover - a sibling-to-sibling move does not re-fire the shared parent'
     CHECK(parentHoverCalls == callsBeforeMove);
 }
 
+// ============================================================================
+// onHoverDelay: armed by updateHover's enter walk (deepest carrier wins),
+// disarmed by its leave walk / node removal, fired ONCE by advanceClock when
+// the deadline passes — all on the dt-accumulated clock, no wall clock.
+// ============================================================================
+
+TEST_CASE("Hover delay - fires once at the deadline; the fired latch stops re-fires") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int fired = 0;
+    auto tree = Box().width(100).height(100).onHoverDelay([&] { fired++; });
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseMove(root, 50, 50);
+    events.advanceClock(0.499f);  // 499ms: just short of the 500ms default
+    CHECK(fired == 0);
+    events.advanceClock(0.002f);  // 501ms: past the deadline
+    CHECK(fired == 1);
+    // The slot stays armed+fired while the pointer rests: no per-frame re-fire.
+    events.advanceClock(1.0f);
+    CHECK(fired == 1);
+}
+
+TEST_CASE("Hover delay - leaving before the deadline disarms; re-enter re-arms fresh") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int fired = 0;
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("target").onHoverDelay([&] { fired++; })
+                    )
+                    .width(100)
+                    .height(100);
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // Leave 300ms in: disarmed — the remaining time never elapses into a fire.
+    events.handleMouseMove(root, 25, 25);
+    events.advanceClock(0.3f);
+    events.handleMouseMove(root, 75, 75);  // off the target
+    events.advanceClock(0.5f);
+    CHECK(fired == 0);
+
+    // Re-enter: a FRESH deadline — the earlier 300ms does not count toward it.
+    events.handleMouseMove(root, 25, 25);
+    events.advanceClock(0.3f);
+    CHECK(fired == 0);
+    events.advanceClock(0.201f);
+    CHECK(fired == 1);
+
+    // And after a completed fire, leave + re-enter arms and fires again.
+    events.handleMouseMove(root, 75, 75);
+    events.handleMouseMove(root, 25, 25);
+    events.advanceClock(0.501f);
+    CHECK(fired == 2);
+}
+
+TEST_CASE("Hover delay - a move within the armed node does not reset the deadline") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    // The OUTER box carries the delay; the inner child is plain. Moving within
+    // the outer box — including deeper into the child — keeps the outer node
+    // above the LCA cut and out of the enter chain, so its deadline holds.
+    int fired = 0;
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner")
+                    )
+                    .width(100)
+                    .height(100)
+                    .onHoverDelay([&] { fired++; });
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseMove(root, 75, 75);  // outer, outside the inner child
+    events.advanceClock(0.3f);
+    events.handleMouseMove(root, 80, 80);  // within the same node
+    events.handleMouseMove(root, 25, 25);  // deeper, into the plain child
+    events.advanceClock(0.201f);           // 501ms total against ONE deadline
+    CHECK(fired == 1);
+}
+
+TEST_CASE("Hover delay - hoverDelayMs overrides the default interval") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int fired = 0;
+    auto tree = Box().width(100).height(100).hoverDelayMs(200).onHoverDelay([&] { fired++; });
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseMove(root, 50, 50);
+    events.advanceClock(0.15f);
+    CHECK(fired == 0);
+    events.advanceClock(0.051f);  // 201ms: past the custom 200ms deadline
+    CHECK(fired == 1);
+}
+
+TEST_CASE("Hover delay - the deepest delay carrier in the enter chain wins") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int innerFired = 0;
+    int outerFired = 0;
+    auto tree = Box(
+                        Box().width(50).height(50).setKey("inner").onHoverDelay([&] { innerFired++; })
+                    )
+                    .width(100)
+                    .height(100)
+                    .onHoverDelay([&] { outerFired++; });
+    auto fiber = reconciler.mount(std::move(tree));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    // One move enters BOTH; the inner (deepest, most specific) node arms.
+    events.handleMouseMove(root, 25, 25);
+    events.advanceClock(0.6f);
+    CHECK(innerFired == 1);
+    CHECK(outerFired == 0);  // single slot: the outer's delay never ran
+}
+
+TEST_CASE("Hover delay - an armed node reconciled away never fires (dead token, no UAF)") {
+    Reconciler reconciler;
+    EventHandler events;
+
+    int fired = 0;
+    auto build = [&](bool withField) -> VNode {
+        std::vector<Child> kids;
+        if (withField)
+            kids.push_back(Box().width(80).height(20).setKey("field").onHoverDelay([&] { fired++; }));
+        return Box(std::move(kids)).width(100).height(100);
+    };
+
+    auto fiber = reconciler.mount(build(true));
+    auto* root = reconciler.renderRoot();
+    root->calculateLayout(100, 100);
+
+    events.handleMouseMove(root, 40, 10);  // arm the field
+    events.advanceClock(0.3f);
+
+    // Reconcile the armed node away before the deadline. No node-removed
+    // callback is wired here (the bare-reconciler idiom), so the liveness
+    // token is the only thing between the deadline and freed memory.
+    reconciler.reconcile(fiber.get(), build(false));
+    root->calculateLayout(100, 100);
+
+    CHECK_NOTHROW(events.advanceClock(1.0f));
+    CHECK(fired == 0);
+}
+
 TEST_CASE("Text node receives events") {
     Reconciler reconciler;
     EventHandler events;

@@ -249,6 +249,16 @@ public:
     Derived& onHover(std::function<void(bool)> fn) {
         return event([&](EventProps& p) { p.onHover = std::move(fn); });
     }
+    // Fired ONCE when the pointer has hovered this node continuously for
+    // hoverDelayMs (default render_defaults::kHoverDelayMs). Leaving before
+    // the deadline disarms; re-entering restarts the timer. The tooltip seam.
+    Derived& onHoverDelay(std::function<void()> fn) {
+        return event([&](EventProps& p) { p.onHoverDelay = std::move(fn); });
+    }
+    // Continuous-hover time (ms) before onHoverDelay fires.
+    Derived& hoverDelayMs(float v) {
+        return event([&](EventProps& p) { p.hoverDelayMs = v; });
+    }
     Derived& onFocus(std::function<void(bool)> fn) {
         return event([&](EventProps& p) { p.onFocus = std::move(fn); });
     }

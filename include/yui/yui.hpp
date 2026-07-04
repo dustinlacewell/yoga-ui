@@ -20,3 +20,4 @@
 
 // Widgets (compositions over the primitives; namespace yui::widgets)
 #include <yui/widgets/Modal.hpp>
+#include <yui/widgets/Tooltip.hpp>

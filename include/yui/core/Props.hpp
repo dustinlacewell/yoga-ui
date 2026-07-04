@@ -88,11 +88,16 @@ struct EventProps {
     std::function<void(float, float)> onMouseMove;           // (x, y) — the captor during a press, else hover
     std::function<void(const DragEvent&)> onDrag;            // captured move past the drag threshold
     std::function<void(bool)> onHover;
+    std::function<void()> onHoverDelay;                      // fired ONCE after hoverDelayMs of
+                                                             // continuous hover (leave disarms,
+                                                             // re-enter restarts)
     std::function<void(bool)> onFocus;
     std::function<void(float, float)> onScroll;              // (deltaX, deltaY)
     std::function<void(int, uint16_t, bool)> onKeyDown;      // (keyCode, modifiers, repeat)
     std::function<void(int, uint16_t)> onKeyUp;              // (keyCode, modifiers)
     std::optional<CursorShape> cursor;                       // pointer shape while hovered/captured
+    std::optional<float> hoverDelayMs;                       // delay before onHoverDelay (unset =
+                                                             // render_defaults::kHoverDelayMs)
     bool focusable = false;                                  // click/Tab can move focus here
                                                              // (an Input always can)
     std::optional<bool> autoFocus;                           // focus this node when it mounts

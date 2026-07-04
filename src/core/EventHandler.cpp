@@ -577,6 +577,18 @@ const std::function<void(bool)>* hoverHandlerFor(Node* node) {
     return (p && p->onHover) ? &p->onHover : nullptr;
 }
 
+// The onHoverDelay handler for a node; nullptr if the node carries none.
+const std::function<void()>* hoverDelayHandlerFor(Node* node) {
+    const EventProps* p = eventPropsOf(node);
+    return (p && p->onHoverDelay) ? &p->onHoverDelay : nullptr;
+}
+
+// The node's hover-delay interval: its hoverDelayMs prop, or the shared default.
+double hoverDelayMsFor(Node* node) {
+    const EventProps* p = eventPropsOf(node);
+    return (p && p->hoverDelayMs) ? static_cast<double>(*p->hoverDelayMs) : rd::kHoverDelayMs;
+}
+
 // The onFocus handler for a node (mirrors hoverHandlerFor); nullptr if none.
 const std::function<void(bool)>* focusHandlerFor(Node* node) {
     const EventProps* p = eventPropsOf(node);
@@ -838,6 +850,11 @@ void EventHandler::updateHover(Node* newHovered) {
     // desync node flags from hoveredNode_.
     for (Node* n = oldNode; n && n != lca; n = n->parent) {
         n->hovered = false;
+        // The pointer left the armed hover-delay node: disarm. The delay runs
+        // only while the pointer stays inside it; a later re-enter re-arms a
+        // fresh deadline.
+        if (n == hoverDelayNode_)
+            disarmHoverDelay();
         const auto* onHover = hoverHandlerFor(n);
         if (onHover && *onHover) {
             fireCallback("onHover", [&] { (*onHover)(false); }, report);
@@ -845,16 +862,48 @@ void EventHandler::updateHover(Node* newHovered) {
     }
 
     // Enter: set hovered + onHover(true) from the new node up to (exclusive) the
-    // LCA.
+    // LCA. The walk is deepest-first, so the FIRST onHoverDelay carrier found is
+    // the deepest — the most specific delay target when such nodes nest.
+    Node* delayTarget = nullptr;
     for (Node* n = newHovered; n && n != lca; n = n->parent) {
         n->hovered = true;
+        if (!delayTarget && hoverDelayHandlerFor(n))
+            delayTarget = n;
         const auto* onHover = hoverHandlerFor(n);
         if (onHover && *onHover) {
             fireCallback("onHover", [&] { (*onHover)(true); }, report);
         }
     }
 
+    // Arm on a genuine ENTER only. A move within an already-armed node — or
+    // deeper into a plain descendant of it — keeps that node above the LCA and
+    // out of the enter chain, so its running deadline is never reset here.
+    // Corollary: leaving a child delay-carrier UP into an already-hovered
+    // ancestor delay-carrier arms NOTHING — the ancestor is above the LCA, not
+    // a fresh enter — intended and unreachable by the Tooltip (one carrier).
+    if (delayTarget)
+        armHoverDelay(delayTarget, hoverDelayMsFor(delayTarget));
+
     setHoveredNode(newHovered);
+}
+
+void EventHandler::fireHoverDelayIfDue() noexcept {
+    // The fired latch is the one-shot: after firing, the slot stays ARMED but
+    // latched, so the pointer resting on the node doesn't re-fire every frame.
+    // Disarm (and thus re-fire eligibility) comes only from leave/removal.
+    if (hoverDelayFired_)
+        return;
+    Node* node = liveHoverDelayNode();
+    if (!node || clockMs_ < hoverDelayDeadlineMs_)
+        return;
+
+    // Latch BEFORE the callback so a re-entrant clock advance can't double-fire.
+    hoverDelayFired_ = true;
+    const auto* onHoverDelay = hoverDelayHandlerFor(node);
+    if (onHoverDelay && *onHoverDelay) {
+        auto report = [this](std::string_view w, const std::exception* e) { reportError(w, e); };
+        fireCallback("onHoverDelay", [&] { (*onHoverDelay)(); }, report);
+    }
 }
 
 void EventHandler::updateFocus(Node* clicked) {

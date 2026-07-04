@@ -98,5 +98,11 @@ inline constexpr float kDragThresholdPx = 4.0f;
 inline constexpr double kMultiClickIntervalMs = 500.0;
 inline constexpr float kMultiClickRadiusPx = 4.0f;
 
+// Continuous-hover time before EventProps::onHoverDelay fires (the tooltip
+// delay), when the node sets no hoverDelayMs of its own. Measured on the same
+// advanceClock dt-accumulated clock as multi-click — deterministic under
+// tests, no wall clock.
+inline constexpr double kHoverDelayMs = 500.0;
+
 }  // namespace render_defaults
 }  // namespace yui

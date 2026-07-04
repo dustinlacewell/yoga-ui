@@ -78,7 +78,15 @@ public:
     // feeds the animation walk). Presses chain into double-clicks against this
     // accumulated clock, so click timing follows the host's frame clock and
     // stays deterministic under tests — no wall clock.
-    void advanceClock(float dt) noexcept { clockMs_ += static_cast<double>(dt) * 1000.0; }
+    //
+    // Also the hover-delay tick: an armed onHoverDelay whose deadline this
+    // advance crosses fires HERE — Host::update calls advanceClock BEFORE its
+    // dirty checks, so a state set in the callback mounts (e.g. a tooltip)
+    // in the SAME frame.
+    void advanceClock(float dt) noexcept {
+        clockMs_ += static_cast<double>(dt) * 1000.0;
+        fireHoverDelayIfDue();
+    }
 
     // Get the focused node, of any primitive type. Validates the liveness token
     // first: if the focused node was freed by a reconciliation, this clears the
@@ -168,6 +176,12 @@ public:
         }
         if (pressedNode_ == node) {
             setPressedNode(nullptr);
+        }
+        // An armed hover-delay node unmounting mid-delay must never fire on
+        // freed memory: drop the arm eagerly (the liveness token is the lazy
+        // backstop for removals with no callback wired).
+        if (hoverDelayNode_ == node) {
+            disarmHoverDelay();
         }
         // The saved slot drops BEFORE the trap branch below: focus must never
         // be restored to a node that is itself going away (the dead-token
@@ -405,6 +419,47 @@ private:
         return hoveredNode_;
     }
 
+    // Arm the hover-delay slot for `node`: capture the liveness token in
+    // lockstep (mirrors setHoveredNode), set the deadline on the advanceClock
+    // clock, and reset the fired latch. Called ONLY from updateHover's enter
+    // walk — a move WITHIN the armed node never re-enters it (the LCA cut
+    // keeps it out of the enter chain), so the running deadline holds.
+    void armHoverDelay(Node* node, double delayMs) {
+        hoverDelayNode_ = node;
+        hoverDelayAlive_ = node ? node->alive : std::weak_ptr<bool>{};
+        hoverDelayDeadlineMs_ = clockMs_ + delayMs;
+        hoverDelayFired_ = false;
+    }
+
+    // Clear the hover-delay slot (pointer left the armed node, or the node was
+    // removed). The only other writer besides armHoverDelay.
+    void disarmHoverDelay() {
+        hoverDelayNode_ = nullptr;
+        hoverDelayAlive_.reset();
+        hoverDelayFired_ = false;
+    }
+
+    // Return hoverDelayNode_ only if its node is still alive; otherwise clear
+    // the stale arm and return nullptr (mirrors liveHoveredNode).
+    Node* liveHoverDelayNode() const {
+        if (!hoverDelayNode_)
+            return nullptr;
+        auto alive = hoverDelayAlive_.lock();
+        if (!alive || !*alive) {
+            hoverDelayNode_ = nullptr;
+            hoverDelayAlive_.reset();
+            return nullptr;
+        }
+        return hoverDelayNode_;
+    }
+
+    // Fire the armed node's onHoverDelay once its deadline passes. The fired
+    // latch stays set (and the slot stays armed) until leave/removal disarms,
+    // so the callback fires ONCE per continuous hover — not every frame the
+    // pointer rests on the node. Defined in the .cpp (needs the callback
+    // isolation and props plumbing).
+    void fireHoverDelayIfDue() noexcept;
+
     // Set the visual-state latch. Called ONLY on actual hover/press/focus/text-edit
     // transitions (never on a non-transition mouse move); consumed by
     // consumeVisualStateChanged.
@@ -451,6 +506,14 @@ private:
     // token (Node::alive) without owning it.
     mutable Node* hoveredNode_ = nullptr;
     mutable std::weak_ptr<bool> hoveredNodeAlive_;
+    // Hover-delay slot: the DEEPEST entered node carrying onHoverDelay, armed
+    // by updateHover's enter walk, disarmed by its leave walk / onNodeRemoved.
+    // hoverDelayFired_ latches after the one fire (see fireHoverDelayIfDue).
+    // mutable: liveHoverDelayNode() lazily clears a stale arm.
+    mutable Node* hoverDelayNode_ = nullptr;
+    mutable std::weak_ptr<bool> hoverDelayAlive_;
+    double hoverDelayDeadlineMs_ = 0;
+    bool hoverDelayFired_ = false;
     // mutable: liveFocusedNode() lazily clears a stale focus from const
     // getFocusedNode(). focusedNodeAlive_ observes the focused node's
     // liveness token (Node::alive) without owning it.
