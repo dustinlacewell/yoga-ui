@@ -17,3 +17,6 @@
 
 // Layout utilities
 #include <yui/layout/Placement.hpp>
+
+// Widgets (compositions over the primitives; namespace yui::widgets)
+#include <yui/widgets/Modal.hpp>
