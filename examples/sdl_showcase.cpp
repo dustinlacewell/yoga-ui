@@ -22,11 +22,26 @@
 using namespace yui;
 using namespace showcase;
 
-// The editing command a key maps to, if any — routed to the focused Input only
-// after handleKeyDown reports the key unconsumed (the Tab precedent: app
-// handlers see the raw key first). Return maps to InsertNewline below (core
-// decides: multiline inserts '\n', single-line fires onSubmit).
-static std::optional<EditCommand> editCommandFor(SDL_Keycode key) {
+// The editing command a key maps to, if any. Host::handleKeyDown's routing
+// overload owns the priority (browser model): a focused Input consumes its
+// editing keys before app onKeyDown handlers see them; an unhandled edit falls
+// through. Return maps to InsertNewline (core decides: multiline inserts '\n',
+// single-line fires onSubmit).
+static std::optional<EditCommand> editCommandFor(SDL_Keycode key, uint16_t mods) {
+    if (mods & KeyMod_Ctrl) {
+        switch (key) {
+        case SDLK_a:
+            return EditCommand::SelectAll;
+        case SDLK_c:
+            return EditCommand::Copy;
+        case SDLK_x:
+            return EditCommand::Cut;
+        case SDLK_v:
+            return EditCommand::Paste;
+        default:
+            break;
+        }
+    }
     switch (key) {
     case SDLK_LEFT:
         return EditCommand::MoveLeft;
@@ -40,6 +55,8 @@ static std::optional<EditCommand> editCommandFor(SDL_Keycode key) {
         return EditCommand::DeleteBackward;
     case SDLK_DELETE:
         return EditCommand::DeleteForward;
+    case SDLK_RETURN:
+        return EditCommand::InsertNewline;
     default:
         return std::nullopt;
     }
@@ -248,37 +265,13 @@ int main(int argc, char* argv[]) {
                     break;
 
                 case SDL_KEYDOWN: {
-                    if (event.key.keysym.sym == SDLK_ESCAPE) {
-                        running = false;
-                    } else if (event.key.keysym.sym == SDLK_RETURN) {
-                        host.handleEditCommand(EditCommand::InsertNewline);
-                    }
+                    if (event.key.keysym.sym == SDLK_ESCAPE)
+                        running = false;  // Esc stays app-owned, even from an input
                     uint16_t mods = toKeyMod(static_cast<SDL_Keymod>(event.key.keysym.mod));
-                    // Tab traversal and the editing keys live in the platform
-                    // shim (core stays keycode-agnostic; SDL's Tab is 9), and
-                    // only when no app handler consumed the key.
-                    bool consumed =
-                        host.handleKeyDown(event.key.keysym.sym, mods, event.key.repeat != 0);
-                    if (!consumed) {
-                        if (event.key.keysym.sym == SDLK_TAB) {
-                            if (mods & KeyMod_Shift)
-                                host.focusPrev();
-                            else
-                                host.focusNext();
-                        } else if (event.key.keysym.sym == SDLK_a && (mods & KeyMod_Ctrl)) {
-                            host.handleEditCommand(EditCommand::SelectAll);
-                        } else if (event.key.keysym.sym == SDLK_c && (mods & KeyMod_Ctrl)) {
-                            host.handleEditCommand(EditCommand::Copy);
-                        } else if (event.key.keysym.sym == SDLK_x && (mods & KeyMod_Ctrl)) {
-                            host.handleEditCommand(EditCommand::Cut);
-                        } else if (event.key.keysym.sym == SDLK_v && (mods & KeyMod_Ctrl)) {
-                            host.handleEditCommand(EditCommand::Paste);
-                        } else if (auto cmd = editCommandFor(event.key.keysym.sym)) {
-                            // Shift extends the selection: moves shift only the
-                            // caret, leaving the anchor (deletes ignore the flag).
-                            host.handleEditCommand(*cmd, (mods & KeyMod_Shift) != 0);
-                        }
-                    }
+                    // The shim only maps keycodes (core stays keycode-agnostic;
+                    // SDL's Tab is 9); core owns the routing priority.
+                    host.handleKeyDown(event.key.keysym.sym, mods, event.key.repeat != 0,
+                                       editCommandFor(event.key.keysym.sym, mods), event.key.keysym.sym == SDLK_TAB);
                     break;
                 }
 

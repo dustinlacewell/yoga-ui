@@ -320,11 +320,26 @@ static void charCallback(GLFWwindow*, unsigned int codepoint) {
     g_host->handleTextInput(buf);
 }
 
-// The editing command a key maps to, if any — routed to the focused Input only
-// after handleKeyDown reports the key unconsumed (the Tab precedent: app
-// handlers see the raw key first). Enter maps to InsertNewline below (core
-// decides: multiline inserts '\n', single-line fires onSubmit).
-static std::optional<EditCommand> editCommandFor(int key) {
+// The editing command a key maps to, if any. Host::handleKeyDown's routing
+// overload owns the priority (browser model): a focused Input consumes its
+// editing keys before app onKeyDown handlers see them; an unhandled edit falls
+// through. Enter maps to InsertNewline (core decides: multiline inserts '\n',
+// single-line fires onSubmit).
+static std::optional<EditCommand> editCommandFor(int key, uint16_t mods) {
+    if (mods & KeyMod_Ctrl) {
+        switch (key) {
+        case GLFW_KEY_A:
+            return EditCommand::SelectAll;
+        case GLFW_KEY_C:
+            return EditCommand::Copy;
+        case GLFW_KEY_X:
+            return EditCommand::Cut;
+        case GLFW_KEY_V:
+            return EditCommand::Paste;
+        default:
+            break;
+        }
+    }
     switch (key) {
     case GLFW_KEY_LEFT:
         return EditCommand::MoveLeft;
@@ -338,6 +353,8 @@ static std::optional<EditCommand> editCommandFor(int key) {
         return EditCommand::DeleteBackward;
     case GLFW_KEY_DELETE:
         return EditCommand::DeleteForward;
+    case GLFW_KEY_ENTER:
+        return EditCommand::InsertNewline;
     default:
         return std::nullopt;
     }
@@ -346,40 +363,15 @@ static std::optional<EditCommand> editCommandFor(int key) {
 static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) {
     if (!g_host)
         return;
-    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        if (key == GLFW_KEY_ESCAPE) {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-            return;
-        } else if (key == GLFW_KEY_ENTER) {
-            g_host->handleEditCommand(EditCommand::InsertNewline);
-        }
-    }
     uint16_t keyMod = toKeyMod(mods);
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        // Tab traversal and the editing keys live in the platform shim (core
-        // stays keycode-agnostic; GLFW's Tab is 258), and only when no app
-        // handler consumed the key.
-        bool consumed = g_host->handleKeyDown(key, keyMod, action == GLFW_REPEAT);
-        if (!consumed) {
-            if (key == GLFW_KEY_TAB) {
-                if (keyMod & KeyMod_Shift)
-                    g_host->focusPrev();
-                else
-                    g_host->focusNext();
-            } else if (key == GLFW_KEY_A && (keyMod & KeyMod_Ctrl)) {
-                g_host->handleEditCommand(EditCommand::SelectAll);
-            } else if (key == GLFW_KEY_C && (keyMod & KeyMod_Ctrl)) {
-                g_host->handleEditCommand(EditCommand::Copy);
-            } else if (key == GLFW_KEY_X && (keyMod & KeyMod_Ctrl)) {
-                g_host->handleEditCommand(EditCommand::Cut);
-            } else if (key == GLFW_KEY_V && (keyMod & KeyMod_Ctrl)) {
-                g_host->handleEditCommand(EditCommand::Paste);
-            } else if (auto cmd = editCommandFor(key)) {
-                // Shift extends the selection: moves shift only the caret,
-                // leaving the anchor (deletes ignore the flag).
-                g_host->handleEditCommand(*cmd, (keyMod & KeyMod_Shift) != 0);
-            }
+        if (key == GLFW_KEY_ESCAPE) {  // Esc stays app-owned, even from an input
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            return;
         }
+        // The shim only maps keycodes (core stays keycode-agnostic; GLFW's Tab
+        // is 258); core owns the routing priority.
+        g_host->handleKeyDown(key, keyMod, action == GLFW_REPEAT, editCommandFor(key, keyMod), key == GLFW_KEY_TAB);
     } else if (action == GLFW_RELEASE) {
         g_host->handleKeyUp(key, keyMod);
     }

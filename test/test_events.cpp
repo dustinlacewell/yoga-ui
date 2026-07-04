@@ -4516,3 +4516,128 @@ TEST_CASE("Multiline - a measurer swap re-measures multiline inputs") {
     host.update(200, 200);
     CHECK(input->layout.height == doctest::Approx(30));
 }
+
+// ============================================================================
+// User-agent keydown routing (the Host::handleKeyDown routing overload): the
+// shim maps platform keycodes; CORE owns the priority — (1) a focused Input's
+// editing command, (2) focus navigation, (3) app onKeyDown dispatch.
+// Regression for the starved-editing-keys bug: the shims dispatched
+// handleKeyDown FIRST, an app-level onKeyDown on the ROOT consumed every key,
+// and the shims' if-unconsumed editing/Tab ladder never ran. These drive the
+// exact seam the shims call.
+// ============================================================================
+
+namespace {
+
+struct RoutingCounters {
+    int appKeys = 0;
+    int submits = 0;
+};
+
+// The showcase pattern: an app-level onKeyDown on the ROOT wrapping Inputs
+// (Inputs are Tab-focusable with no opt-in).
+VNode routingFixture(RoutingCounters& c) {
+    return Box(
+               Input().value("abc").width(80).height(20).setKey("one").onSubmit(
+                   [&c] { c.submits++; }),
+               Input().value("xyz").width(80).height(20).setKey("two")
+           )
+        .width(200)
+        .height(100)
+        .onKeyDown([&c](int, uint16_t, bool) { c.appKeys++; });
+}
+
+// Mount, focus the first Input, and pin its caret at the front so the edits
+// below are deterministic.
+InputNode* focusFirstRoutingInput(EventTestHost& host) {
+    host.update(200, 100);
+    auto* input = static_cast<InputNode*>(host.root()->children[0].get());
+    REQUIRE(input->type() == PrimitiveType::Input);
+    host.focus(input);
+    host.handleEditCommand(EditCommand::MoveLineStart);
+    return input;
+}
+
+}  // namespace
+
+TEST_CASE("KeyRouting - a focused Input's editing key edits; app onKeyDown never sees it") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    InputNode* input = focusFirstRoutingInput(host);
+
+    // THE bug: the old shim order let the root's onKeyDown consume the key and
+    // starve the edit. The keycode is arbitrary (999) — core is keycode-agnostic.
+    CHECK(host.handleKeyDown(999, 0, false, EditCommand::DeleteForward) == true);
+    CHECK(input->displayText == "bc");
+    CHECK(c.appKeys == 0);
+}
+
+TEST_CASE("KeyRouting - Tab and Shift-Tab always traverse focus; app handlers never see them") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    focusFirstRoutingInput(host);
+    Node* one = host.root()->children[0].get();
+    Node* two = host.root()->children[1].get();
+
+    CHECK(host.handleKeyDown(9, 0, false, std::nullopt, /*focusNav=*/true) == true);
+    CHECK(host.getFocusedNode() == two);
+    CHECK(host.handleKeyDown(9, KeyMod_Shift, false, std::nullopt, /*focusNav=*/true) == true);
+    CHECK(host.getFocusedNode() == one);
+    CHECK(c.appKeys == 0);
+}
+
+TEST_CASE("KeyRouting - with no focused Input an editing key falls through to app handlers") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    InputNode* input = focusFirstRoutingInput(host);
+    host.blur();
+
+    CHECK(host.handleKeyDown(999, 0, false, EditCommand::DeleteForward) == true);
+    CHECK(input->displayText == "abc");  // nothing edited
+    CHECK(c.appKeys == 1);
+}
+
+TEST_CASE("KeyRouting - an edit inapplicable to the focused input's mode falls through") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    InputNode* input = focusFirstRoutingInput(host);
+
+    // MoveUp on a single-line input is unconsumed -> app dispatch.
+    CHECK(host.handleKeyDown(999, 0, false, EditCommand::MoveUp) == true);
+    CHECK(input->displayText == "abc");
+    CHECK(c.appKeys == 1);
+}
+
+TEST_CASE("KeyRouting - Shift in the mods derives the selection-extend flag") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    InputNode* input = focusFirstRoutingInput(host);
+
+    CHECK(host.handleKeyDown(999, KeyMod_Shift, false, EditCommand::MoveRight) == true);
+    CHECK(input->hasSelection() == true);
+    CHECK(c.appKeys == 0);
+}
+
+TEST_CASE("KeyRouting - a non-editing key reaches app handlers while an Input is focused") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    focusFirstRoutingInput(host);
+
+    CHECK(host.handleKeyDown(294, 0, false, std::nullopt) == true);  // an "F5"
+    CHECK(c.appKeys == 1);
+}
+
+TEST_CASE("KeyRouting - Enter fires onSubmit on a focused single-line input; blurred it falls through") {
+    RoutingCounters c;
+    EventTestHost host([&c] { return routingFixture(c); });
+    focusFirstRoutingInput(host);
+
+    CHECK(host.handleKeyDown(13, 0, false, EditCommand::InsertNewline) == true);
+    CHECK(c.submits == 1);
+    CHECK(c.appKeys == 0);
+
+    host.blur();
+    CHECK(host.handleKeyDown(13, 0, false, EditCommand::InsertNewline) == true);
+    CHECK(c.submits == 1);
+    CHECK(c.appKeys == 1);
+}

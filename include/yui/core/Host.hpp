@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -397,6 +398,23 @@ public:
         });
     }
 
+    // Full user-agent keydown routing. The shim maps the platform key to `edit`
+    // (nullopt = not an editing key) and `focusNav` (the platform's Tab); core
+    // owns the priority: (1) a focused Input's editing command, (2) focus
+    // navigation, (3) app onKeyDown dispatch. An edit the focused input did not
+    // handle (none focused, or inapplicable to its mode) falls through to app
+    // handlers.
+    bool handleKeyDown(int keyCode, uint16_t mods, bool repeat, std::optional<EditCommand> edit,
+                       bool focusNav = false) noexcept {
+        if (edit && handleEditCommand(*edit, (mods & KeyMod_Shift) != 0))
+            return true;  // input owned it; app never sees it
+        if (focusNav) {
+            (mods & KeyMod_Shift) ? focusPrev() : focusNext();
+            return true;  // traversal is unswallowable
+        }
+        return handleKeyDown(keyCode, mods, repeat);  // app handlers
+    }
+
     bool handleKeyUp(int keyCode, uint16_t keyMod) noexcept {
         return guardedBool("Host::handleKeyUp", [&] {
             if (!renderRoot_)
@@ -440,8 +458,8 @@ public:
 
     // Move focus through the focusables in document order, wrapping — scoped to
     // the focus trap while one is set. Tab detection lives in the platform shim
-    // (core stays keycode-agnostic: SDL's Tab is 9, GLFW's is 258): call these
-    // on Tab / Shift-Tab that handleKeyDown did not report consumed.
+    // (core stays keycode-agnostic: SDL's Tab is 9, GLFW's is 258): shims flag
+    // it as `focusNav` on the routing handleKeyDown overload above.
     void focusNext() noexcept {
         guardedVoid("Host::focusNext", [&] {
             if (renderRoot_)

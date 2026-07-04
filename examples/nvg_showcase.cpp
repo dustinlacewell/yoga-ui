@@ -19,6 +19,7 @@
 #include <nanovg.h>
 #define NANOVG_GL3_IMPLEMENTATION
 #include <iostream>
+#include <optional>
 
 #include <nanovg_gl.h>
 
@@ -179,29 +180,58 @@ static void charCallback(GLFWwindow*, unsigned int codepoint) {
     g_host->handleTextInput(buf);
 }
 
+// The editing command a key maps to, if any. Host::handleKeyDown's routing
+// overload owns the priority (browser model): a focused Input consumes its
+// editing keys before app onKeyDown handlers see them; an unhandled edit falls
+// through. Enter maps to InsertNewline (core decides: multiline inserts '\n',
+// single-line fires onSubmit).
+static std::optional<EditCommand> editCommandFor(int key, uint16_t mods) {
+    if (mods & KeyMod_Ctrl) {
+        switch (key) {
+        case GLFW_KEY_A:
+            return EditCommand::SelectAll;
+        case GLFW_KEY_C:
+            return EditCommand::Copy;
+        case GLFW_KEY_X:
+            return EditCommand::Cut;
+        case GLFW_KEY_V:
+            return EditCommand::Paste;
+        default:
+            break;
+        }
+    }
+    switch (key) {
+    case GLFW_KEY_LEFT:
+        return EditCommand::MoveLeft;
+    case GLFW_KEY_RIGHT:
+        return EditCommand::MoveRight;
+    case GLFW_KEY_HOME:
+        return EditCommand::MoveLineStart;
+    case GLFW_KEY_END:
+        return EditCommand::MoveLineEnd;
+    case GLFW_KEY_BACKSPACE:
+        return EditCommand::DeleteBackward;
+    case GLFW_KEY_DELETE:
+        return EditCommand::DeleteForward;
+    case GLFW_KEY_ENTER:
+        return EditCommand::InsertNewline;
+    default:
+        return std::nullopt;
+    }
+}
+
 static void keyCallback(GLFWwindow* window, int key, int, int action, int mods) {
     if (!g_host)
         return;
-
-    // Handle special keys for text input
+    uint16_t keyMod = toKeyMod(mods);
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        if (key == GLFW_KEY_ESCAPE) {
+        if (key == GLFW_KEY_ESCAPE) {  // Esc stays app-owned, even from an input
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             return;
-        } else if (key == GLFW_KEY_BACKSPACE) {
-            g_host->handleEditCommand(EditCommand::DeleteBackward);
-        } else if (key == GLFW_KEY_ENTER) {
-            g_host->handleEditCommand(EditCommand::InsertNewline);
         }
-    }
-
-    uint16_t keyMod = toKeyMod(mods);
-
-    // Dispatch keyboard events
-    if (action == GLFW_PRESS) {
-        g_host->handleKeyDown(key, keyMod, false);
-    } else if (action == GLFW_REPEAT) {
-        g_host->handleKeyDown(key, keyMod, true);
+        // The shim only maps keycodes (core stays keycode-agnostic; GLFW's Tab
+        // is 258); core owns the routing priority.
+        g_host->handleKeyDown(key, keyMod, action == GLFW_REPEAT, editCommandFor(key, keyMod), key == GLFW_KEY_TAB);
     } else if (action == GLFW_RELEASE) {
         g_host->handleKeyUp(key, keyMod);
     }
