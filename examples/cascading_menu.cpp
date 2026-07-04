@@ -1,11 +1,13 @@
 // Cascading Menu example for yui (NanoVG backend)
 //
-// Demonstrates the "root-level submenu rendering" pattern for building
-// traditional cascading menus with a declarative UI framework:
+// Demonstrates building traditional cascading menus with the Portal
+// primitive:
 //
 //   - Menu bar with click-to-open dropdowns
 //   - Hover-to-open cascading submenus
-//   - Root-level rendering avoids Scroll clipping (the "portal" pattern)
+//   - Each open panel is Portal content declared IN-PLACE inside its bar
+//     item: Portal renders it at root z-order, escaping any ancestor clip,
+//     with no manual hoisting to a root layer list
 //   - Hover-in drives submenu switching (hover-out is ignored, allowing
 //     the mouse to travel into the submenu without it closing)
 //
@@ -379,6 +381,10 @@ static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
             Column(std::move(rows))
         ).flexGrow(1)
     )
+    // Consuming click: events bubble through the Portal into the logical
+    // parent — the bar item, whose onClick toggles the menu — so a click
+    // nothing in the panel handles (a separator, the padding) must stop here.
+    .onClick([]() {})
     .positionType(PositionType::Absolute)
     .positionLeft(at.x).positionTop(at.y)
     .width(c::MENU_WIDTH)
@@ -390,14 +396,66 @@ static VNode MenuPanel(const std::vector<MenuDef>& items, int depth,
     .paddingTop(c::MENU_PAD_Y).paddingBottom(c::MENU_PAD_Y);
 }
 
+// ─── Open dropdown chain (Portal content) ───────────────────────────────────
+
+// The open bar item's dropdown chain, each panel wrapped in a Portal and
+// declared in-place inside the bar item: Portal renders content at root
+// z-order, so panels need no hoisting to a root layer list. Later portals
+// layer above earlier ones, so pushing in depth order stacks each submenu
+// over its parent.
+static void appendMenuPortals(std::vector<Child>& kids, const MenuState& ms) {
+    // Root dropdown (depth 0)
+    const auto& rootDef = resolveParent(ms.openBar, ms.activeItems, 0);
+    auto rootPlace = menuPlacement(ms.openBar, ms.activeItems, 0,
+                                   menuContentHeight(rootDef.children), rootDef.maxHeight);
+    kids.push_back(Portal(MenuPanel(rootDef.children, 0, rootPlace, ms)));
+
+    // Cascading submenus (depth 1, 2, ...)
+    for (int d = 0; d < static_cast<int>(ms.activeItems.size()); d++) {
+        if (ms.activeItems[d].empty()) break;
+
+        const auto& parentDef = resolveParent(ms.openBar, ms.activeItems, d + 1);
+        if (parentDef.children.empty()) break;
+
+        auto subPlace = menuPlacement(ms.openBar, ms.activeItems, d + 1,
+                                      menuContentHeight(parentDef.children), parentDef.maxHeight);
+        kids.push_back(Portal(MenuPanel(parentDef.children, d + 1, subPlace, ms)));
+    }
+}
+
+// Transparent full-viewport backdrop that closes the menu on any click no
+// panel consumed. Portal content hit-tests above the main tree; the panels
+// are LATER portals (declared inside the open bar item) and layer above it.
+static VNode DismissBackdrop() {
+    return Portal(
+        Box()
+            .positionType(PositionType::Absolute)
+            .positionLeft(0).positionTop(0)
+            .widthPercent(100).heightPercent(100)
+            .onClick([]() {
+                g_state->set([](MenuState& s) {
+                    s.openBar = -1;
+                    s.activeItems.clear();
+                });
+            }));
+}
+
 // ─── Menu bar ───────────────────────────────────────────────────────────────
 
 static VNode MenuBar(const MenuState& ms) {
     std::vector<Child> items;
     for (int i = 0; i < static_cast<int>(g_menuBar.size()); i++) {
         bool isOpen = ms.openBar == i;
+
+        std::vector<Child> kids;
+        kids.push_back(Text(g_menuBar[i].label).fontSize(c::FONT_SIZE).color(c::TEXT));
+        // The open item's dropdown chain is declared HERE, at its anchor —
+        // the Portals render it at root z, no hoisting required.
+        if (isOpen)
+            appendMenuPortals(kids, ms);
+
         items.push_back(
-            Box(Text(g_menuBar[i].label).fontSize(c::FONT_SIZE).color(c::TEXT))
+            Box(std::move(kids))
                 .height(c::BAR_HEIGHT)
                 .paddingLeft(c::BAR_PAD_X).paddingRight(c::BAR_PAD_X)
                 .alignItems(AlignItems::Center)
@@ -437,8 +495,11 @@ static Component App() {
     return [](ComponentContext&) -> VNode {
         const auto& ms = g_state->use();
 
-        // Content area
-        auto content = Column(
+        return Column(
+            // Dismiss backdrop, declared BEFORE the menu bar so the panel
+            // portals (declared later, inside the open bar item) layer above
+            // it. A Portal occupies no space in the Column's layout.
+            When(ms.openBar >= 0, DismissBackdrop()),
             MenuBar(ms),
             Box(
                 Column(
@@ -462,47 +523,6 @@ static Component App() {
             .alignItems(AlignItems::Center)
             .backgroundColor(c::BG)
         ).flexGrow(1);
-
-        // If no menu is open, just show content
-        if (ms.openBar < 0) return content;
-
-        // Menu is open — build layers
-        std::vector<Child> layers;
-        layers.push_back(std::move(content));
-
-        // Transparent backdrop to catch clicks outside menus
-        layers.push_back(
-            Box()
-                .positionType(PositionType::Absolute)
-                .positionLeft(0).positionTop(0)
-                .widthPercent(100).heightPercent(100)
-                .onClick([]() {
-                    g_state->set([](MenuState& s) {
-                        s.openBar = -1;
-                        s.activeItems.clear();
-                    });
-                })
-        );
-
-        // Root dropdown (depth 0)
-        const auto& rootDef = resolveParent(ms.openBar, ms.activeItems, 0);
-        auto rootPlace = menuPlacement(ms.openBar, ms.activeItems, 0,
-                                       menuContentHeight(rootDef.children), rootDef.maxHeight);
-        layers.push_back(MenuPanel(rootDef.children, 0, rootPlace, ms));
-
-        // Cascading submenus (depth 1, 2, ...)
-        for (int d = 0; d < static_cast<int>(ms.activeItems.size()); d++) {
-            if (ms.activeItems[d].empty()) break;
-
-            const auto& parentDef = resolveParent(ms.openBar, ms.activeItems, d + 1);
-            if (parentDef.children.empty()) break;
-
-            auto subPlace = menuPlacement(ms.openBar, ms.activeItems, d + 1,
-                                          menuContentHeight(parentDef.children), parentDef.maxHeight);
-            layers.push_back(MenuPanel(parentDef.children, d + 1, subPlace, ms));
-        }
-
-        return Box(std::move(layers)).flexGrow(1);
     };
 }
 

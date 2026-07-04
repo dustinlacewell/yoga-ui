@@ -9,6 +9,8 @@
 //   - Submenus cascade right-of-parent, flipping left near the right edge
 //   - Right-click in any corner to watch the menu reposition to stay on-screen
 //   - Middle-click a leaf item to invoke it without closing the menu
+//   - The backdrop and panels are Portal content: rendered and hit-tested at
+//     root z-order, with no manual layer assembly at the app root
 //
 // Placement is the same robust model as cascading_menu.cpp, but anchored at the
 // cursor instead of a menu bar: prefer the ideal spot, clamp into the window,
@@ -364,13 +366,53 @@ static VNode ClickMarker(const MenuState& ms) {
     .widthPercent(100).heightPercent(100);
 }
 
+// ─── Menu overlay (Portal content) ──────────────────────────────────────────
+
+// The open menu as Portal content: a dismiss backdrop first (so it layers
+// below), then the panel chain in depth order (later portals layer above
+// earlier ones). Portal renders these at root z-order — no manual layer
+// assembly needed where they're declared.
+static void appendMenuPortals(std::vector<Child>& kids, const MenuState& ms) {
+    if (!ms.open) return;
+
+    // Transparent backdrop: left-click outside closes the menu. (A right
+    // click anywhere is handled at the GLFW layer to re-anchor instead.)
+    kids.push_back(Portal(
+        Box()
+            .positionType(PositionType::Absolute)
+            .positionLeft(0).positionTop(0)
+            .widthPercent(100).heightPercent(100)
+            .onClick([]() {
+                g_state->set([](MenuState& s) {
+                    s.open = false;
+                    s.activeItems.clear();
+                });
+            })));
+
+    // Root menu (depth 0), anchored at the cursor.
+    auto rootPlace = menuPlacement(ms, 0, menuContentHeight(g_contextMenu), 0);
+    kids.push_back(Portal(MenuPanel(g_contextMenu, 0, rootPlace, ms)));
+
+    // Cascading submenus (depth 1, 2, ...).
+    for (int d = 0; d < static_cast<int>(ms.activeItems.size()); d++) {
+        if (ms.activeItems[d].empty()) break;
+
+        const auto& parentDef = resolveParent(ms.activeItems, d + 1);
+        if (parentDef.children.empty()) break;
+
+        auto subPlace = menuPlacement(ms, d + 1, menuContentHeight(parentDef.children), parentDef.maxHeight);
+        kids.push_back(Portal(MenuPanel(parentDef.children, d + 1, subPlace, ms)));
+    }
+}
+
 // ─── App ────────────────────────────────────────────────────────────────────
 
 static Component App() {
     return [](ComponentContext&) -> VNode {
         const auto& ms = g_state->use();
 
-        auto content = Box(
+        std::vector<Child> kids;
+        kids.push_back(
             Column(
                 Text("Context Menu Demo").fontSize(22).color(c::TEXT),
                 Gap(14),
@@ -391,51 +433,15 @@ static Component App() {
                         Text(ms.lastAction).fontSize(c::FONT_SIZE).color(c::ACCENT)
                     ))
             ).gap(4)
-        )
-        .flexGrow(1)
-        .justifyContent(JustifyContent::Center)
-        .alignItems(AlignItems::Center)
-        .backgroundColor(c::BG);
-
-        if (!ms.open) return content;
-
-        // Menu is open — build layers over the content.
-        std::vector<Child> layers;
-        layers.push_back(std::move(content));
-        layers.push_back(ClickMarker(ms));
-
-        // Transparent backdrop: left-click outside closes the menu. (A right
-        // click anywhere is handled at the GLFW layer to re-anchor instead.)
-        layers.push_back(
-            Box()
-                .positionType(PositionType::Absolute)
-                .positionLeft(0).positionTop(0)
-                .widthPercent(100).heightPercent(100)
-                .onClick([]() {
-                    g_state->set([](MenuState& s) {
-                        s.open = false;
-                        s.activeItems.clear();
-                    });
-                })
         );
+        kids.push_back(ClickMarker(ms));
+        appendMenuPortals(kids, ms);
 
-        // Root menu (depth 0), anchored at the cursor.
-        const auto& rootItems = g_contextMenu;
-        auto rootPlace = menuPlacement(ms, 0, menuContentHeight(rootItems), 0);
-        layers.push_back(MenuPanel(rootItems, 0, rootPlace, ms));
-
-        // Cascading submenus (depth 1, 2, ...).
-        for (int d = 0; d < static_cast<int>(ms.activeItems.size()); d++) {
-            if (ms.activeItems[d].empty()) break;
-
-            const auto& parentDef = resolveParent(ms.activeItems, d + 1);
-            if (parentDef.children.empty()) break;
-
-            auto subPlace = menuPlacement(ms, d + 1, menuContentHeight(parentDef.children), parentDef.maxHeight);
-            layers.push_back(MenuPanel(parentDef.children, d + 1, subPlace, ms));
-        }
-
-        return Box(std::move(layers)).flexGrow(1);
+        return Box(std::move(kids))
+            .flexGrow(1)
+            .justifyContent(JustifyContent::Center)
+            .alignItems(AlignItems::Center)
+            .backgroundColor(c::BG);
     };
 }
 
