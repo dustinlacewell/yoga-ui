@@ -25,8 +25,10 @@ correctness fixes).
 
 Everything else is **additive** or source-compatible: you opt in when you want it
 (widgets, Portal, Modal/Tooltip, element refs, text selection/clipboard,
-programmatic scroll), and the factory children went brace-list → variadic
-(`Row({a,b})` → `Row(a,b)`) without breaking the old form. See *Factories*.
+programmatic scroll). One perf note: factory children went brace-list → variadic
+(`Row({a,b})` → `Row(a,b)`) to move children instead of deep-copying them every
+render — brace-lists still compile but keep the copy cost, so convert hot trees.
+See *Factories*.
 
 ---
 
@@ -284,31 +286,47 @@ Bracket the walk yourself: `backend.beginFrame(); render::renderTree(root, backe
 
 `Text`/`Input` gained `.font("name")` (resolved against the renderer's registered faces; empty = default) — this is *why* the font param threads through every measure/draw signature. If you embed a bundled renderer, after `render()` returns backend state is exactly as on entry (`NvgRenderer` brackets in one `nvgSave`/`nvgRestore`; `SdlRenderer` restores draw color/blend/clip/target and clamps geometry) — no need to re-assert your own draw state.
 
-## Factories: variadic children (source-compatible)
+## Factories: variadic children (compiles as-is, but migrate for perf)
 
-**What changed:** `Box`/`Row`/`Column`/`Scroll` (and the new `Portal`) take children
-as a **variadic pack** instead of a brace-list, and the old single-child
-`Box(VNode)` / `Box(Component)` / `Scroll(VNode)` / `Scroll(Component)` overloads
-were removed in favor of it (commit `40e6602`, to avoid a per-render subtree copy).
+**What changed — and why it matters.** `Box`/`Row`/`Column`/`Scroll` (and the new
+`Portal`) gained a **variadic** children overload, the `initializer_list<Child>`
+path was removed, and the old single-child `Box(VNode)` / `Box(Component)` /
+`Scroll(VNode)` / `Scroll(Component)` overloads were dropped (commit `40e6602`).
+
+This was a **performance** change, not cosmetics. `std::initializer_list`
+elements are `const`, so a child `VNode` in a braced factory could never be
+*moved* out of the list — **every subtree was deep-copied on every build, on
+every render.** The variadic overload forwards each argument straight into a
+reserved vector, so children **move** instead of copy. Measured: an 8k-node tree
+build dropped ~50% (60.1 → 29.9 ms).
 
 ```cpp
-// v1.0.0 style
+// v1.0.0 — braces: each child DEEP-COPIED on every render
 Row({ Text("a"), Box({ Text("b") }), Column({ Text("c"), Text("d") }) });
 
-// HEAD style — drop the braces
+// HEAD — variadic: each child MOVED
 Row(Text("a"), Box(Text("b")), Column(Text("c"), Text("d")));
 ```
 
-**What a consumer must do: nothing.** The `std::vector<Child>` overload was kept,
-so `Row({a, b})` brace-lists still compile (they bind to the vector overload), and
-single-child `Box(child)` binds to the variadic. Verified: every old call shape in
-both projects still builds. Two notes:
-- The factories are now `[[nodiscard]]` — if you ever call `Box(...)` for effect
-  and discard the builder, you'll get a new unused-result **warning** (not an error).
-- A runtime-built child list still uses the vector form: `Box(std::move(myVec))`.
-  Only the *static* brace-list is what the variadic form replaces.
+**What a consumer must do.** Nothing to *compile* — but there's a real perf catch:
 
-Adopting the brace-free form is optional cleanup, not a required migration.
+- ⚠️ **A brace-list `Row({a, b})` still compiles, but keeps the copy penalty.** It
+  now binds to the `Box(std::vector<Child>)` overload, and constructing that
+  vector from a braced `initializer_list` copies each element exactly as before
+  (init-list elements are still `const`). So old brace-list call sites are *not*
+  free — they route around the optimization. **For large static trees (both
+  projects build big menu/browser trees), strip the braces** — `Row(a, b)` — to
+  actually reclaim the move semantics.
+- Single-child `Box(child)` binds to the variadic and moves — no change needed.
+- A **runtime-built** list uses the vector form on purpose: `Box(std::move(myVec))`
+  (`std::move` hands the vector over without copying its elements). Only the
+  *static braced* form is what you want to convert.
+- The factories are now `[[nodiscard]]` — discarding a builder yields a new
+  unused-result **warning** (not an error).
+
+Bottom line: brace-lists are source-compatible but leave performance on the
+table; converting hot static trees to the brace-free variadic form is the
+point of the change.
 
 ## The overlay model: Portal, Modal, Tooltip (additive)
 
@@ -545,6 +563,16 @@ supported alternative is `NodeRef::asScroll()`, but you don't have to change it.
 `placeSubmenu`, `clampRange`, `Side::Right`, `PlacedY` — all present and
 unchanged. The `Viewport` aggregate field order your `menuViewport` relies on
 (`{width, height, top, right, bottom, left}`) is intact. No action.
+
+### Recommended for both (perf, not a break)
+
+**Strip factory braces in your hot trees.** Both projects build large static
+subtrees with `Box({...})` / `Row({...})` / `Column({...})` (multiplayer's
+screens; prefabs' `YuiBrowserModal` and menu cascades). Those brace-lists still
+compile but deep-copy every child on every render (see *Factories*). Converting
+them to the brace-free variadic form (`Row(a, b)`) restores move semantics — the
+~50% tree-build win. Do it where a tree is large or re-renders often; leaf rows
+and small panels aren't worth the churn.
 
 ### Neither project uses (so you can ignore those sections)
 
