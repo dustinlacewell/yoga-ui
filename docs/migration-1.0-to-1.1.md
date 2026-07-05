@@ -23,8 +23,10 @@ correctness fixes).
 6. **`Store::use()` returns a copy** — holding `const auto& s = store.use()` and
    reading a member after a `set()` is a lifetime bug.
 
-Everything else is **additive**: you opt in when you want it (widgets, Portal,
-Modal/Tooltip, element refs, text selection/clipboard, programmatic scroll).
+Everything else is **additive** or source-compatible: you opt in when you want it
+(widgets, Portal, Modal/Tooltip, element refs, text selection/clipboard,
+programmatic scroll), and the factory children went brace-list → variadic
+(`Row({a,b})` → `Row(a,b)`) without breaking the old form. See *Factories*.
 
 ---
 
@@ -281,6 +283,32 @@ Bracket the walk yourself: `backend.beginFrame(); render::renderTree(root, backe
 ### 4. Per-node named fonts + embedder contract (additive)
 
 `Text`/`Input` gained `.font("name")` (resolved against the renderer's registered faces; empty = default) — this is *why* the font param threads through every measure/draw signature. If you embed a bundled renderer, after `render()` returns backend state is exactly as on entry (`NvgRenderer` brackets in one `nvgSave`/`nvgRestore`; `SdlRenderer` restores draw color/blend/clip/target and clamps geometry) — no need to re-assert your own draw state.
+
+## Factories: variadic children (source-compatible)
+
+**What changed:** `Box`/`Row`/`Column`/`Scroll` (and the new `Portal`) take children
+as a **variadic pack** instead of a brace-list, and the old single-child
+`Box(VNode)` / `Box(Component)` / `Scroll(VNode)` / `Scroll(Component)` overloads
+were removed in favor of it (commit `40e6602`, to avoid a per-render subtree copy).
+
+```cpp
+// v1.0.0 style
+Row({ Text("a"), Box({ Text("b") }), Column({ Text("c"), Text("d") }) });
+
+// HEAD style — drop the braces
+Row(Text("a"), Box(Text("b")), Column(Text("c"), Text("d")));
+```
+
+**What a consumer must do: nothing.** The `std::vector<Child>` overload was kept,
+so `Row({a, b})` brace-lists still compile (they bind to the vector overload), and
+single-child `Box(child)` binds to the variadic. Verified: every old call shape in
+both projects still builds. Two notes:
+- The factories are now `[[nodiscard]]` — if you ever call `Box(...)` for effect
+  and discard the builder, you'll get a new unused-result **warning** (not an error).
+- A runtime-built child list still uses the vector form: `Box(std::move(myVec))`.
+  Only the *static* brace-list is what the variadic form replaces.
+
+Adopting the brace-free form is optional cleanup, not a required migration.
 
 ## The overlay model: Portal, Modal, Tooltip (additive)
 
