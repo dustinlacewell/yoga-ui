@@ -19,5 +19,11 @@
 #include <yui/layout/Placement.hpp>
 
 // Widgets (compositions over the primitives; namespace yui::widgets)
+#include <yui/widgets/Button.hpp>
+#include <yui/widgets/Checkbox.hpp>
 #include <yui/widgets/Modal.hpp>
+#include <yui/widgets/Progress.hpp>
+#include <yui/widgets/Radio.hpp>
+#include <yui/widgets/Slider.hpp>
+#include <yui/widgets/Tabs.hpp>
 #include <yui/widgets/Tooltip.hpp>
