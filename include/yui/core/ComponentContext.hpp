@@ -129,17 +129,23 @@ std::pair<T, std::function<void(T)>> ComponentContext::useState(T initial) {
 template <typename T>
 T& ComponentContext::useRef(T initial) {
     // Tag at the positional index, store at the state slot (see useState).
-    if (!checkHookTag(hookIndex_++, HookTag::Kind::Ref, std::type_index(typeid(T)))) {
+    // The slot holds a shared_ptr<T> (stable heap), NOT a bare T: useRef returns a
+    // T& and the caller may hold it across a LATER hook in the same render; a later
+    // hook's hookState.push_back can realloc the vector, so a T& into the vector
+    // would dangle. Referencing *shared_ptr is realloc-proof — same stable-slot
+    // discipline useElementRef uses (its NodeRef owns a shared_ptr too). The tag
+    // type is the STORED type (shared_ptr<T>), matching the any_cast target below.
+    if (!checkHookTag(hookIndex_++, HookTag::Kind::Ref, std::type_index(typeid(std::shared_ptr<T>)))) {
         throw std::runtime_error("yui: useRef hook type changed across renders (rules-of-hooks violation)");
     }
 
     size_t index = stateSlot_++;
 
     if (index >= fiber_->hookState.size()) {
-        fiber_->hookState.push_back(std::move(initial));
+        fiber_->hookState.push_back(std::make_shared<T>(std::move(initial)));
     }
 
-    return std::any_cast<T&>(fiber_->hookState[index]);
+    return *std::any_cast<const std::shared_ptr<T>&>(fiber_->hookState[index]);
 }
 
 inline NodeRef ComponentContext::useElementRef() {
