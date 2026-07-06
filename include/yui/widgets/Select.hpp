@@ -234,12 +234,14 @@ private:
                                       .setKey("control")
                                       .onClick(open);
 
-                   // Losing focus (Tab away, click elsewhere) closes the popup —
-                   // this is a light popup, not a modal, so no trapFocus.
-                   control.onFocus([setSt](bool focused) {
-                       if (!focused)
-                           setSt({});
-                   });
+                   // NOTE: we do NOT close on blur. Clicking an option row (which
+                   // is not focusable) clears focus from the control — a blur-to-
+                   // close handler would fire on that click's focus change and
+                   // dismiss the list BEFORE the option's onClick commits, so no
+                   // selection would ever land. Click-away is already handled by
+                   // the transparent full-viewport backdrop (its onClick closes),
+                   // and Esc dismisses via the keyboard path; blur-close is both
+                   // redundant with those and races the option click, so it's gone.
 
                    // Opt-in keyboard nav. Attached to the control ONLY WHILE
                    // OPEN and only when a keycode is set; once attached it

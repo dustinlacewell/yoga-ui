@@ -205,6 +205,10 @@ static std::optional<EditCommand> editCommandFor(int key, uint16_t mods) {
         return EditCommand::MoveLeft;
     case GLFW_KEY_RIGHT:
         return EditCommand::MoveRight;
+    case GLFW_KEY_UP:
+        return EditCommand::MoveUp;
+    case GLFW_KEY_DOWN:
+        return EditCommand::MoveDown;
     case GLFW_KEY_HOME:
         return EditCommand::MoveLineStart;
     case GLFW_KEY_END:

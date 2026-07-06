@@ -90,9 +90,13 @@ private:
                 onChange(!checked);
         };
 
+        // The check is an inset filled square, clearly smaller than the box so
+        // the outline stays visible around it (a filled-to-the-edge inner box
+        // reads as a solid block, not a checkbox). ~55% of the box.
+        const float checkSize = size_ * 0.55f;
         VNode box = Box(When(checked, Box()
-                                          .width(size_ - 6.0f)
-                                          .height(size_ - 6.0f)
+                                          .width(checkSize)
+                                          .height(checkSize)
                                           .borderRadius(2.0f)
                                           .backgroundColor(checkColor_)
                                           .setKey("check")))

@@ -483,6 +483,142 @@ inline Component HooksDemo() {
 }
 
 // ============================================================================
+// Widgets Demo - The yui::widgets layer (Button, Checkbox, Radio, Progress,
+// Tabs, Slider, Select). Every control is CONTROLLED: the value lives in the
+// Store and each widget's onChange writes it back, so the demo round-trips
+// through the same reactive state as every other feature.
+// ============================================================================
+
+// App-supplied keycodes for widget keyboard nav. Core is keycode-agnostic, so
+// each widget takes raw codes; these cover both SDL and GLFW (the showcase
+// keyCodeToName table already carries both). Arrows drive Slider/Select/Tabs,
+// Enter commits a Select option, Esc dismisses it, Space toggles a Checkbox.
+namespace wkeys {
+inline constexpr int kSpace = 32;
+inline constexpr int kEnterSDL = 13, kEnterGLFW = 257;
+inline constexpr int kEscSDL = 27, kEscGLFW = 256;
+inline constexpr int kLeftSDL = 1073741904, kLeftGLFW = 263;
+inline constexpr int kRightSDL = 1073741903, kRightGLFW = 262;
+inline constexpr int kUpSDL = 1073741906, kUpGLFW = 265;
+inline constexpr int kDownSDL = 1073741905, kDownGLFW = 264;
+}  // namespace wkeys
+
+inline Component WidgetsDemo() {
+    return [](ComponentContext&) -> VNode {
+        auto s = state().use();
+        const auto& t = s.theme;
+
+        using namespace yui::widgets;  // Button/Checkbox/etc. — note showcase has
+                                       // its own primitive Button, so qualify.
+
+        // --- Buttons: enabled fires, disabled is inert but still swallows the
+        // click (native-button parity). ---
+        auto buttons = Row(
+                               widgets::Button("Press me")
+                                   .backgroundColor(t.accent)
+                                   .hoverColor(t.accentHover)
+                                   .textColor(t.textOnAccent)
+                                   .borderRadius(t.radiusSm)
+                                   .onClick([] { state().set([](AppState& s) { s.buttonPresses++; }); }),
+                               widgets::Button("Disabled").disabled().borderRadius(t.radiusSm),
+                               Body(std::to_string(s.buttonPresses) + " presses")
+                           )
+                           .gap(t.gap)
+                           .alignItems(AlignItems::Center);
+
+        // --- Switches: sliding-pill on/off toggles (controlled bool + Space to
+        // toggle when focused). ---
+        auto switches = Column(
+                            Switch(s.notifications)
+                                .label("Enable notifications")
+                                .trackOnColor(t.accent)
+                                .toggleKeyCode(wkeys::kSpace)
+                                .onChange([](bool v) { state().set([v](AppState& s) { s.notifications = v; }); }),
+                            Switch(s.darkMode)
+                                .label("Dark mode")
+                                .trackOnColor(t.accent)
+                                .toggleKeyCode(wkeys::kSpace)
+                                .onChange([](bool v) { state().set([v](AppState& s) { s.darkMode = v; }); }))
+                            .gap(t.gap);
+
+        // --- Checkbox: box + inset check mark (controlled bool). ---
+        auto check = Checkbox(s.acceptTerms)
+                         .label("I accept the terms")
+                         .checkColor(t.accent)
+                         .toggleKeyCode(wkeys::kSpace)
+                         .onChange([](bool v) { state().set([v](AppState& s) { s.acceptTerms = v; }); });
+
+        // --- Radio group (controlled index). ---
+        auto radios = RadioGroup({"Free", "Pro", "Team"})
+                          .value(s.planIndex)
+                          .dotColor(t.accent)
+                          .onChange([](int i) { state().set([i](AppState& s) { s.planIndex = i; }); });
+
+        // --- Slider (controlled float, drives the Progress bar below it).
+        // Wrapped so the track has a definite width (Slider is width:100%). ---
+        auto slider = Column(
+                          Row(Label("Volume"), Spacer(), Body(std::to_string(static_cast<int>(s.volume * 100)) + "%"))
+                              .alignItems(AlignItems::Center),
+                          Box(Slider(s.volume)
+                                  .fillColor(t.accent)
+                                  .step(0.01f)
+                                  .decrementKeyCode(wkeys::kLeftSDL)
+                                  .incrementKeyCode(wkeys::kRightSDL)
+                                  .onChange([](float v) { state().set([v](AppState& s) { s.volume = v; }); }))
+                              .width(220),
+                          // Progress mirrors the slider value — the one purely
+                          // visual widget.
+                          Box(Progress(s.volume).fillColor(t.success)).width(220))
+                          .gap(t.gap);
+
+        // --- Tabs (controlled active index; only the active panel renders). ---
+        auto tabs = Tabs()
+                        .active(s.tabIndex)
+                        .activeTabColor(t.accent)
+                        .prevKeyCode(wkeys::kLeftGLFW)
+                        .nextKeyCode(wkeys::kRightGLFW)
+                        .tab("Overview", Box(Body("The overview panel.")).padding(t.padding))
+                        .tab("Details", Box(Body("Details live here.")).padding(t.padding))
+                        .tab("Settings", Box(Body("And settings on the third tab.")).padding(t.padding))
+                        .onChange([](int i) { state().set([i](AppState& s) { s.tabIndex = i; }); });
+
+        // --- Select (controlled index; opens a Portal option list). Arrows move
+        // the highlight, Enter commits, Esc dismisses. ---
+        auto select = Row(
+                          Label("Fruit:"),
+                          Box(Select({"Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape"})
+                                  .value(s.fruitIndex)
+                                  .placeholder("Pick one...")
+                                  .highlightColor(t.accent)
+                                  .upKeyCode(wkeys::kUpGLFW)
+                                  .downKeyCode(wkeys::kDownGLFW)
+                                  .selectKeyCode(wkeys::kEnterGLFW)
+                                  .dismissKeyCode(wkeys::kEscGLFW)
+                                  .onChange([](int i) { state().set([i](AppState& s) { s.fruitIndex = i; }); }))
+                              .width(180))
+                          .gap(t.gap)
+                          .alignItems(AlignItems::Center);
+
+        return Section("Widgets", {
+                                      Label("Buttons"),
+                                      buttons,
+                                      Label("Switches"),
+                                      switches,
+                                      Label("Checkbox"),
+                                      check,
+                                      Label("Radio group"),
+                                      radios,
+                                      Label("Slider + Progress"),
+                                      slider,
+                                      Label("Tabs"),
+                                      tabs,
+                                      Label("Select"),
+                                      select,
+                                  });
+    };
+}
+
+// ============================================================================
 // Right-Click Demo - Demonstrates onRightClick event handling
 // ============================================================================
 

@@ -47,6 +47,10 @@ static std::optional<EditCommand> editCommandFor(SDL_Keycode key, uint16_t mods)
         return EditCommand::MoveLeft;
     case SDLK_RIGHT:
         return EditCommand::MoveRight;
+    case SDLK_UP:
+        return EditCommand::MoveUp;
+    case SDLK_DOWN:
+        return EditCommand::MoveDown;
     case SDLK_HOME:
         return EditCommand::MoveLineStart;
     case SDLK_END:

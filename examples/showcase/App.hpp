@@ -62,6 +62,7 @@ inline Component App(const std::string& title, const std::string& backend, Child
                           Scroll(Row(
                                          // Left column
                                          Column(
+                                                    WidgetsDemo(),
                                                     LoginForm(),
                                                     Counter(),
                                                     HooksDemo()

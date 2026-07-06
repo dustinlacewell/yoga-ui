@@ -37,6 +37,17 @@ struct AppState {
     int lastKeyCode = 0;
     std::string keyModifiers;
 
+    // Widgets demo (the yui::widgets layer — each control is CONTROLLED, so the
+    // app owns the value and the widget's onChange writes it back here).
+    bool notifications = true;      // Switch
+    bool darkMode = false;          // Switch
+    bool acceptTerms = false;       // Checkbox
+    int planIndex = 1;              // RadioGroup (Free / Pro / Team)
+    float volume = 0.6f;            // Slider (also drives the Progress bar)
+    int tabIndex = 0;               // Tabs
+    int fruitIndex = -1;            // Select (-1 = nothing picked)
+    int buttonPresses = 0;          // Button
+
     // Status feedback
     std::string statusText = "Ready";
     uint32_t statusColor = 0x22c55eFF;

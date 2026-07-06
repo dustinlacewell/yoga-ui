@@ -26,5 +26,6 @@
 #include <yui/widgets/Radio.hpp>
 #include <yui/widgets/Select.hpp>
 #include <yui/widgets/Slider.hpp>
+#include <yui/widgets/Switch.hpp>
 #include <yui/widgets/Tabs.hpp>
 #include <yui/widgets/Tooltip.hpp>
