@@ -13,10 +13,14 @@ export interface DocEntry {
 export const DOCS_NAV: DocEntry[] = [
   { slug: "getting-started", title: "Getting Started" },
   { slug: "primitives", title: "Primitives" },
+  { slug: "widgets", title: "Widgets" },
+  { slug: "overlays", title: "Overlays" },
+  { slug: "text-editing", title: "Text Editing", label: "Text Editing" },
   { slug: "components", title: "Components" },
   { slug: "architecture", title: "Architecture" },
   { slug: "extending", title: "Extending Primitives", label: "Extending" },
   { slug: "integration-notes", title: "Integration Notes", label: "Integration" },
+  { slug: "migration-1-0-to-1-1", title: "Migrating from 1.0", label: "Migration" },
 ];
 
 export function navIndex(slug: string): number {

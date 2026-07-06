@@ -10,7 +10,7 @@ Store<int> count(0);
 VNode Counter() {
     int n = count.use();
 
-    return Column({
+    return Column(
         Text("Count: " + std::to_string(n))
             .fontSize(24).color(0xFFFFFFFF),
 
@@ -20,8 +20,8 @@ VNode Counter() {
             .borderRadius(6)
             .onClick([] {
                 count.set([](int& n) { n++; });
-            }),
-    })
+            })
+    )
     .gap(16)
     .alignItems(AlignItems::Center);
 }`;
@@ -42,7 +42,7 @@ VNode Counter() {
       <p class="lede">
         A React-like component model with reactive state and selective
         re-rendering — built on the Yoga layout engine. If you know React,
-        Flutter, or SwiftUI, you already know yui.
+        Flutter, or SwiftUI, you'll feel at home.
       </p>
 
       <div class="hero-cta">

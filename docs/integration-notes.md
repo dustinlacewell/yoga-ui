@@ -2,8 +2,8 @@
 
 Sharp edges found while building real applications on yui — and the sanctioned
 patterns for them. These are the things that bit a real integration (a cascading
-module browser in a VCV Rack plugin), framed so the next consumer doesn't
-re-derive and re-hit the same bugs.
+module browser with scrollable, nested menus), framed so the next consumer
+doesn't re-derive and re-hit the same bugs.
 
 The core model is sound: once state lives in a `Store`, the dirty/reconcile
 machinery delivers live updates with no flicker, and the cross-thread `set()`

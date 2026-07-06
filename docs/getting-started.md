@@ -17,6 +17,12 @@ Component App() {
 
 This guide will walk you through everything you need to build your first yui application.
 
+**New in 1.1**: a standard [widget set](widgets.md) (Button, Checkbox, Switch,
+RadioGroup, Progress, Slider, Tabs, Select), [overlays](overlays.md) (Portal,
+Modal, Tooltip), full [text editing](text-editing.md) with selection and
+clipboard, pointer capture + drag, and generalized focus. Upgrading from 1.0?
+See the [migration guide](migration-1-0-to-1-1.md).
+
 ## Requirements
 
 - **C++20 compiler**: GCC 10+, Clang 12+, or MSVC 2019+
@@ -98,17 +104,26 @@ There are two kinds of components:
 **Helper functions** return VNodes directly. Simple, no state:
 
 ```cpp
-VNode Button(std::string label, std::function<void()> onClick) {
-    return Box({
-        Text(label).color(0xFFFFFFFF)
-    })
-    .padding(12)
-    .backgroundColor(0x3366FFFF)
-    .borderRadius(6)
-    .hoverStyle(BoxStyle{.backgroundColor = 0x4477FFFF})
-    .onClick(onClick);
+VNode LabeledField(std::string label, VNode field) {
+    return Column(
+        Text(label).color(0xAAAAAAFF).fontSize(11),
+        field
+    ).gap(4);
 }
 ```
+
+yui also ships a standard set of interactive controls — buttons, checkboxes,
+sliders, tabs, dropdowns, and more — as `yui::widgets`, so you don't need to
+hand-roll a `Button` helper yourself:
+
+```cpp
+#include <yui/yui.hpp>  // pulls in yui::widgets too
+using namespace yui::widgets;
+
+Button("Click me").onClick([] { std::cout << "clicked\n"; });
+```
+
+See [Widgets](widgets.md) for the full set.
 
 **Stateful components** use `Component()` with hooks for local state, effects, and selective re-rendering:
 
@@ -163,25 +178,32 @@ Box({ ... })
     .focusStyle(BoxStyle{.borderColor = 0x4a9fffFF});
 ```
 
+**`onClick` fires only when the press and the release land on the same
+node** — if the pointer moves off the element before release (e.g. it's
+dragged away, or something else covers it mid-press), no `onClick` fires on
+either node. This matters most for elements that might get covered or moved
+mid-interaction (an item in a reordering list, a button near an opening
+overlay).
+
 ### Layout with Flexbox
 
 yui uses [Yoga](https://yogalayout.dev/), Facebook's flexbox implementation, for layout. If you know CSS flexbox, you know yui layout:
 
 ```cpp
 // Horizontal row with centered items
-Row({ a, b, c })
+Row(a, b, c)
     .justifyContent(JustifyContent::SpaceBetween)
     .alignItems(AlignItems::Center)
 
 // Vertical column with gaps
-Column({ header, content, footer })
+Column(header, content, footer)
     .gap(16)
 
 // Flexible sizing
-Row({
+Row(
     Box(sidebar).width(200),           // Fixed width
-    Box(content).flexGrow(1),          // Takes remaining space
-})
+    Box(content).flexGrow(1)           // Takes remaining space
+)
 
 // Absolute positioning
 Box(overlay)
@@ -190,10 +212,17 @@ Box(overlay)
 ```
 
 **Layout helpers:**
-- `Row({...})` — Horizontal flex container
-- `Column({...})` — Vertical flex container
+- `Row(...)` — Horizontal flex container
+- `Column(...)` — Vertical flex container
 - `Spacer()` — Flexible space that grows to fill
 - `Gap(size)` — Fixed-size spacing
+
+**Prefer bare arguments over a brace-enclosed list**: `Row(a, b, c)` forwards
+each argument straight into a child slot; `Row({a, b, c})` builds an
+intermediate `std::vector<Child>` first and is measurably slower. Both still
+compile and behave identically — reach for the brace-list form only when the
+children come from a runtime-built vector (e.g. produced by a loop), not for
+a fixed set of children you're writing out by hand.
 
 ---
 
@@ -410,12 +439,17 @@ Box(Text("Click me"))
 
 ```cpp
 Box(content)
-    .onKeyDown([](int keyCode, uint16_t modifiers) {
-        if (modifiers & KeyMod_Ctrl && keyCode == 'S') {
+    .onKeyDown([](int keyCode, uint16_t modifiers, bool repeat) {
+        if (modifiers & KeyMod_Ctrl && keyCode == 'S' && !repeat) {
             save();
         }
     });
 ```
+
+For focus, Tab traversal, and routing real text-editing keys into a focused
+`Input`, see [Focus](primitives.md#focus) and [Text
+Editing](text-editing.md) — both build on a richer
+`Host::handleKeyDown` overload than the raw form shown above.
 
 ### Input Fields
 
@@ -512,7 +546,7 @@ HList(tabs,
 
 Render functions can return either `VNode` or `Component` — use `Component` when list items need their own local state.
 
-**Why keys matter:** Keys help yui's reconciler identify which items changed, were added, or removed. Without keys, the entire list re-renders. With keys, only changed items update.
+Keys let the reconciler identify which items changed, were added, or removed across a re-render, so only the changed items update instead of the whole list.
 
 ---
 
@@ -701,8 +735,6 @@ cmake --build build --target all_examples
 ---
 
 ## Architecture Overview
-
-Understanding yui's architecture helps you write efficient code:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐

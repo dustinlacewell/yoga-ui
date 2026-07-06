@@ -20,7 +20,7 @@ Patch release: text-measurement correctness under embedders, and a packaging fix
 
 The interaction-layer release. Inputs, focus, overlays, and a widget set — plus
 a batch of correctness fixes. **This release contains breaking changes** (a few
-removed/reshaped APIs); see [`docs/migration-1.0-to-1.1.md`](docs/migration-1.0-to-1.1.md)
+removed/reshaped APIs); see [`docs/migration-1-0-to-1-1.md`](docs/migration-1-0-to-1-1.md)
 for the exhaustive upgrade guide.
 
 ### Highlights

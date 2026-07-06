@@ -16,7 +16,7 @@ If it can be composed from existing primitives, make it a component instead.
 ### 1. Add to PrimitiveType enum (VNode.hpp)
 
 ```cpp
-enum class PrimitiveType { Box, Text, Input, Scroll, Canvas };
+enum class PrimitiveType { Box, Text, Input, Scroll, Canvas, Portal };
 ```
 
 ### 2. Define props struct (Props.hpp)
@@ -32,7 +32,7 @@ struct CanvasProps : LayoutProps, EventProps {
 };
 
 // Add to PropsVariant
-using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps>;
+using PropsVariant = std::variant<BoxProps, TextProps, InputProps, ScrollProps, CanvasProps, PortalProps>;
 ```
 
 ### 3. Create VNode factory (VNode.hpp)
@@ -86,14 +86,31 @@ std::unique_ptr<Node> createNode(PrimitiveType type) {
 }
 ```
 
-### 6. Add to renderer (e.g., NvgRenderer.cpp)
+### 6. Add to the render walk (src/render/TreeRenderer.cpp)
+
+Since 1.1, drawing is **not** per-backend — a new primitive's paint logic goes
+into the one backend-neutral walk, `render::renderTree`, which every backend
+shares (see [Architecture — Rendering](architecture.md#rendering)). Add a
+case to the node-type switch there, expressed only in terms of the
+`IRenderBackend` primitives (`fillRect`, `strokeRect`, `pushClip`/`popClip`,
+`drawTextRun`, `drawCanvas`):
 
 ```cpp
-void NvgRenderer::drawCanvas(DrawContext& ctx, CanvasNode* node) {
-    if (node->props.draw) {
-        node->props.draw(ctx.vg, node->layout.width, node->layout.height);
-    }
+// in the renderTree node-type switch:
+case PrimitiveType::MyPrimitive: {
+    auto* n = static_cast<MyPrimitiveNode*>(node);
+    backend.fillRect(absoluteRectOf(n), n->props.backgroundColor.value_or(0), 0);
+    // ...
+    break;
 }
 ```
 
-Add a case in `NvgRenderer::draw()` to handle the new node type.
+Do **not** add a per-backend draw method (e.g. `NvgRenderer::drawMyPrimitive`)
+unless the primitive needs something no `IRenderBackend` primitive can
+express — that would reintroduce exactly the per-backend duplication the
+render seam was built to eliminate. `Canvas` is the one primitive that
+legitimately needs backend-specific handling (the user's draw callback
+receives an opaque, backend-specific context), which is why
+`IRenderBackend::drawCanvas` exists as a dedicated virtual — most new
+primitives should need nothing beyond the shared fill/stroke/clip/text
+surface.

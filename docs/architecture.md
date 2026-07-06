@@ -13,6 +13,7 @@ A small, fixed set of primitive node types:
 | `Input` | Text input field |
 | `Scroll` | Scrollable container with clipping |
 | `Canvas` | Custom drawing surface |
+| `Portal` | Detached-content container (root z-order, viewport layout) |
 
 Each primitive has:
 - A `VNode` factory function (creates lightweight descriptions)
@@ -20,10 +21,18 @@ Each primitive has:
 
 All primitives support:
 - Yoga layout props (width, height, flex, padding, margin, gap, etc.)
-- Visual style props (backgroundColor, borderColor, etc.)
+- Visual style props (backgroundColor, borderColor, etc.) — except `Portal`, which is pure plumbing with none
 - State-based style overrides (hoverStyle, focusStyle)
-- Event handlers (onClick, onRightClick, onMiddleClick, onHover, onFocus)
+- Event handlers (onClick, onRightClick, onMiddleClick, onDoubleClick, onHover, onHoverDelay, onFocus, onMouseDown/Up/Move, onDrag)
+- Focus (`.focusable()`, `.autoFocus()`)
 - Keys for reconciliation (`.setKey("id")`)
+
+`Portal` is architecturally distinct from the other five: its content
+*reconciles* in its logical parent (state/hooks/refs stay put — no
+reparenting) but *renders* detached — laid out against the viewport instead
+of its parent's box, and painted/hit-tested at root z-order, escaping any
+ancestor's clip. It's the one seam floating UI (dropdowns, dialogs,
+tooltips) is built on; see [Overlays](overlays.md).
 
 ### Layer 2: Components (You Write)
 
@@ -106,7 +115,7 @@ struct Component {
 };
 ```
 
-**Note:** Component functions must be const-callable (no mutable lambdas). This is enforced at compile time — mutable lambdas that capture-and-move are a re-render correctness hazard.
+Component functions must be const-callable (no mutable lambdas), enforced at compile time — see [Components](components.md#stateful-components) for why.
 
 ### Node — Persistent Widget Instance
 
@@ -234,10 +243,91 @@ This means a Store change can re-render a single component in a tree of thousand
 
 ## Event Handling
 
-The `EventHandler` class manages hover and focus state on the render tree:
-- Tracks `hoveredNode_` and `focusedInput_` pointers
+The `EventHandler` class manages hover, focus, and pointer-capture state on
+the render tree:
+- Tracks `hoveredNode_` and `focusedInput_` (more generally, the focused
+  `Node*`) pointers
 - Updates `node->hovered` and `node->focused` flags
 - Calls `onHover`/`onFocus` callbacks
 - Receives removal notifications from Reconciler to clear stale pointers
 
 When nodes are removed during reconciliation, the Reconciler notifies EventHandler via a callback so it can clear any references to those nodes.
+
+### Pointer capture
+
+The node a press (`onMouseDown`) lands on becomes the **implicit captor**
+for that gesture: while any button stays held, `onMouseMove` is routed to
+the captor even if the pointer leaves its bounds (or the window), and the
+matching `onMouseUp` is delivered to the captor wherever the release
+actually lands — not wherever is currently under the pointer. `onClick`
+requires the press *and* release to resolve to the same handler-bearing
+node; a release outside that node's subtree (dragged away, or covered by
+something else mid-press) fires no click on either side. `onDrag` is a
+derived signal on top of the same capture: once the pointer has moved past
+`render_defaults::kDragThresholdPx` from the press anchor, capture stops
+delivering plain moves and starts delivering `DragEvent`s (current position,
+delta since the last one, and the original press anchor). This is the
+mechanism [`Slider`](widgets.md#slider) and draggable `Scroll` scrollbars
+are both built on — see [Primitives — pointer capture and
+drag](primitives.md#pointer-capture-and-drag).
+
+### Focus and traversal
+
+Beyond a single `focusedInput_`, focus generalizes to any node with
+`.focusable(true)` (an `Input` is always focusable) or `.autoFocus(true)`
+(focused on mount, regardless of `.focusable()` — a `tabindex="-1"`-style
+programmatic target). `Host::focusNext()`/`focusPrev()` walk the focusables
+in document order, wrapping, and can be scoped to a subtree via
+`Host::setFocusTrap(node)` — the mechanism [`Modal`](overlays.md#modal) uses
+(through `Portal::trapFocus()`) to keep Tab inside an open dialog and
+restore whatever was focused before it opened. A focus trap whose root node
+is removed by a later reconcile un-scopes itself silently (the same
+liveness-token discipline as `Fiber`/`Store`/`Node::alive`), rather than
+leaving traversal stuck pointing at a dead subtree.
+
+## Rendering
+
+Rendering is backend-neutral: everything above raw fill/stroke/clip/text
+primitives — the node-type switch, style cascade, text wrapping, scroll
+clip/offset math, input chrome (caret, selection highlight), and portal
+paint order — lives in one shared walk, `render::renderTree(Node* root,
+IRenderBackend& backend, const ErrorHandler& onError)`, identical across
+every backend by construction. A backend implements only:
+
+```cpp
+class IRenderBackend : public ITextMeasurer {
+    virtual void beginFrame() = 0;
+    virtual void endFrame() = 0;
+    virtual void fillRect(const Rect&, uint32_t color, float radius) = 0;
+    virtual void strokeRect(const Rect&, uint32_t color, float radius, float width) = 0;
+    virtual void pushClip(const Rect&, float radius) = 0;
+    virtual void popClip() = 0;
+    virtual void drawTextRun(const std::string& run, float x, float y,
+                              float fontSize, uint32_t color, std::string_view font) = 0;
+    virtual void drawCanvas(const CanvasNode&, const Rect&) = 0;
+};
+```
+
+`Rect` here is always absolute (root-relative) — the walk resolves every
+node to absolute space before calling the backend, so a backend never tracks
+its own offsets or translations. Because `IRenderBackend` inherits
+`ITextMeasurer`, one object serves as both the renderer and the text
+measurer a `Host` installs via `setTextMeasurer` — measure and paint are
+guaranteed to agree because they're the same face lookup
+(`measureRun`/`fontMetrics`, both keyed by font **name**, resolved to a
+backend handle without global mutable state).
+
+A frame is bracketed by the caller: `backend.beginFrame(); renderTree(root,
+backend, onError); backend.endFrame();`. The walk is `noexcept` — rendering
+runs inside the platform's draw callback, a C boundary a C++ exception must
+never cross, so anything a callback throws (including a user `Canvas` draw
+callback, isolated per-node) is routed to `onError` instead, and
+`endFrame()` restores whatever backend state the walk left unbalanced (a
+half-popped clip stack, etc.), so an embedder can safely interleave its own
+drawing around a `render()` call without re-asserting state.
+
+The bundled `NvgRenderer` (NanoVG) is the reference implementation; `SdlRenderer`
+(SDL2 + SDL2_gfx) is the other shipped backend. The actual walk and its
+supporting pieces live in `src/render/{TreeRenderer,StyleResolver,TextWrap,Measure}.cpp`
+— read those alongside a bundled renderer if you're implementing a new
+backend; see also [Extending](extending.md).

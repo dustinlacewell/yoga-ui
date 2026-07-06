@@ -5,24 +5,26 @@
 The simplest way to compose UI. Just functions that return VNodes:
 
 ```cpp
-VNode Button(std::string label, std::function<void()> onClick) {
-    return Box({
-        Text(label).color(WHITE)
-    })
-    .padding(8)
-    .backgroundColor(BLUE)
-    .onClick(onClick);
+VNode Badge(std::string label, uint32_t color) {
+    return Box(Text(label).color(WHITE))
+        .padding(8)
+        .backgroundColor(color)
+        .borderRadius(4);
 }
 
 VNode LabeledField(std::string label, VNode field) {
-    return Column({
+    return Column(
         Text(label).color(DIM).fontSize(10),
-        field,
-    }).gap(2);
+        field
+    ).gap(2);
 }
 ```
 
 Helper functions are evaluated immediately and produce VNode subtrees. They have no identity in the fiber tree — the reconciler sees their output directly.
+
+(For an actual button, reach for the shipped [`widgets::Button`](widgets.md#button)
+rather than hand-rolling one — it already handles pressed/hover/disabled
+states and consuming clicks correctly.)
 
 ## Stateful Components
 
@@ -55,7 +57,7 @@ Column({
 
 The component function is called by the reconciler during mount and whenever the component is marked dirty. It receives a `ComponentContext&` for accessing hooks.
 
-**Important:** Component functions must be const-callable. Mutable lambdas (e.g., those that `std::move` captured values) are rejected at compile time — component functions may be called multiple times across re-renders.
+Component functions must be const-callable. Mutable lambdas (e.g., those that `std::move` captured values) are rejected at compile time — component functions may be called multiple times across re-renders.
 
 ## Hooks
 
@@ -159,6 +161,14 @@ auto Menu = [&](ComponentContext& ctx) -> VNode {
   `layout::Rect`, scroll- and clamp-correct) — the analog of the DOM's
   `getBoundingClientRect()`. Feed it into the placement helpers (see below) to
   position floating panels.
+- `asScroll()` type-checks and downcasts to the live `ScrollNode*` (or
+  `nullptr` if unattached, dead, or attached to a non-`Scroll` element) — the
+  sanctioned route to the programmatic scroll API, `scrollTo`/`scrollIntoView`
+  (see [Primitives — Scrolling programmatically](primitives.md#scrolling-programmatically)).
+- A free function `yui::absoluteRect(const Node*) -> layout::Rect` does the
+  same absolute-rect walk as `getBoundingRect()`, for any raw `Node*` you
+  already hold from elsewhere (e.g. `host.getFocusedNode()`) without needing
+  a `NodeRef` attached to it.
 - `.ref(...)` only exists on host elements (Box, Text, Input, …), not on
   `Component` — a component has no single node, so a ref on one is a compile
   error, not a silent no-op.
@@ -234,7 +244,7 @@ Column({
 })
 ```
 
-**Note:** `When(false, ...)` returns `VNode::empty()` which occupies a position slot but doesn't render. This ensures siblings maintain correct position matching when the condition toggles.
+`When(false, ...)` returns `VNode::empty()`, which occupies a position slot but doesn't render — so siblings keep matching by position when the condition toggles.
 
 ## Keyed Lists
 
@@ -311,12 +321,14 @@ Component(MyComp).setKey(42)  // Integer keys (more efficient)
 ## Composition Example
 
 ```cpp
+using namespace yui::widgets;
+
 Component LoginForm() {
     return [](ComponentContext& ctx) -> VNode {
         auto [username, setUsername] = ctx.useState<std::string>("");
         auto [password, setPassword] = ctx.useState<std::string>("");
 
-        return Column({
+        return Column(
             Text("Login").fontSize(16),
             LabeledField("Username",
                 Input().value(username)
@@ -324,11 +336,11 @@ Component LoginForm() {
             LabeledField("Password",
                 Input().value(password).password(true)
                     .onChange([=](const std::string& v) { setPassword(v); })),
-            Row({
-                Button("Cancel", [] { /* ... */ }),
-                Button("Submit", [=] { doLogin(username, password); }),
-            }).gap(8),
-        }).gap(16).padding(20);
+            Row(
+                Button("Cancel").onClick([] { /* ... */ }),
+                Button("Submit").onClick([=] { doLogin(username, password); })
+            ).gap(8)
+        ).gap(16).padding(20);
     };
 }
 ```
