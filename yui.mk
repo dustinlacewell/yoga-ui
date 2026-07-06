@@ -21,5 +21,11 @@ SOURCES += $(YUI_DIR)/src/core/Node.cpp
 SOURCES += $(YUI_DIR)/src/core/NodeRef.cpp
 SOURCES += $(YUI_DIR)/src/core/Reconciler.cpp
 
+# YUI render (measure/paint shared between backends)
+SOURCES += $(YUI_DIR)/src/render/Measure.cpp
+SOURCES += $(YUI_DIR)/src/render/StyleResolver.cpp
+SOURCES += $(YUI_DIR)/src/render/TextWrap.cpp
+SOURCES += $(YUI_DIR)/src/render/TreeRenderer.cpp
+
 # YUI NanoVG renderer (for VCV Rack / NanoVG hosts)
 SOURCES += $(YUI_DIR)/src/nvg/NvgRenderer.cpp

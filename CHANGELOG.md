@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.1
+
+Patch release: text-measurement correctness under embedders, and a packaging fix.
+
+- **Text measurement ignores the active NanoVG transform.** `NvgRenderer::measureRun`
+  neutralizes the current transform before calling `nvgTextBounds`, so a host with
+  an active zoom/scroll transform during paint (e.g. a VCV Rack module) measures
+  runs identically at layout and paint time.
+- **Measured text sizes ceil to the pixel grid.** `ITextMeasurer::measure` and
+  `fallbackMeasure` round their result up to integer pixels, so Yoga's edge
+  rounding can't land a content box narrower than the text it was wrapped for.
+- **`yui.mk` now lists the `src/render/*.cpp` sources.** The 1.1.0 fragment
+  omitted `Measure.cpp`, `StyleResolver.cpp`, `TextWrap.cpp`, and
+  `TreeRenderer.cpp`, so Makefile-based consumers (e.g. VCV Rack plugins)
+  failed to link against 1.1.0.
+
 ## 1.1.0
 
 The interaction-layer release. Inputs, focus, overlays, and a widget set — plus

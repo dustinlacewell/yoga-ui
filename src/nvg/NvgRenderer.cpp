@@ -70,7 +70,17 @@ float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_
     // draw left on the shared context. The return value is the advance
     // (align-independent), never the string's ink bounds.
     nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-    return nvgTextBounds(vg_, 0, 0, run.data(), run.data() + run.size(), nullptr);
+    // nvgTextBounds bakes the CURRENT transform's average scale into the
+    // returned advance. The embedder (Rack) has a zoom/scroll transform active
+    // during draw() but not during layout — so the same run would measure
+    // differently at layout vs. paint, and paint's re-wrap could split a run
+    // that fit at layout. Neutralize the transform so the advance is in the
+    // font's own units, identical across both passes.
+    nvgSave(vg_);
+    nvgResetTransform(vg_);
+    float advance = nvgTextBounds(vg_, 0, 0, run.data(), run.data() + run.size(), nullptr);
+    nvgRestore(vg_);
+    return advance;
 }
 
 FontMetrics NvgRenderer::fontMetrics(float fontSize, std::string_view font) const {
