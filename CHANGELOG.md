@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.1.0
+
+The interaction-layer release. Inputs, focus, overlays, and a widget set — plus
+a batch of correctness fixes. **This release contains breaking changes** (a few
+removed/reshaped APIs); see [`docs/migration-1.0-to-1.1.md`](docs/migration-1.0-to-1.1.md)
+for the exhaustive upgrade guide.
+
+### Highlights
+
+- **A standard widget set** (`yui::widgets`, header-only): `Button`, `Checkbox`,
+  `Switch`, `RadioGroup`, `Progress`, `Slider`, `Tabs`, `Select`. All controlled
+  (value + `onChange`), with opt-in keyboard nav and override-able chrome.
+- **The Portal overlay model** — detached content rendered at root z-order, the
+  basis for `Modal` (scrim + focus trap) and `Tooltip` (hover-delay), plus the
+  `Select` dropdown and the migrated menu examples.
+- **Full text editing** — caret, selection (keyboard, drag, double/triple-click),
+  multiline with vertical navigation, password masking per code point, and a
+  clipboard seam (`IClipboard`) with cut/copy/paste. Driven by an `EditCommand`
+  enum the platform pump maps keycodes to, routed through a new 5-arg
+  `handleKeyDown` so a focused input owns its editing keys.
+- **Pointer capture + drag model** — implicit capture (moves route to the press
+  target, release delivered off-node), an `onDrag` stream, and draggable overlay
+  scrollbars with a programmatic scroll API (`scrollTo`/`scrollIntoView`).
+- **Focus generalized beyond inputs** — `.focusable()`, `.autoFocus()`,
+  document-order Tab traversal, and focus traps.
+- **Element refs** — `useElementRef()` + `.ref()` + `getBoundingRect()`, the
+  React `useRef`/`getBoundingClientRect` analog for anchoring floating UI.
+- **A backend-neutral render seam** — `render::IRenderBackend` + `TreeRenderer`
+  walk the tree; backends supply only drawing primitives. Text measurement rebuilt
+  on `measureRun`/`fontMetrics` so measure and paint share one wrap algorithm.
+
+### Breaking (see the migration guide)
+
+- `Host::handleBackspace()` / `handleSubmit()` removed — fold into `EditCommand`.
+- `onKeyDown` callbacks take a third `bool repeat`; `onMouseDown` takes
+  `(float, float, MouseButton, uint16_t)` (was zero-arg).
+- `onClick` requires press and release on the same node (⚠️ silent).
+- `useRef<T>` no longer dangles across a later hook (source-compatible fix);
+  `Store::use()`/`peek()` return by value, not `const T&`.
+- Custom `ITextMeasurer`/renderers must implement the new pure virtuals and
+  `std::string_view` font params (bundled NanoVG/SDL backends already do).
+
+### Fixed
+
+- `useRef` returned a reference into the reallocatable hook-state vector — a
+  use-after-free when a later hook grew it. Now heap-stable.
+- `Select` dismissed its popup on the option click's blur before the selection
+  committed. Backspace deletes a UTF-8 code point, not a byte. Multiline arrow
+  up/down navigate by line in the showcase shims. Store thread-safety hardened.
+
 ## 1.0.0
 
 First stable release. The public API surface and ABI are now deliberately
