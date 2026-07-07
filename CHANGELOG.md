@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.2
+
+Patch release: fixes a reconciler use-after-free during unmount.
+
+- **No more crash unmounting a host that contains component children.**
+  `mountHost` parents *all* of a host's children — host and component alike —
+  under the host's own render node, so removing that host cascade-frees the
+  entire subtree in one step. `removeRenderSubtree` then also recursed into the
+  host's component children and re-ran `notifyRenderRemoved` on those
+  already-freed render nodes — a use-after-free that segfaulted deeply nested
+  trees mid-reconcile (surfaced by a VCV Rack plugin). The host node's own
+  removal walk already notifies the whole subtree exactly once, so the redundant
+  recursion is dropped. Regression test added.
+
 ## 1.2.1
 
 Patch release: `Tooltip` panels now size to their content.

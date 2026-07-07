@@ -11,6 +11,6 @@
 #ifndef YUI_VERSION_MAJOR
 #define YUI_VERSION_MAJOR 1
 #define YUI_VERSION_MINOR 2
-#define YUI_VERSION_PATCH 1
-#define YUI_VERSION "1.2.1"
+#define YUI_VERSION_PATCH 2
+#define YUI_VERSION "1.2.2"
 #endif
