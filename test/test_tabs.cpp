@@ -266,3 +266,53 @@ TEST_CASE("Tabs - arrow keys cycle the active tab with wraparound when nav codes
     host.handleKeyDown(kLeft, KeyMod_None);
     CHECK(lastChange == 2);
 }
+
+// ---------------------------------------------------------------------------
+// fill(): the widget root grows to its parent, so the panel gets definite
+// height (parent minus strip). Load-bearing for Scroll-hosting panels: scroll
+// content is DETACHED from the Yoga tree, so a Scroll has no intrinsic height
+// and collapses to zero inside a content-sized Tabs.
+// ---------------------------------------------------------------------------
+TEST_CASE("Tabs - fill() gives the panel definite height; a Scroll panel gets it all") {
+    Host host;
+    host.setRender(std::function<VNode()>([] {
+        return Box(widgets::Tabs()
+                       .tab("A", Scroll(Box().height(500)).flexGrow(1).flexShrink(1))
+                       .tab("B", Text("other"))
+                       .fill())
+            .width(300)
+            .height(400);
+    }));
+    host.update(300, 400);
+
+    Node* panel = findByKey(host.root(), "panel-0");
+    REQUIRE(panel != nullptr);
+    // Strip is content-sized (~tab padding + font); the panel gets the rest.
+    CHECK(panel->layout.height > 300.0f);
+    // The Scroll viewport fills the panel instead of collapsing to zero.
+    REQUIRE(panel->children.size() == 1);
+    CHECK(panel->children[0]->layout.height == doctest::Approx(panel->layout.height));
+}
+
+TEST_CASE("Tabs - without fill() the widget stays content-sized among siblings") {
+    Host host;
+    host.setRender(std::function<VNode()>([] {
+        return Box(
+                   Text("above").setKey("above"),
+                   widgets::Tabs()
+                       .tab("A", Text("intrinsic").setKey("intrinsic"))
+                       .tab("B", Text("other")),
+                   Text("below").setKey("below"))
+            .width(300)
+            .height(400);
+    }));
+    host.update(300, 400);
+
+    Node* panel = findByKey(host.root(), "panel-0");
+    REQUIRE(panel != nullptr);
+    // Panel hugs its intrinsic content; the widget does NOT eat leftover space.
+    CHECK(panel->layout.height < 60.0f);
+    Node* below = findByKey(host.root(), "below");
+    REQUIRE(below != nullptr);
+    CHECK(below->layout.top < 100.0f);
+}

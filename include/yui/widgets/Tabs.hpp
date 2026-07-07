@@ -65,6 +65,17 @@ public:
         return *this;
     }
 
+    // Grow to FILL the parent container (flexGrow on the widget root), giving
+    // the panel definite height = parent minus strip. Required whenever a
+    // panel hosts a Scroll: scroll content is detached from the Yoga tree, so
+    // a Scroll has NO intrinsic height — inside a content-sized Tabs the
+    // panel resolves to zero and the scroll renders nothing. Opt-in so
+    // content-sized Tabs (intrinsic panels among siblings) keep their layout.
+    TabsBuilder& fill(bool v = true) {
+        fill_ = v;
+        return *this;
+    }
+
     TabsBuilder& onChange(std::function<void(int)> fn) {
         onChange_ = std::move(fn);
         return *this;
@@ -175,12 +186,15 @@ private:
         auto panel =
             Box(std::move(panelWrap)).flexGrow(1).setKey(std::string("panel-") + std::to_string(active));
 
-        return Column(std::move(strip), std::move(panel));
+        auto root = Column(std::move(strip), std::move(panel));
+        if (fill_) root.flexGrow(1);
+        return root;
     }
 
     std::vector<std::string> labels_;
     std::vector<Child> panels_;
     int active_ = 0;
+    bool fill_ = false;
     std::function<void(int)> onChange_;
     std::optional<int> prevKeyCode_;
     std::optional<int> nextKeyCode_;
