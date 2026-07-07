@@ -2,7 +2,9 @@
 
 #include <cmath>
 #include <memory>
+#include <set>
 #include <stdexcept>
+#include <vector>
 #include <yui/core/ComponentContext.hpp>
 #include <yui/detail/Reconciler.hpp>
 
@@ -664,4 +666,48 @@ TEST_CASE("A throw during a mount pass does not leave the commit queue dangling 
     REQUIRE(fiber != nullptr);
     REQUIRE(reconciler.renderRoot() != nullptr);
     CHECK(reconciler.renderRoot()->type() == PrimitiveType::Box);
+}
+
+// ---------------------------------------------------------------------------
+// Regression: unmounting a host whose fiber-children include a COMPONENT that
+// produced its own host render node.
+//
+// mountHost mounts ALL of a host's children — host AND component alike — under
+// that host's own render node, and mountComponent passes the render parent
+// through transparently. So a component child of a host has its host-descendant
+// render nodes parented UNDER the host's render node. When the host unmounts,
+// removeRenderNode cascade-destroys that entire render subtree and the
+// preceding notifyRenderRemoved(hostNode) walk already fired onNodeRemoved for
+// every node in it. removeRenderSubtree used to ALSO recurse into the host's
+// component children afterward and call notifyRenderRemoved on those now-freed
+// render nodes — a use-after-free (SIGSEGV in the field: a VCV Rack plugin
+// crashed here mid-reconcile). We assert the invariant it violated: each
+// removed render node is reported to onNodeRemoved EXACTLY once. Recording the
+// pointer identity is safe even for a dangling node — the callback never
+// dereferences the pointee.
+// ---------------------------------------------------------------------------
+TEST_CASE("Removed render nodes are notified exactly once (component child under unmounted host)") {
+    Reconciler reconciler;
+
+    // Alternating host/component nesting, matching the field trace's
+    // removeRenderSubtree recursion: host A > Component > host B > Component >
+    // host C. B's and C's render nodes live under A's render node.
+    auto Innermost = [](ComponentContext&) -> VNode { return Box(); };
+    auto Inner = [Innermost](ComponentContext&) -> VNode { return Box(Component(Innermost)); };
+
+    auto tree1 = Box(Box(Component(Inner)).setKey("a"));
+    auto fiber = reconciler.mount(std::move(tree1));
+
+    std::vector<Node*> removed;
+    reconciler.setNodeRemovedCallback([&removed](Node* n) { removed.push_back(n); });
+
+    // Drop host A: reconcileChildren -> unmountFiber(A) -> removeRenderSubtree,
+    // the exact path that crashed.
+    reconciler.reconcile(fiber.get(), Box());
+
+    // A + its two nested host descendants = 3 render nodes, each reported once.
+    // Pre-fix, the freed B/C nodes were each reported a second time.
+    std::set<Node*> unique(removed.begin(), removed.end());
+    CHECK(removed.size() == 3);
+    CHECK(unique.size() == removed.size());
 }

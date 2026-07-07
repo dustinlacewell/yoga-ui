@@ -925,15 +925,17 @@ void Reconciler::removeRenderSubtree(Fiber* fiber, Node* renderParent) {
     if (!fiber) return;
 
     if (fiber->isHost() && fiber->renderNode) {
-        // Removing the host render node cascade-destroys its render descendants, so
-        // host children need no further render removal — but component-fiber children
-        // hold their own render nodes under this renderParent and still do.
+        // mountHost parents ALL of a host's children — host AND component alike —
+        // under the host's own render node (mountComponent passes the render parent
+        // through transparently; portals/scroll are Yoga-detached but NOT
+        // ownership-reparented). So removeRenderNode below cascade-destroys this
+        // host's ENTIRE render subtree, and notifyRenderRemoved above already fired
+        // onNodeRemoved for every node in it. Do NOT descend into component children
+        // afterward: their render nodes were part of that subtree and are now freed
+        // — recursing here revisited them via notifyRenderRemoved (a use-after-free).
         notifyRenderRemoved(fiber->renderNode);
         removeRenderNode(renderParent, fiber->renderNode);
         fiber->renderNode = nullptr;
-        for (auto& child : fiber->children) {
-            if (child && child->isComponent()) removeRenderSubtree(child.get(), renderParent);
-        }
     } else if (fiber->isComponent()) {
         for (auto& child : fiber->children) {
             removeRenderSubtree(child.get(), renderParent);
