@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+Minor release: opt-in fill mode for `Tabs`.
+
+- **`Tabs::fill()`** — grows the tabs widget to fill its parent (a `flexGrow` on
+  the widget root), giving the active panel a definite height of parent-minus-strip.
+  This is required whenever a panel hosts a `Scroll`: scroll content is detached
+  from the Yoga tree and therefore has *no intrinsic height*, so inside a default
+  (content-sized) `Tabs` the panel — and every scrolled row — collapses to zero.
+  Opt-in, so a content-sized `Tabs` placed among siblings keeps hugging its
+  intrinsic content.
+
 ## 1.1.1
 
 Patch release: text-measurement correctness under embedders, and a packaging fix.

@@ -21,7 +21,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 project(yui
-    VERSION 1.1.1
+    VERSION 1.2.0
     DESCRIPTION "Declarative UI library with Yoga layout"
     LANGUAGES C CXX
 )

@@ -10,7 +10,7 @@
 // the project() VERSION in CMakeLists.txt on each release.
 #ifndef YUI_VERSION_MAJOR
 #define YUI_VERSION_MAJOR 1
-#define YUI_VERSION_MINOR 0
+#define YUI_VERSION_MINOR 2
 #define YUI_VERSION_PATCH 0
-#define YUI_VERSION "1.0.0"
+#define YUI_VERSION "1.2.0"
 #endif
