@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.1
+
+Patch release: `Tooltip` panels now size to their content.
+
+- **`Tooltip` tip no longer collapses in height.** The tip rides a positioned,
+  zero-size anchor so it can overflow the viewport-rooted portal without the
+  wrapper itself becoming hittable. The anchor pinned *both* axes to zero, but a
+  definite `height(0)` is a main-axis constraint that shrank an auto-height tip to
+  a sliver (`FlexStart` only rescued the cross-axis width). The anchor now pins
+  only `width(0)` and leaves height auto, so it sizes to the tip; a zero-width,
+  content-height strip stays un-hittable. Regression test added.
+- **`.tip("text")` convenience sizes its width.** The one-line text now sets
+  `wrap(false)`, so the panel hugs the message instead of mis-measuring under the
+  min-/max-content ambiguity of an unconstrained wrap. Multi-line tips should pass
+  an explicit `.tip(Child)` (e.g. a `Box` with a `maxWidth`).
+
 ## 1.2.0
 
 Minor release: opt-in fill mode for `Tabs`.

@@ -60,10 +60,16 @@ public:
         return *this;
     }
 
-    // Convenience: a default-styled one-line text tip.
+    // Convenience: a default-styled one-line text tip. wrap(false) keeps the
+    // message on a single natural-width line so the Box hugs it — with wrap on,
+    // the Text's width inside the zero-size portal anchor is ambiguous (min- vs
+    // max-content) and the panel mis-sizes. A multi-line tip should pass an
+    // explicit .tip(Child) (e.g. a Box carrying a maxWidth).
     TooltipBuilder& tip(std::string message) {
-        tip_ =
-            Box(Text(std::move(message))).backgroundColor(kTooltipBg).padding(kTooltipPad).borderRadius(kTooltipRadius);
+        tip_ = Box(Text(std::move(message)).wrap(false))
+                   .backgroundColor(kTooltipBg)
+                   .padding(kTooltipPad)
+                   .borderRadius(kTooltipRadius);
         return *this;
     }
 
@@ -123,19 +129,22 @@ private:
 
                    std::vector<Child> kids = target;  // repeatable render: copy the wrapped subtree
                    if (placement.shown && tip) {
-                       // A ZERO-SIZE anchor at the placed point, not a sized
+                       // A ZERO-WIDTH anchor at the placed point, not a sized
                        // panel: portal content roots lay out against the
-                       // viewport, so an unsized positioned wrapper would
-                       // fill it — hovering/clicking anywhere would land on
-                       // the tip's wrapper (leave-to-hide would never fire,
-                       // content behind would be shadowed). The 0x0 anchor is
-                       // never itself hittable; the tip child overflows it
-                       // and is hit through subtree bounds. FlexStart keeps
-                       // the cross-axis stretch from collapsing an unsized
-                       // tip to the anchor's zero width.
+                       // viewport, so a wrapper sized in BOTH axes would fill it —
+                       // hovering/clicking anywhere would land on the tip's
+                       // wrapper (leave-to-hide would never fire, content behind
+                       // would be shadowed). width(0) keeps the anchor un-hittable
+                       // horizontally; the tip overflows it to the right, and
+                       // FlexStart stops that cross-axis from stretching the tip to
+                       // the anchor's zero width. The HEIGHT is left AUTO on
+                       // purpose: an explicit height(0) is a definite main-axis
+                       // size that shrinks the tip to a sliver, so instead the
+                       // anchor sizes to the tip's own height. A zero-width,
+                       // content-height strip is still un-hittable (see the
+                       // click-through test).
                        kids.push_back(Portal(Box(*tip)
                                                  .width(0)
-                                                 .height(0)
                                                  .alignItems(AlignItems::FlexStart)
                                                  .positionType(PositionType::Absolute)
                                                  .positionLeft(placement.x)

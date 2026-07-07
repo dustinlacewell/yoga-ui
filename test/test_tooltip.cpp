@@ -141,6 +141,32 @@ TEST_CASE("Tooltip - the open tip does not shadow clicks or hover outside its ow
     CHECK(behindClicks == 1);
 }
 
+// ---------------------------------------------------------------------------
+// Sizing: the tip lives in a zero-SIZE portal anchor. FlexStart rescues the
+// cross-axis width; the tip's flexShrink(0) wrapper rescues the main-axis
+// height. Without the latter an auto-height tip is shrunk toward the anchor's
+// zero height and renders a sliver — the regression this pins.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Tooltip - auto-height tip keeps its content height (no main-axis collapse)") {
+    Host host;
+    host.setRender(std::function<VNode()>([] {
+        // A tip with NO explicit height: its height must come from its content.
+        auto tip = Box(Box().width(50).height(20)).setKey("tip");
+        return Box(widgets::Tooltip(Box().width(100).height(40).setKey("target")).tip(tip))
+            .width(800)
+            .height(600)
+            .padding(100);
+    }));
+    host.update(800, 600);
+
+    host.handleMouseMove(150, 120);
+    host.update(800, 600, 0.501f);
+    Node* tip = findByKey(host.root(), "tip");
+    REQUIRE(tip != nullptr);
+    CHECK(tip->layout.height == doctest::Approx(20));  // was ~0 before the flexShrink(0) fix
+}
+
 TEST_CASE("Tooltip - delayMs overrides the default hover delay") {
     Host host;
     host.setRender(std::function<VNode()>([] { return app(200); }));
