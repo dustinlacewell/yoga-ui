@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.1
+
+Patch release: text measurement can now rasterize at the host's paint scale.
+
+- **`NvgRenderer::setRenderScale(scale)`.** A hinting font backend (VCV Rack
+  bundles a FreeType fontstash) rounds each glyph's advance at the rasterized
+  pixel size — advances are NOT linear across sizes. A host painted at a fixed
+  magnification (e.g. 2x screen-space chrome) therefore drew text up to ~15%
+  wider than the 1x measurement its layout used, and a run laid out flush
+  against a clip edge (a right-aligned timestamp in a scroll) got its tail
+  clipped. The embedder now declares the transform scale text will be painted
+  under; `measureRun` and `fontMetrics` neutralize the active transform and
+  re-apply that scale, so measurement and paint quantize glyphs at the same
+  size. Values stay in layout units; default 1 preserves prior behavior.
+  Re-layout after changing it.
+
 ## 1.3.0
 
 Scrollbars are no longer overlay: an active bar occupies a **reserved

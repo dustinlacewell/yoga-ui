@@ -45,6 +45,18 @@ public:
     float measureRun(std::string_view run, float fontSize, std::string_view font) const override;
     FontMetrics fontMetrics(float fontSize, std::string_view font) const override;
 
+    // The transform scale text will be PAINTED under, so measurement rasters
+    // glyphs at the same pixel size painting will. A hinting font backend
+    // (Rack bundles a FreeType fontstash) rounds each glyph's advance at the
+    // rasterized size — advances are NOT linear across sizes — so a host
+    // drawn at a fixed magnification (e.g. 2x chrome) paints text wider or
+    // narrower than a 1x measurement, and text laid out flush against a clip
+    // edge gets its tail cut. Set the host's paint scale here (default 1);
+    // measured values stay in layout units. Changing it changes measurement:
+    // re-layout (host markDirty) after a change.
+    void setRenderScale(float scale) { renderScale_ = scale > 0 ? scale : 1.0f; }
+    float renderScale() const { return renderScale_; }
+
     // Register a named font face usable from Text/Input `.font(name)`.
     //   - From a .ttf path: loads it via nvgCreateFont and returns the handle
     //     (or -1 on failure). The name is what consumers reference.
@@ -82,6 +94,7 @@ private:
     NVGcontext* vg_;
     int fontId_;
     ErrorHandler onError_;
+    float renderScale_ = 1.0f;  // see setRenderScale
 
     // Open pushClip scopes; endFrame unwinds any left behind by an exception
     // the walk's backstop caught mid-frame.

@@ -74,10 +74,15 @@ float NvgRenderer::measureRun(std::string_view run, float fontSize, std::string_
     // returned advance. The embedder (Rack) has a zoom/scroll transform active
     // during draw() but not during layout — so the same run would measure
     // differently at layout vs. paint, and paint's re-wrap could split a run
-    // that fit at layout. Neutralize the transform so the advance is in the
-    // font's own units, identical across both passes.
+    // that fit at layout. Neutralize the transform, then re-apply the host's
+    // declared PAINT scale (setRenderScale): a hinting font backend rounds
+    // glyph advances at the rasterized size, so measurement must rasterize at
+    // the same size painting will or the drawn run comes out wider/narrower
+    // than its layout box. nanovg divides the result back by the transform
+    // scale, so the advance stays in layout units either way.
     nvgSave(vg_);
     nvgResetTransform(vg_);
+    nvgScale(vg_, renderScale_, renderScale_);
     float advance = nvgTextBounds(vg_, 0, 0, run.data(), run.data() + run.size(), nullptr);
     nvgRestore(vg_);
     return advance;
@@ -90,8 +95,15 @@ FontMetrics NvgRenderer::fontMetrics(float fontSize, std::string_view font) cons
 
     nvgFontSize(vg_, fontSize);
     selectFont(font);
+    // Same transform discipline as measureRun: neutralize whatever transform
+    // the embedder happens to have active, then rasterize at the declared
+    // paint scale so hinted vertical metrics match what painting uses.
+    nvgSave(vg_);
+    nvgResetTransform(vg_);
+    nvgScale(vg_, renderScale_, renderScale_);
     float ascender = 0, descender = 0, lineHeight = 0;
     nvgTextMetrics(vg_, &ascender, &descender, &lineHeight);
+    nvgRestore(vg_);
     // nanovg reports the descender negative (below baseline); FontMetrics
     // carries it positive.
     return {ascender, -descender, lineHeight};
