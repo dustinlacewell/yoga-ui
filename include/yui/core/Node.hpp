@@ -445,6 +445,11 @@ public:
     float viewportWidth() const;
     float viewportHeight() const;
 
+    // The bar/gutter width in layout units: the per-Scroll override
+    // (ScrollProps::scrollbarThickness) or kScrollbarThickness. One source for
+    // gutter reservation, bar geometry, and the render corner radius.
+    float scrollbarThickness() const;
+
     void updateContentSize();
     void clampScrollOffset();
     bool updateSmooth(float dt);

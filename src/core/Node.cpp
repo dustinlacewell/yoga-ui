@@ -867,14 +867,16 @@ void ScrollNode::updateProps(PropsVariant&& p) {
     }
 }
 
+float ScrollNode::scrollbarThickness() const {
+    return props.scrollbarThickness.value_or(render_defaults::kScrollbarThickness);
+}
+
 float ScrollNode::viewportWidth() const {
-    namespace rd = render_defaults;
-    return std::max(0.0f, layout.contentWidth() - (gutterV ? rd::kScrollbarThickness : 0.0f));
+    return std::max(0.0f, layout.contentWidth() - (gutterV ? scrollbarThickness() : 0.0f));
 }
 
 float ScrollNode::viewportHeight() const {
-    namespace rd = render_defaults;
-    return std::max(0.0f, layout.contentHeight() - (gutterH ? rd::kScrollbarThickness : 0.0f));
+    return std::max(0.0f, layout.contentHeight() - (gutterH ? scrollbarThickness() : 0.0f));
 }
 
 void ScrollNode::updateContentSize() {
@@ -958,23 +960,23 @@ ScrollbarGeometry ScrollNode::scrollbar(ScrollAxis axis) const {
         if (!vActive || trackLen <= 0)
             return g;
         g.active = true;
-        g.track = {layout.insetLeft + vw, layout.insetTop, rd::kScrollbarThickness, trackLen};
+        g.track = {layout.insetLeft + vw, layout.insetTop, scrollbarThickness(), trackLen};
         float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vh / contentHeight));
         float travel = trackLen - thumbLen;
         float maxScroll = contentHeight - vh;
         float pos = maxScroll > 0 ? (scrollOffsetY / maxScroll) * travel : 0.0f;
-        g.thumb = {g.track.x, g.track.y + pos, rd::kScrollbarThickness, thumbLen};
+        g.thumb = {g.track.x, g.track.y + pos, scrollbarThickness(), thumbLen};
     } else {
         float trackLen = vw;
         if (!hActive || trackLen <= 0)
             return g;
         g.active = true;
-        g.track = {layout.insetLeft, layout.insetTop + vh, trackLen, rd::kScrollbarThickness};
+        g.track = {layout.insetLeft, layout.insetTop + vh, trackLen, scrollbarThickness()};
         float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vw / contentWidth));
         float travel = trackLen - thumbLen;
         float maxScroll = contentWidth - vw;
         float pos = maxScroll > 0 ? (scrollOffsetX / maxScroll) * travel : 0.0f;
-        g.thumb = {g.track.x + pos, g.track.y, thumbLen, rd::kScrollbarThickness};
+        g.thumb = {g.track.x + pos, g.track.y, thumbLen, scrollbarThickness()};
     }
     return g;
 }

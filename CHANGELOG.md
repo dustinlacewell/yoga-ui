@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.2
+
+Patch release: per-Scroll scrollbar thickness.
+
+- **`.scrollbarThickness(units)` on `Scroll`.** Overrides the
+  `kScrollbarThickness` default for one scroll — its reserved gutter, bar
+  geometry, and corner radius all read the per-node value through the new
+  `ScrollNode::scrollbarThickness()`. A host painted at a fixed magnification
+  can now draw a bar that reads at a sane on-screen width (an 8-unit bar is
+  16px at 2x chrome scale) without restyling every scroll in the app.
+
 ## 1.3.1
 
 Patch release: text measurement can now rasterize at the host's paint scale.

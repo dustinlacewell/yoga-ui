@@ -204,6 +204,7 @@ struct ScrollProps : LayoutProps, EventProps {
     std::optional<uint32_t> borderColor;
     std::optional<float> borderWidth;
     std::optional<ScrollbarGutter> scrollbarGutter;  // default Auto
+    std::optional<float> scrollbarThickness;  // bar width in layout units; default kScrollbarThickness
 
     // State-based style overrides
     std::optional<BoxStyle> hoverStyle;

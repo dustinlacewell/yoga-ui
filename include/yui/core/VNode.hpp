@@ -422,6 +422,9 @@ public:
     ScrollBuilder& scrollbarGutter(ScrollbarGutter v) {
         return p([&](ScrollProps& s) { s.scrollbarGutter = v; });
     }
+    ScrollBuilder& scrollbarThickness(float v) {
+        return p([&](ScrollProps& s) { s.scrollbarThickness = v; });
+    }
 
 private:
     template<typename F>

@@ -194,7 +194,7 @@ void TreeWalker::drawScrollbar(const ScrollNode& node, ScrollAxis axis, const Re
     ScrollbarGeometry g = node.scrollbar(axis);
     if (!g.active)
         return;
-    float radius = rd::kScrollbarThickness / 2;
+    float radius = node.scrollbarThickness() / 2;
     backend_.fillRect({r.x + g.track.x, r.y + g.track.y, g.track.w, g.track.h}, rd::kScrollbarTrackColor, radius);
     backend_.fillRect({r.x + g.thumb.x, r.y + g.thumb.y, g.thumb.w, g.thumb.h}, rd::kScrollbarThumbColor, radius);
 }

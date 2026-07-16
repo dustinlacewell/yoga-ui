@@ -111,6 +111,26 @@ TEST_CASE("scroll gutter: horizontal reservation cascades into vertical (converg
     CHECK(scroll->targetScrollY == doctest::Approx(96 - (100 - kT)));
 }
 
+TEST_CASE("scroll gutter: scrollbarThickness overrides the reserved gutter and bar width") {
+    Reconciler reconciler;
+    auto* scroll = layoutScroll(reconciler,
+                                Scroll(Box().height(300).setKey("content"))
+                                    .scrollbarThickness(4)
+                                    .width(100)
+                                    .height(100),
+                                100, 100);
+
+    // The override drives gutter reservation, viewport, and bar geometry — not
+    // the kScrollbarThickness default.
+    CHECK(scroll->scrollbarThickness() == doctest::Approx(4));
+    CHECK(scroll->viewportWidth() == doctest::Approx(96));
+    CHECK(scroll->children[0]->layout.width == doctest::Approx(96));
+    ScrollbarGeometry v = scroll->scrollbar(ScrollAxis::Vertical);
+    CHECK(v.active);
+    CHECK(v.track.x == doctest::Approx(96));
+    CHECK(v.track.w == doctest::Approx(4));
+}
+
 TEST_CASE("scroll gutter: bar sits inside the scroll's own padding") {
     Reconciler reconciler;
     auto* scroll = layoutScroll(
