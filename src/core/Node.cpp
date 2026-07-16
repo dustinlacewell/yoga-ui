@@ -388,7 +388,8 @@ static void layoutDetachedRoot(Node* child, float availableWidth, float availabl
 
 // Walk the tree laying out every detaching container's content roots (the
 // children the reconciler kept OUT of the parent Yoga tree). Scroll content
-// lays against the scroll's own content width; Portal content lays against
+// lays against the scroll's own viewport width (content box minus reserved
+// scrollbar gutters); Portal content lays against
 // the full VIEWPORT — percent sizes resolve to the window, and absolute
 // positionLeft/Top land in ROOT-SPACE coordinates (Yoga resolves a detached
 // root's position offsets against the owner dims passed here), which is what
@@ -396,14 +397,32 @@ static void layoutDetachedRoot(Node* child, float availableWidth, float availabl
 static void layoutDetachedContent(Node* node, float viewportWidth, float viewportHeight) {
     if (node->type() == PrimitiveType::Scroll) {
         auto* scrollNode = static_cast<ScrollNode*>(node);
-        for (auto& child : scrollNode->children) {
-            // The detached content root lays out against the scroll's CONTENT
-            // width: the scroll's own insets (synced by the enclosing
-            // calculateLayout before this runs) shrink the viewport, so
-            // Scroll padding is honored the same way Box padding is.
-            layoutDetachedRoot(child.get(), scrollNode->layout.contentWidth(), YGUndefined);
+        // Scroll content lays out against the VIEWPORT width: the scroll's own
+        // insets (synced by the enclosing calculateLayout before this runs)
+        // shrink it like Box padding, and any reserved scrollbar gutter
+        // shrinks it further — bars are never overlay, so content must wrap
+        // short of them. Whether a gutter is needed depends on overflow, which
+        // depends on the width content wrapped at, which depends on the gutter
+        // — so lay out, decide, and re-lay while the decision changes.
+        // Reservation is MONOTONIC within a pass (a gutter is only ever
+        // added), so the loop converges: two booleans, at most three layouts.
+        // Auto starts with no gutters; Stable pre-reserves the vertical one.
+        scrollNode->gutterV =
+            scrollNode->props.scrollbarGutter.value_or(ScrollbarGutter::Auto) == ScrollbarGutter::Stable;
+        scrollNode->gutterH = false;
+        for (;;) {
+            for (auto& child : scrollNode->children) {
+                layoutDetachedRoot(child.get(), std::max(0.0f, scrollNode->viewportWidth()), YGUndefined);
+            }
+            scrollNode->updateContentSize();
+            bool needV = scrollNode->contentHeight > scrollNode->viewportHeight();
+            bool needH = scrollNode->contentWidth > scrollNode->viewportWidth();
+            bool grew = false;
+            if (needV && !scrollNode->gutterV) { scrollNode->gutterV = true; grew = true; }
+            if (needH && !scrollNode->gutterH) { scrollNode->gutterH = true; grew = true; }
+            if (!grew)
+                break;
         }
-        scrollNode->updateContentSize();
         scrollNode->clampScrollOffset();
     }
     if (node->type() == PrimitiveType::Portal) {
@@ -848,6 +867,16 @@ void ScrollNode::updateProps(PropsVariant&& p) {
     }
 }
 
+float ScrollNode::viewportWidth() const {
+    namespace rd = render_defaults;
+    return std::max(0.0f, layout.contentWidth() - (gutterV ? rd::kScrollbarThickness : 0.0f));
+}
+
+float ScrollNode::viewportHeight() const {
+    namespace rd = render_defaults;
+    return std::max(0.0f, layout.contentHeight() - (gutterH ? rd::kScrollbarThickness : 0.0f));
+}
+
 void ScrollNode::updateContentSize() {
     contentWidth = 0;
     contentHeight = 0;
@@ -863,11 +892,11 @@ void ScrollNode::updateContentSize() {
 }
 
 void ScrollNode::clampScrollOffset() {
-    // The viewport is the border box minus the scroll's own insets — content is
-    // clipped to it, so scrolling ends when the content's far edge meets the
-    // padded viewport's far edge, not the border box's.
-    float maxScrollX = std::max(0.0f, contentWidth - layout.contentWidth());
-    float maxScrollY = std::max(0.0f, contentHeight - layout.contentHeight());
+    // The viewport is the border box minus the scroll's own insets and any
+    // reserved gutters — content is clipped to it, so scrolling ends when the
+    // content's far edge meets the viewport's far edge, not the border box's.
+    float maxScrollX = std::max(0.0f, contentWidth - viewportWidth());
+    float maxScrollY = std::max(0.0f, contentHeight - viewportHeight());
 
     targetScrollX = std::max(0.0f, std::min(targetScrollX, maxScrollX));
     targetScrollY = std::max(0.0f, std::min(targetScrollY, maxScrollY));
@@ -882,7 +911,8 @@ void ScrollNode::scrollTo(float x, float y) {
 }
 
 void ScrollNode::scrollIntoView(const layout::Rect& target) {
-    // The padded viewport in absolute space — the region content shows through.
+    // The viewport in absolute space — the region content shows through
+    // (padded content box minus reserved gutters).
     layout::Rect self = absoluteRect(this);
     float vx = self.x + layout.insetLeft;
     float vy = self.y + layout.insetTop;
@@ -896,12 +926,12 @@ void ScrollNode::scrollIntoView(const layout::Rect& target) {
     // during an in-flight animation composes with where the scroll is headed.
     // Far edge first, near edge second: for an oversized target the near
     // (top/left) alignment wins.
-    if (cx + target.w > targetScrollX + layout.contentWidth())
-        targetScrollX = cx + target.w - layout.contentWidth();
+    if (cx + target.w > targetScrollX + viewportWidth())
+        targetScrollX = cx + target.w - viewportWidth();
     if (cx < targetScrollX)
         targetScrollX = cx;
-    if (cy + target.h > targetScrollY + layout.contentHeight())
-        targetScrollY = cy + target.h - layout.contentHeight();
+    if (cy + target.h > targetScrollY + viewportHeight())
+        targetScrollY = cy + target.h - viewportHeight();
     if (cy < targetScrollY)
         targetScrollY = cy;
     clampScrollOffset();
@@ -910,32 +940,36 @@ void ScrollNode::scrollIntoView(const layout::Rect& target) {
 ScrollbarGeometry ScrollNode::scrollbar(ScrollAxis axis) const {
     namespace rd = render_defaults;
     ScrollbarGeometry g;
-    float vw = layout.contentWidth();
-    float vh = layout.contentHeight();
-    // A bar is active exactly when its axis overflows the padded viewport —
-    // the same predicate the wheel path scrolls by and clampScrollOffset
-    // ranges over. When both bars are active each track stops short of the
-    // shared bottom-right corner.
-    bool vActive = contentHeight > vh;
-    bool hActive = contentWidth > vw;
+    float vw = viewportWidth();
+    float vh = viewportHeight();
+    // A bar is active exactly when its axis overflows the viewport — the same
+    // predicate the wheel path scrolls by and clampScrollOffset ranges over —
+    // AND its gutter is reserved (the layout loop guarantees overflow reserves
+    // the gutter; the belt keeps a stale pre-layout query from ever placing a
+    // bar over content). The bar fills its gutter: the vertical track spans
+    // viewport height, which already stops above a reserved bottom gutter, so
+    // the shared corner square stays empty without an explicit carve. A
+    // Stable gutter without overflow reserves blank space and draws no bar.
+    bool vActive = gutterV && contentHeight > vh;
+    bool hActive = gutterH && contentWidth > vw;
 
     if (axis == ScrollAxis::Vertical) {
-        float trackLen = vh - (hActive ? rd::kScrollbarThickness : 0.0f);
+        float trackLen = vh;
         if (!vActive || trackLen <= 0)
             return g;
         g.active = true;
-        g.track = {layout.insetLeft + vw - rd::kScrollbarThickness, layout.insetTop, rd::kScrollbarThickness, trackLen};
+        g.track = {layout.insetLeft + vw, layout.insetTop, rd::kScrollbarThickness, trackLen};
         float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vh / contentHeight));
         float travel = trackLen - thumbLen;
         float maxScroll = contentHeight - vh;
         float pos = maxScroll > 0 ? (scrollOffsetY / maxScroll) * travel : 0.0f;
         g.thumb = {g.track.x, g.track.y + pos, rd::kScrollbarThickness, thumbLen};
     } else {
-        float trackLen = vw - (vActive ? rd::kScrollbarThickness : 0.0f);
+        float trackLen = vw;
         if (!hActive || trackLen <= 0)
             return g;
         g.active = true;
-        g.track = {layout.insetLeft, layout.insetTop + vh - rd::kScrollbarThickness, trackLen, rd::kScrollbarThickness};
+        g.track = {layout.insetLeft, layout.insetTop + vh, trackLen, rd::kScrollbarThickness};
         float thumbLen = std::min(trackLen, std::max(rd::kScrollbarMinThumbLen, trackLen * vw / contentWidth));
         float travel = trackLen - thumbLen;
         float maxScroll = contentWidth - vw;
@@ -966,7 +1000,7 @@ float ScrollNode::scrollPerThumbPixel(ScrollAxis axis) const {
     float travel = vertical ? g.track.h - g.thumb.h : g.track.w - g.thumb.w;
     if (travel <= 0)
         return 0.0f;
-    float maxScroll = vertical ? contentHeight - layout.contentHeight() : contentWidth - layout.contentWidth();
+    float maxScroll = vertical ? contentHeight - viewportHeight() : contentWidth - viewportWidth();
     return maxScroll / travel;
 }
 

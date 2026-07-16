@@ -398,9 +398,11 @@ enum class ScrollAxis { Horizontal, Vertical };
 // drag gesture; track pages by a viewport; None falls through to content.
 enum class ScrollbarPart { None, HorizontalTrack, HorizontalThumb, VerticalTrack, VerticalThumb };
 
-// Geometry of one overlay scrollbar, in the scroll node's LOCAL space (origin =
-// its border-box top-left). active is false when the axis doesn't overflow the
-// padded viewport — the bar isn't drawn and eats no hits — and the rects are
+// Geometry of one scrollbar, in the scroll node's LOCAL space (origin = its
+// border-box top-left). The bar occupies its RESERVED GUTTER — a strip carved
+// out of the padded content box by layout (see ScrollNode::gutterV/gutterH) —
+// never overlaying content. active is false when the axis doesn't overflow
+// the viewport — the bar isn't drawn and eats no hits — and the rects are
 // meaningful only while active. Computed on demand by ScrollNode::scrollbar so
 // the renderer's bars and the event handler's hit regions share one source.
 struct ScrollbarGeometry {
@@ -427,6 +429,22 @@ public:
     float contentWidth = 0;
     float contentHeight = 0;
 
+    // Gutters reserved by the last layout pass (layoutDetachedContent): a
+    // kScrollbarThickness strip carved off the right (gutterV) / bottom
+    // (gutterH) of the padded content box. Content lays out, clips, and
+    // hit-tests inside the remaining VIEWPORT; the bars draw in the strips.
+    // Layout RESULTS like contentWidth/Height, not props — the Auto policy
+    // derives them from overflow, Stable pins gutterV on (ScrollbarGutter).
+    bool gutterV = false;
+    bool gutterH = false;
+
+    // The region content shows through: the padded content box minus any
+    // reserved gutters. THE scroll viewport — every consumer (clamping,
+    // wheel gating, paging, scrollIntoView, clipping, hit-testing, bar
+    // geometry) measures against this, never raw layout.contentWidth/Height.
+    float viewportWidth() const;
+    float viewportHeight() const;
+
     void updateContentSize();
     void clampScrollOffset();
     bool updateSmooth(float dt);
@@ -436,12 +454,12 @@ public:
     void scrollTo(float x, float y);
 
     // Scroll the minimum needed to bring an ABSOLUTE-space rect (e.g. a
-    // NodeRef::getBoundingRect) into the padded viewport; a rect already fully
+    // NodeRef::getBoundingRect) into the viewport; a rect already fully
     // visible changes nothing. A rect larger than the viewport aligns its
     // near (top/left) edge.
     void scrollIntoView(const layout::Rect& target);
 
-    // Overlay scrollbar geometry along one axis (see ScrollbarGeometry).
+    // Scrollbar geometry along one axis, inside its gutter (ScrollbarGeometry).
     ScrollbarGeometry scrollbar(ScrollAxis axis) const;
 
     // Classify a point in LOCAL (border-box) coordinates against the active

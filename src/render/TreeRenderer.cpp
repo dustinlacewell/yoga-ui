@@ -165,12 +165,15 @@ void TreeWalker::drawScroll(const ScrollNode* node, const Rect& r) {
     auto s = resolveBox(node->props, node->hovered, node->focused);
     paintBoxChrome(s, r);
 
-    // Content lives in the PADDED viewport: the scroll's own insets shrink the
-    // clip and place the content origin, so Scroll padding is honored the same
-    // way Box padding is. layoutScrollContent laid the detached content root
-    // against this same content width, and hitTest gates on this same rect.
+    // Content lives in the VIEWPORT: the scroll's own insets shrink the clip
+    // and place the content origin (Scroll padding is honored the same way Box
+    // padding is), and any reserved scrollbar gutter shrinks it further — bars
+    // are never overlay, so content must not paint under them. The layout pass
+    // laid the detached content root against this same viewport width, and
+    // hitTest gates on this same rect. A reserved-but-barless gutter (Stable,
+    // no overflow) shows the scroll's own background.
     const LayoutResult& l = node->layout;
-    Rect viewport{r.x + l.insetLeft, r.y + l.insetTop, l.contentWidth(), l.contentHeight()};
+    Rect viewport{r.x + l.insetLeft, r.y + l.insetTop, node->viewportWidth(), node->viewportHeight()};
     backend_.pushClip(viewport, s.borderRadius);
     float childOffsetX = viewport.x - node->scrollOffsetX;
     float childOffsetY = viewport.y - node->scrollOffsetY;
@@ -179,9 +182,9 @@ void TreeWalker::drawScroll(const ScrollNode* node, const Rect& r) {
     }
     backend_.popClip();
 
-    // Overlay scrollbars, outside the content clip (they sit within the
-    // viewport bounds anyway): a bar per overflowing axis, geometry from the
-    // node so the drawn thumb IS the hit region the EventHandler drags.
+    // Scrollbars, in their reserved gutters outside the content clip: a bar
+    // per overflowing axis, geometry from the node so the drawn thumb IS the
+    // hit region the EventHandler drags.
     drawScrollbar(*node, ScrollAxis::Vertical, r);
     drawScrollbar(*node, ScrollAxis::Horizontal, r);
 }

@@ -567,9 +567,10 @@ TEST_CASE("ScrollNode clamps scroll offset") {
 
     auto* scrollNode = static_cast<ScrollNode*>(root);
 
-    // Try to scroll past the end
+    // Try to scroll past the end. Both axes overflow, so both gutters are
+    // reserved and the viewport is 92x92: max scroll = 200 - 92.
     events.handleScroll(root, 50, 50, 0, -500);
-    CHECK(scrollNode->targetScrollY == 100);  // Max scroll = 200 - 100
+    CHECK(scrollNode->targetScrollY == 108);
 
     // Try to scroll past the beginning
     events.handleScroll(root, 50, 50, 0, 500);
@@ -641,8 +642,9 @@ TEST_CASE("ScrollNode padding: padding band hits the scroll, content hits at the
     REQUIRE(scrollNode->children.size() == 1);
     Node* child = scrollNode->children[0].get();
 
-    // The detached content root lays out against the CONTENT width (100 - 2*10).
-    CHECK(child->layout.width == doctest::Approx(80));
+    // The detached content root lays out against the VIEWPORT width: the
+    // padded content box (100 - 2*10) minus the reserved vertical gutter.
+    CHECK(child->layout.width == doctest::Approx(72));
 
     // Inside the scroll but in the padding band: content is clipped away there,
     // so the hit is the Scroll itself.

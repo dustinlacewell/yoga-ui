@@ -68,7 +68,7 @@ bool EventHandler::handleMouseDown(Node* root, float x, float y, MouseButton but
                                    uint16_t mods) noexcept {
     Node* target = topmostHit(root, x, y);
 
-    // A press on a scroll node's overlay scrollbar is chrome, consumed before
+    // A press on a scroll node's scrollbar is chrome, consumed before
     // any of the content-press machinery (focus, click chain, user dispatch).
     if (beginScrollbarGesture(target, x, y, button))
         return true;
@@ -308,13 +308,13 @@ bool EventHandler::beginScrollbarGesture(Node* target, float x, float y, MouseBu
     case ScrollbarPart::VerticalTrack: {
         // Page toward the click: one viewport up above the thumb, down below.
         float dir = (y - abs.y) < scroll->scrollbar(ScrollAxis::Vertical).thumb.y ? -1.0f : 1.0f;
-        scroll->targetScrollY += dir * scroll->layout.contentHeight();
+        scroll->targetScrollY += dir * scroll->viewportHeight();
         scroll->clampScrollOffset();
         break;
     }
     case ScrollbarPart::HorizontalTrack: {
         float dir = (x - abs.x) < scroll->scrollbar(ScrollAxis::Horizontal).thumb.x ? -1.0f : 1.0f;
-        scroll->targetScrollX += dir * scroll->layout.contentWidth();
+        scroll->targetScrollX += dir * scroll->viewportWidth();
         scroll->clampScrollOffset();
         break;
     }
@@ -470,7 +470,7 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
     if (node->type() == PrimitiveType::Portal)
         return nullptr;
 
-    // Scroll content is clipped to the PADDED viewport (border box minus the
+    // Scroll content is clipped to the VIEWPORT (border box minus the
     // scroll's own insets), so a point in the padding band hits the Scroll
     // itself — never the clipped-away content — and children are hit-tested
     // from the content origin, matching where the renderer draws them.
@@ -485,13 +485,15 @@ Node* EventHandler::hitTest(Node* node, float x, float y, float offsetX, float o
         if (!inOwnRect)
             return nullptr;
         auto* scrollNode = static_cast<ScrollNode*>(node);
-        // Overlay scrollbars eat hits before content: a point on an active
-        // bar is the scroll's own chrome (handleMouseDown routes it), never
-        // the content drawn underneath.
+        // Scrollbars eat hits before content: a point on an active bar is the
+        // scroll's own chrome (handleMouseDown routes it), never content.
         if (scrollNode->scrollbarHitTest(x - nodeX, y - nodeY) != ScrollbarPart::None)
             return node;
-        bool inViewport = x >= nodeX + l.insetLeft && x < nodeX + l.width - l.insetRight && y >= nodeY + l.insetTop &&
-                          y < nodeY + l.height - l.insetBottom;
+        // Content is clipped to the VIEWPORT (padded content box minus any
+        // reserved gutters) — a point in the padding band or a gutter hits
+        // the Scroll itself, never the clipped-away content beneath.
+        bool inViewport = x >= nodeX + l.insetLeft && x < nodeX + l.insetLeft + scrollNode->viewportWidth() &&
+                          y >= nodeY + l.insetTop && y < nodeY + l.insetTop + scrollNode->viewportHeight();
         if (!inViewport)
             return node;
         childOffsetX += l.insetLeft - scrollNode->scrollOffsetX;
@@ -759,10 +761,10 @@ bool EventHandler::dispatchEvent(Node* node, Event& event, int depth) {
             auto* scrollNode = static_cast<ScrollNode*>(node);
             scrollNode->updateContentSize();
 
-            // Content scrolls when it exceeds the padded viewport — the same
+            // Content scrolls when it exceeds the viewport — the same
             // region the renderer clips to and clampScrollOffset ranges over.
-            bool canScrollX = scrollNode->contentWidth > scrollNode->layout.contentWidth();
-            bool canScrollY = scrollNode->contentHeight > scrollNode->layout.contentHeight();
+            bool canScrollX = scrollNode->contentWidth > scrollNode->viewportWidth();
+            bool canScrollY = scrollNode->contentHeight > scrollNode->viewportHeight();
 
             if (canScrollY || canScrollX) {
                 // Update target (smooth scrolling interpolates toward this)

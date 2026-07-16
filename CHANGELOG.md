@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.0
+
+Scrollbars are no longer overlay: an active bar occupies a **reserved
+gutter** carved out of the scroll's padded content box, so a bar can never
+cover content (a trailing timestamp pinned to a row's right edge now sits
+flush with the bar instead of underneath it).
+
+- **Gutter-reserving scrollbars.** Layout runs a monotonic reserve loop
+  (`layoutDetachedContent`): content lays out against the viewport, overflow
+  decides which gutters are needed, and content re-lays narrower when a
+  gutter is added. Reservation only ever grows within a pass, so the loop
+  converges in at most three layouts — including the cascade where reserving
+  the bottom gutter shrinks the viewport height enough to require the right
+  gutter too. Every scroll consumer (wheel gating, track paging, offset
+  clamping, `scrollIntoView`, clipping, hit-testing, bar geometry) now
+  measures against `ScrollNode::viewportWidth()/viewportHeight()` — the
+  padded content box minus reserved gutters.
+- **`scrollbarGutter` prop (CSS `scrollbar-gutter`).**
+  `ScrollbarGutter::Auto` (default) reserves a gutter only on an axis that
+  actually overflows; `ScrollbarGutter::Stable` always reserves the vertical
+  gutter so content width doesn't jump when vertical overflow starts or
+  stops. A reserved-but-barless gutter shows the scroll's own background.
+- **Content under a gutter is neither drawn nor hittable.** The render clip
+  and the hit-test viewport both shrink with the gutters; a point in a
+  gutter hits the scroll's chrome, never clipped-away content.
+- **Makefile: tests build again.** The `src/render/` split had left the
+  render pass out of `libyui.a` (undefined `yui::render::*` linking the test
+  runner), and `bench_reconciler.cpp`'s `main` collided with doctest's. Both
+  fixed; `make test` is green (453 cases).
+
 ## 1.2.2
 
 Patch release: fixes a reconciler use-after-free during unmount.

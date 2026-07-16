@@ -29,8 +29,8 @@ BIN_DIR := $(BUILD)/bin
 YOGA_SRC := $(wildcard deps/yoga/yoga/*.cpp) $(wildcard deps/yoga/yoga/**/*.cpp)
 YOGA_OBJ := $(patsubst deps/yoga/%.cpp,$(OBJ_DIR)/yoga/%.o,$(YOGA_SRC))
 
-# yui core sources
-YUI_SRC := $(wildcard src/core/*.cpp)
+# yui core sources (core + the backend-agnostic render pass)
+YUI_SRC := $(wildcard src/core/*.cpp) $(wildcard src/render/*.cpp)
 YUI_OBJ := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(YUI_SRC))
 
 # SDL backend sources
@@ -41,8 +41,8 @@ SDL_OBJ := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(SDL_SRC))
 NVG_SRC := $(wildcard src/nvg/*.cpp)
 NVG_OBJ := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(NVG_SRC))
 
-# Test sources
-TEST_SRC := $(wildcard test/*.cpp)
+# Test sources (bench_reconciler carries its own main — not a doctest TU)
+TEST_SRC := $(filter-out test/bench_reconciler.cpp,$(wildcard test/*.cpp))
 TEST_OBJ := $(patsubst test/%.cpp,$(OBJ_DIR)/test/%.o,$(TEST_SRC))
 
 # Example sources
@@ -85,7 +85,7 @@ all: $(LIB)
 $(OBJ_DIR) $(LIB_DIR) $(BIN_DIR):
 	mkdir -p $@
 
-$(OBJ_DIR)/core $(OBJ_DIR)/sdl $(OBJ_DIR)/nvg $(OBJ_DIR)/test $(OBJ_DIR)/examples:
+$(OBJ_DIR)/core $(OBJ_DIR)/render $(OBJ_DIR)/sdl $(OBJ_DIR)/nvg $(OBJ_DIR)/test $(OBJ_DIR)/examples:
 	mkdir -p $@
 
 $(OBJ_DIR)/yoga/yoga $(OBJ_DIR)/yoga/yoga/algorithm $(OBJ_DIR)/yoga/yoga/config $(OBJ_DIR)/yoga/yoga/debug $(OBJ_DIR)/yoga/yoga/event $(OBJ_DIR)/yoga/yoga/node:
@@ -97,6 +97,10 @@ $(LIB): $(YUI_OBJ) $(YOGA_OBJ) | $(LIB_DIR)
 
 # Core objects
 $(OBJ_DIR)/core/%.o: src/core/%.cpp | $(OBJ_DIR)/core
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# Render pass objects (backend-agnostic tree renderer)
+$(OBJ_DIR)/render/%.o: src/render/%.cpp | $(OBJ_DIR)/render
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 # SDL backend objects

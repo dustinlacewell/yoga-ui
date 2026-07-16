@@ -269,11 +269,12 @@ TEST_CASE("renderTree: scroll clips at its absolute rect and offsets children") 
     render::renderTree(root, backend, {});
 
     // Root box has no chrome; the stream is clip / content / unclip, then the
-    // vertical overlay scrollbar (track + thumb) outside the clip.
+    // vertical scrollbar (track + thumb) in its reserved gutter, outside the
+    // clip. The clip is the VIEWPORT: content width minus the gutter.
     REQUIRE(backend.calls.size() == 5);
 
     CHECK(backend.calls[0].kind == Call::Kind::PushClip);
-    checkRect(backend.calls[0].rect, 10, 10, 100, 80);  // absolute (inside padding)
+    checkRect(backend.calls[0].rect, 10, 10, 100 - rd::kScrollbarThickness, 80);
 
     CHECK(backend.calls[1].kind == Call::Kind::FillRect);
     checkRect(backend.calls[1].rect, 10, -20, 50, 200);  // y = 10 - 30 scroll offset
@@ -281,8 +282,10 @@ TEST_CASE("renderTree: scroll clips at its absolute rect and offsets children") 
     CHECK(backend.calls[2].kind == Call::Kind::PopClip);
     CHECK(backend.count(Call::Kind::PushClip) == backend.count(Call::Kind::PopClip));
 
-    // Track hugs the viewport's right edge; the thumb is trackLen * vh/content
-    // = 80 * 80/200 = 32 tall, at offset 30 of maxScroll 120 over 48 of travel.
+    // Track fills the gutter at the viewport's right edge; the thumb is
+    // trackLen * vh/content = 80 * 80/200 = 32 tall, at offset 30 of
+    // maxScroll 120 over 48 of travel. (The fixed 50-wide content never
+    // overflowed horizontally, so only the vertical gutter is reserved.)
     CHECK(backend.calls[3].kind == Call::Kind::FillRect);
     CHECK(backend.calls[3].color == rd::kScrollbarTrackColor);
     checkRect(backend.calls[3].rect, 10 + 100 - rd::kScrollbarThickness, 10, rd::kScrollbarThickness, 80);
@@ -297,8 +300,10 @@ TEST_CASE("renderTree: scroll padding insets the clip viewport and the content o
     MeasureHarness h;
     h.setMeasurer(&backend);
 
-    // The unsized child stretches to the scroll's CONTENT width (100 - 2*10):
-    // Scroll padding shrinks what the detached content root lays out against.
+    // The unsized child stretches to the scroll's VIEWPORT width: the padded
+    // content box (100 - 2*10) minus the vertical gutter its 200px height
+    // reserves — Scroll padding AND the gutter shrink what the detached
+    // content root lays out against.
     auto tree =
         Scroll(Box().height(200).backgroundColor(0x112233FFu).setKey("content")).width(100).height(80).padding(10);
 
@@ -314,17 +319,18 @@ TEST_CASE("renderTree: scroll padding insets the clip viewport and the content o
     REQUIRE(backend.calls.size() == 5);
 
     CHECK(backend.calls[0].kind == Call::Kind::PushClip);
-    checkRect(backend.calls[0].rect, 10, 10, 80, 60);  // the PADDED viewport
+    checkRect(backend.calls[0].rect, 10, 10, 80 - rd::kScrollbarThickness, 60);  // the VIEWPORT
 
     CHECK(backend.calls[1].kind == Call::Kind::FillRect);
-    checkRect(backend.calls[1].rect, 10, -20, 80, 200);  // content origin (10,10) - 30 scroll
+    checkRect(backend.calls[1].rect, 10, -20, 80 - rd::kScrollbarThickness,
+              200);  // content origin (10,10) - 30 scroll
 
     CHECK(backend.calls[2].kind == Call::Kind::PopClip);
 
-    // The bar lives INSIDE the padded viewport, consistent with the clip: track
-    // at the viewport's right edge (x = 10 + 80 - thickness), spanning its 60px
-    // height. The proportional thumb (60 * 60/200 = 18) clamps up to the min
-    // length; offset 30 of maxScroll 140 maps over the remaining travel.
+    // The bar fills its gutter just past the viewport's right edge (x =
+    // 10 + 72), flush against the right padding band, spanning the 60px
+    // viewport height. The proportional thumb (60 * 60/200 = 18) clamps up to
+    // the min length; offset 30 of maxScroll 140 maps over the remaining travel.
     float thumbLen = rd::kScrollbarMinThumbLen;
     float travel = 60 - thumbLen;
     CHECK(backend.calls[3].color == rd::kScrollbarTrackColor);
@@ -397,15 +403,18 @@ TEST_CASE("renderTree: both bars when both axes overflow; tracks yield the share
 
     render::renderTree(root, backend, {});
 
-    // Vertical track+thumb, then horizontal track+thumb. Each track stops
-    // short of the bottom-right corner by the other bar's thickness, and the
-    // thumb is proportional to the SHORTENED track (92 * 100/200 = 46).
+    // Vertical track+thumb, then horizontal track+thumb. Both gutters are
+    // reserved, so each track spans its viewport axis (100 - t) and stops
+    // short of the shared corner by construction — the corner square is the
+    // intersection of the two gutters. Thumbs are proportional to the reduced
+    // viewport: trackLen * viewport/content = (100 - t) * (100 - t) / 200.
     REQUIRE(backend.count(Call::Kind::FillRect) == 4);
     float t = rd::kScrollbarThickness;
+    float thumbLen = (100 - t) * (100 - t) / 200;
     checkRect(backend.nthOf(Call::Kind::FillRect, 0)->rect, 100 - t, 0, t, 100 - t);
-    checkRect(backend.nthOf(Call::Kind::FillRect, 1)->rect, 100 - t, 0, t, (100 - t) / 2);
+    checkRect(backend.nthOf(Call::Kind::FillRect, 1)->rect, 100 - t, 0, t, thumbLen);
     checkRect(backend.nthOf(Call::Kind::FillRect, 2)->rect, 0, 100 - t, 100 - t, t);
-    checkRect(backend.nthOf(Call::Kind::FillRect, 3)->rect, 0, 100 - t, (100 - t) / 2, t);
+    checkRect(backend.nthOf(Call::Kind::FillRect, 3)->rect, 0, 100 - t, thumbLen, t);
 }
 
 TEST_CASE("renderTree: tiny proportional thumb clamps to the min length and still reaches the end") {

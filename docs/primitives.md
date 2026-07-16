@@ -143,10 +143,17 @@ inside the scroll — and scrolls the minimum needed to bring it into the
 padded viewport; a rect already fully visible changes nothing, and a rect
 larger than the viewport aligns its near edge.
 
-`Scroll` also draws its own overlay scrollbars when content overflows.
-Presses on a scrollbar's thumb or track are consumed as chrome — they never
-reach your `onClick`/`onMouseDown` handlers, never change focus, and never
-chain into a click.
+`Scroll` draws its own scrollbars when content overflows. Bars are never
+overlay: an active bar occupies a **gutter** — a `kScrollbarThickness` strip
+reserved out of the padded content box — and content lays out, clips, and
+hit-tests inside the remaining viewport, so a bar can never cover content.
+The `.scrollbarGutter(...)` prop picks the reservation policy (CSS
+`scrollbar-gutter`): `ScrollbarGutter::Auto` (default) reserves a gutter only
+on an axis that actually overflows; `ScrollbarGutter::Stable` always reserves
+the vertical gutter, so content width doesn't jump when vertical overflow
+starts or stops. Presses on a scrollbar's thumb or track are consumed as
+chrome — they never reach your `onClick`/`onMouseDown` handlers, never change
+focus, and never chain into a click.
 
 ## Canvas
 

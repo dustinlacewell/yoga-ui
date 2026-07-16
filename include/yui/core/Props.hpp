@@ -188,12 +188,22 @@ struct InputProps : LayoutProps, EventProps {
     std::optional<InputStyle> focusStyle;
 };
 
+// Scrollbar gutter policy (CSS scrollbar-gutter). Scrollbars are never
+// overlay: an active bar occupies a strip RESERVED out of the padded content
+// box, so content and bar cannot overlap. Auto reserves a gutter only on an
+// axis that actually overflows — content keeps the full width until a bar is
+// needed. Stable always reserves the vertical gutter, so content width does
+// not jump when vertical overflow starts or stops (the horizontal gutter is
+// always Auto — pre-reserving the bottom edge has no CSS equivalent either).
+enum class ScrollbarGutter { Auto, Stable };
+
 // Scroll: scrollable container
 struct ScrollProps : LayoutProps, EventProps {
     std::optional<uint32_t> backgroundColor;
     std::optional<float> borderRadius;
     std::optional<uint32_t> borderColor;
     std::optional<float> borderWidth;
+    std::optional<ScrollbarGutter> scrollbarGutter;  // default Auto
 
     // State-based style overrides
     std::optional<BoxStyle> hoverStyle;

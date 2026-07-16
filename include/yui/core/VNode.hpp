@@ -419,6 +419,9 @@ public:
     ScrollBuilder& focusStyle(BoxStyle s) {
         return p([&](ScrollProps& sp) { sp.focusStyle = std::move(s); });
     }
+    ScrollBuilder& scrollbarGutter(ScrollbarGutter v) {
+        return p([&](ScrollProps& s) { s.scrollbarGutter = v; });
+    }
 
 private:
     template<typename F>
